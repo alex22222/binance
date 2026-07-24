@@ -60,6 +60,15 @@ export function validateConfig(config) {
   if (typeof config.processLockFile !== "string" || !config.processLockFile.trim()) {
     errors.push("processLockFile must not be empty");
   }
+  if (config.requireTradeApproval !== true) {
+    errors.push("requireTradeApproval must be true");
+  }
+  if (!(Number.isInteger(config.approvalTtlSeconds) && config.approvalTtlSeconds >= 30 && config.approvalTtlSeconds <= 900)) {
+    errors.push("approvalTtlSeconds must be an integer between 30 and 900");
+  }
+  if (typeof config.approvalDecisionDirectory !== "string" || !config.approvalDecisionDirectory.trim()) {
+    errors.push("approvalDecisionDirectory must not be empty");
+  }
   if (!(config.settingsCheckIntervalMinutes >= 15)) {
     errors.push("settingsCheckIntervalMinutes must be at least 15");
   }

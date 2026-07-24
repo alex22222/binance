@@ -47,6 +47,9 @@ const config = {
   emergencyStopFile: "state/EMERGENCY_STOP",
   emergencyStopHistoryDirectory: "state/emergency-stop-history",
   processLockFile: "state/bot.lock",
+  requireTradeApproval: true,
+  approvalTtlSeconds: 300,
+  approvalDecisionDirectory: "state/approval-decisions",
   settingsCheckIntervalMinutes: 60,
   sessionWarningHours: 24
 };
@@ -63,6 +66,12 @@ test("rejects limits above the user-approved risk envelope", () => {
 test("rejects stale-quote settings that exceed the execution slippage envelope", () => {
   assert.throws(() => validateConfig({ ...config, quoteMaxAgeSeconds: 31 }), /quoteMaxAgeSeconds/);
   assert.throws(() => validateConfig({ ...config, maxQuoteDriftPct: 0.6 }), /maxQuoteDriftPct/);
+});
+
+test("requires a bounded per-trade approval gate", () => {
+  assert.throws(() => validateConfig({ ...config, requireTradeApproval: false }), /requireTradeApproval/);
+  assert.throws(() => validateConfig({ ...config, approvalTtlSeconds: 10 }), /approvalTtlSeconds/);
+  assert.throws(() => validateConfig({ ...config, approvalDecisionDirectory: "" }), /approvalDecisionDirectory/);
 });
 
 test("rejects incomplete or unsafe cost-coverage settings", () => {

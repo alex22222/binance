@@ -7,6 +7,7 @@ export HTTP_PROXY="http://127.0.0.1:7890"
 export HTTPS_PROXY="http://127.0.0.1:7890"
 export ALL_PROXY="socks5://127.0.0.1:7890"
 export NO_PROXY="127.0.0.1"
+export NODE_OPTIONS="--use-env-proxy"
 
 export BINANCE_INSTANCE_ID="$(security find-generic-password -a henry -s binance-agentic-wallet-instance-id -w)"
 export FEISHU_APP_ID="$(security find-generic-password -a henry -s binance-stock-bot-feishu-app-id -w)"

@@ -118,9 +118,21 @@ security add-generic-password -U -a "$(id -un)" \
 
 Changing this value invalidates the local CLI identity and requires signing in again.
 
+Use the Keychain wrapper for every manual or automated CLI invocation:
+
+```bash
+scripts/baw-from-keychain.mjs wallet status --json
+```
+
+The local installation also links this wrapper as
+`/Users/henry/.local/bin/baw`. Do not invoke the raw
+`/Users/henry/.npm-global/bin/baw` executable directly: it bypasses the stable
+instance ID and Node's environment-proxy flag.
+
 BAW CLI 1.7.0 does not persist a rotated session cookie after an established
-wallet request. Apply the local compatibility patch once after installing or
-upgrading the CLI:
+wallet request. It also clears the existing session when the encrypted client
+identity is opened with a different `BINANCE_INSTANCE_ID`. Apply the local
+compatibility patch once after installing or upgrading the CLI:
 
 ```bash
 npm run patch:baw-session
@@ -129,7 +141,8 @@ npm run patch:baw-session
 The launcher runs `npm run check:baw-session` semantics before starting. If a
 CLI upgrade removes the patch, the bot fails closed instead of silently using a
 stale session. The patch preserves the normal pending-session behavior during
-QR sign-in and persists only rotations of an already established session. A
+QR sign-in, persists only rotations of an already established session, and
+refuses an instance-ID mismatch without deleting the valid Keychain session. A
 timestamped backup is written beside the CLI entry file before modification.
 
 Send one notification test without accessing the wallet:
@@ -168,13 +181,15 @@ npm run dashboard:open
 
 The self-contained HTML is written to `artifacts/strategy-mock-dashboard.html`. Run the command again after a new Mock to refresh the strategy snapshot and timeline.
 
-Start the local read-only live position dashboard:
+Start the local live position and safety-control dashboard:
 
 ```bash
 npm run dashboard:live
 ```
 
-Open `http://127.0.0.1:4173`. It refreshes every three seconds and shows the bot heartbeat, current position, executable-quote PnL, pending order, risk budget, latest 15-minute signals, and recent action trace. The server binds only to `127.0.0.1`.
+Open `http://127.0.0.1:4173`. It refreshes every three seconds and shows the bot heartbeat, current position, executable-quote PnL, pending order, risk budget, latest 15-minute signals, and recent action trace. A live candidate appears as a five-minute, one-time approval request containing the exact side, symbol, full contract addresses, amount, quote, costs, risk parameters, and audit status. The server binds only to `127.0.0.1`.
+
+Approving or rejecting from the dashboard writes a new immutable decision under `state/approval-decisions/`; it never edits `state/bot-state.json`. The bot consumes that exact decision on its next cycle. Before an approved swap is submitted it rechecks the wallet, emergency stop, position state, trend/exit trigger, executable quote, quote drift, cost coverage, and token audit. An expired, mismatched, reused, or materially changed approval fails closed without broadcasting.
 
 ## Reliability controls
 
@@ -239,15 +254,18 @@ Every run receives a unique run ID and every cycle receives a unique cycle ID. T
 
 ## Live gate
 
-Live trading requires both:
+Live trading requires all three gates:
 
 1. `"mode": "live"` in `config.json`
 2. `BOT_LIVE=1` in the process environment
+3. `"requireTradeApproval": true` with a 30–900 second `approvalTtlSeconds`
 
 ```bash
 BOT_LIVE=1 npm start
 ```
 
-The second gate prevents an accidental live start after editing the config.
+The environment gate prevents an accidental live start after editing the config. The approval gate is mandatory and cannot be disabled by configuration.
+
+When an official RWA target has no available BSC security-audit result, the local approval card shows an additional per-order acknowledgement. It is recorded with that order decision and cannot be pre-accepted or persisted for later trades.
 
 `com.henry.binance-agentic-stock-bot.plist.example` is a launchd template. It intentionally has `BOT_LIVE=0`; copying or loading it does not enable live trading.

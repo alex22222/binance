@@ -21,7 +21,10 @@ test("keeps an unconfirmed sign-in session pending but persists established sess
 });
 
 test("patches the vulnerable BAW response-cookie write and is idempotent", () => {
+  const vulnerableClientIdRecovery =
+    'if(this.fileData.clientId){let e=this.decryptClientId(this.fileData.clientId);if(e)return this.decryptedClientId=e,this.decryptedClientId}this.decryptedClientId=hn(),this.clientIdRegenerated=!0';
   const vulnerable = [
+    vulnerableClientIdRecovery,
     "before;",
     'T&&(M.session("Session ID extracted, pending commit"),this.sessionManager.setPendingSessionId(T[1]))',
     ";after"
@@ -30,6 +33,7 @@ test("patches the vulnerable BAW response-cookie write and is idempotent", () =>
   assert.equal(first.changed, true);
   assert.match(first.source, /pendingSessionId\|\|e\.endsWith/);
   assert.match(first.source, /await this\.sessionManager\.setSessionId/);
+  assert.match(first.source, /BINANCE_INSTANCE_ID mismatch: refusing to clear the existing wallet session/);
 
   const second = patchBawSessionPersistence(first.source);
   assert.equal(second.changed, false);

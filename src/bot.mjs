@@ -21,6 +21,12 @@ import {
 } from "./strategy.mjs";
 import { createTracer } from "./trace.mjs";
 import { retry } from "./retry.mjs";
+import { buildBawEnvironment } from "./baw-runtime.mjs";
+import {
+  approvalDecisionStatus,
+  createApprovalRequest,
+  loadApprovalDecision
+} from "./approvals.mjs";
 import {
   BawError,
   acquireProcessLock,
@@ -82,6 +88,7 @@ function freshState() {
     realizedPnlUsdt: 0,
     position: null,
     pendingOrder: null,
+    approvalRequest: null,
     cooldownUntil: {},
     lastEntryDecisionAt: 0,
     pendingNotifications: [],
@@ -99,7 +106,8 @@ async function loadState(path) {
     return {
       ...freshState(),
       position: state.position,
-      pendingOrder: state.pendingOrder
+      pendingOrder: state.pendingOrder,
+      approvalRequest: state.approvalRequest
     };
   } catch (error) {
     if (error.code === "ENOENT") return freshState();
@@ -164,12 +172,12 @@ function bawResultFromOutput(output, operation) {
 }
 
 async function executeBaw(args, operation) {
-  const nodeOptions = process.env.NODE_OPTIONS?.includes("--use-env-proxy")
-    ? process.env.NODE_OPTIONS
-    : [process.env.NODE_OPTIONS, "--use-env-proxy"].filter(Boolean).join(" ");
   try {
     const { stdout } = await execFileAsync("baw", [...args, "--json"], {
-      env: { ...process.env, NODE_OPTIONS: nodeOptions },
+      env: buildBawEnvironment({
+        environment: process.env,
+        instanceId: process.env.BINANCE_INSTANCE_ID
+      }),
       maxBuffer: 1024 * 1024
     });
     return bawResultFromOutput(stdout, operation);
@@ -502,6 +510,52 @@ async function audit(asset, config) {
     officialRwa: asset.isOfficialRwa
   }, currentCycleId);
   return result;
+}
+
+function approvalDetailsMatch(request, details) {
+  return (
+    request.side === details.side &&
+    request.symbol === details.symbol &&
+    request.address.toLowerCase() === details.address.toLowerCase() &&
+    request.fromToken.toLowerCase() === details.fromToken.toLowerCase() &&
+    request.toToken.toLowerCase() === details.toToken.toLowerCase() &&
+    Math.abs(Number(request.fromTokenQty) - Number(details.fromTokenQty)) < 1e-12
+  );
+}
+
+async function requestTradeApproval(config, state, statePath, details) {
+  const request = createApprovalRequest(details, {
+    createdAt: details.createdAt,
+    ttlSeconds: config.approvalTtlSeconds
+  });
+  state.approvalRequest = request;
+  await saveJson(statePath, state);
+  await traceAction("trade_approval", "requested", {
+    approvalId: request.approvalId,
+    side: request.side,
+    symbol: request.symbol,
+    address: request.address,
+    expiresAt: request.expiresAt
+  }, currentCycleId);
+  const valueLine = request.side === "BUY"
+    ? `投入: ${Number(request.fromTokenQty).toFixed(2)} USDT`
+    : `预计回收: ${Number(request.expectedOutputQty).toFixed(4)} USDT`;
+  await notify(
+    state,
+    [
+      `[Agentic Stock Bot] ${request.side} APPROVAL REQUIRED`,
+      `${request.symbol} ${request.address}`,
+      valueLine,
+      `来源合约: ${request.fromToken}`,
+      `目标合约: ${request.toToken}`,
+      `滑点: ${config.slippagePct}% · MEV保护: 开 · Gas: HIGH`,
+      `审计: ${request.audit?.riskLevel || request.audit?.status || "TRUSTED_TARGET"}`,
+      `确认截止: ${request.expiresAt}`,
+      `审批编号: ${request.approvalId}`,
+      "请在本机 http://127.0.0.1:4173/ 查看完整数据并逐笔确认。真实链上交易不可撤销，请先自行研究（DYOR）。"
+    ].join("\n")
+  );
+  return request;
 }
 
 async function swap(config, fromTokenQty, fromToken, toToken) {
@@ -861,20 +915,21 @@ async function buildCandidate(symbol, asset, config) {
   return completed;
 }
 
-async function evaluateEntry(config, state, assets, statePath, emergencyStopPath) {
+async function evaluateEntry(config, state, assets, statePath, emergencyStopPath, approvedRequest = null) {
   if (dailyLossReached(state.realizedPnlUsdt, config.dailyLossLimitUsdt)) {
     await traceAction("entry_decision", "skipped", { reason: "daily_loss_limit" }, currentCycleId);
     return;
   }
   const now = Date.now();
-  if (now - state.lastEntryDecisionAt < config.entryIntervalMinutes * 60_000) {
+  if (!approvedRequest && now - state.lastEntryDecisionAt < config.entryIntervalMinutes * 60_000) {
     await traceAction("entry_decision", "skipped", { reason: "entry_interval" }, currentCycleId);
     return;
   }
-  state.lastEntryDecisionAt = now;
+  if (!approvedRequest) state.lastEntryDecisionAt = now;
 
+  const symbols = approvedRequest ? [approvedRequest.symbol] : config.symbols;
   const candidates = (await Promise.all(
-    config.symbols.map(async (symbol) => {
+    symbols.map(async (symbol) => {
       if ((state.cooldownUntil[symbol] || 0) > now) {
         await traceAction("candidate_rejected", "skipped", { symbol, reason: "cooldown" }, currentCycleId);
         return null;
@@ -995,7 +1050,7 @@ async function evaluateEntry(config, state, assets, statePath, emergencyStopPath
     return;
   }
   const createdAt = new Date().toISOString();
-  const result = await submitOrder(config, state, statePath, emergencyStopPath, {
+  const orderDetails = {
     side: "BUY",
     symbol: selected.symbol,
     address: selected.address,
@@ -1010,7 +1065,44 @@ async function evaluateEntry(config, state, assets, statePath, emergencyStopPath
     finalTakeProfitPct: freshFinalTakeProfitPct,
     usdtBefore,
     createdAt
-  });
+  };
+  const approvalDetails = {
+    ...orderDetails,
+    expectedOutputQty: freshBuyQuote.toCoinAmount,
+    quoteTimestamp: freshBuyQuote.quotedAt,
+    trend15mPct: selected.trend15mPct,
+    upMinutes: selected.upMinutes,
+    roundTripCostPct: freshRoundTripCostPct,
+    allInCostPct: freshCostCoverage.allInCostPct,
+    netEdgeProxyPct: freshCostCoverage.netEdgeProxyPct,
+    audit: auditResult
+  };
+  if (config.mode === "live" && !approvedRequest) {
+    await requestTradeApproval(config, state, statePath, approvalDetails);
+    return;
+  }
+  if (approvedRequest) {
+    if (!approvalDetailsMatch(approvedRequest, orderDetails)) {
+      throw new Error(`Approved BUY no longer matches ${selected.symbol}`);
+    }
+    const approvalDriftPct = quoteDriftPct(approvedRequest.expectedOutputQty, freshBuyQuote.toCoinAmount);
+    if (approvalDriftPct > config.maxQuoteDriftPct || approvedRequest.audit?.status !== auditResult.status) {
+      await traceAction("trade_approval", "invalidated", {
+        approvalId: approvedRequest.approvalId,
+        side: "BUY",
+        symbol: selected.symbol,
+        reason: approvalDriftPct > config.maxQuoteDriftPct ? "quote_drift" : "audit_changed",
+        approvalDriftPct,
+        maxQuoteDriftPct: config.maxQuoteDriftPct
+      }, currentCycleId);
+      await notify(
+        state,
+        `[Agentic Stock Bot] BUY APPROVAL INVALIDATED\n${selected.symbol} ${selected.address}\n报价或审计已变化，未执行交易；等待下一次完整扫描。`
+      );
+      return;
+    }
+  }
+  const result = await submitOrder(config, state, statePath, emergencyStopPath, orderDetails);
   if (result.shadow) {
     state.position = {
       symbol: selected.symbol,
@@ -1062,7 +1154,7 @@ async function evaluateEntry(config, state, assets, statePath, emergencyStopPath
   );
 }
 
-async function evaluateExit(config, state, statePath, emergencyStopPath) {
+async function evaluateExit(config, state, statePath, emergencyStopPath, approvedRequest = null) {
   const position = state.position;
   if (!position) return;
 
@@ -1179,7 +1271,7 @@ async function evaluateExit(config, state, statePath, emergencyStopPath) {
   }
   const usdtBefore = config.mode === "live" ? await tokenBalance(USDT_ADDRESS) : null;
   const createdAt = new Date().toISOString();
-  const result = await submitOrder(config, state, statePath, emergencyStopPath, {
+  const orderDetails = {
     side: "SELL",
     symbol: position.symbol,
     address: position.address,
@@ -1191,7 +1283,46 @@ async function evaluateExit(config, state, statePath, emergencyStopPath) {
     usdtBefore,
     reason: confirmedReason.type,
     createdAt
-  });
+  };
+  const approvalDetails = {
+    ...orderDetails,
+    expectedOutputQty: confirmedProceedsUsdt,
+    quoteTimestamp: confirmationQuote.quotedAt,
+    expectedReturnPct: confirmedReason.returnPct,
+    initialRiskPct: position.initialRiskPct,
+    atr15Pct: atr.atrPct,
+    trailingStopPct: confirmedReason.trailingStopPct,
+    profitFloorPct,
+    audit: {
+      status: "TRUSTED_TARGET_USDT"
+    }
+  };
+  if (config.mode === "live" && !approvedRequest) {
+    await requestTradeApproval(config, state, statePath, approvalDetails);
+    return;
+  }
+  if (approvedRequest) {
+    if (!approvalDetailsMatch(approvedRequest, orderDetails)) {
+      throw new Error(`Approved SELL no longer matches ${position.symbol}`);
+    }
+    const approvalDriftPct = quoteDriftPct(approvedRequest.expectedOutputQty, confirmedProceedsUsdt);
+    if (approvalDriftPct > config.maxQuoteDriftPct) {
+      await traceAction("trade_approval", "invalidated", {
+        approvalId: approvedRequest.approvalId,
+        side: "SELL",
+        symbol: position.symbol,
+        reason: "quote_drift",
+        approvalDriftPct,
+        maxQuoteDriftPct: config.maxQuoteDriftPct
+      }, currentCycleId);
+      await notify(
+        state,
+        `[Agentic Stock Bot] SELL APPROVAL INVALIDATED\n${position.symbol} ${position.address}\n报价漂移超过 ${config.maxQuoteDriftPct}%，未执行交易；重新评估退出条件。`
+      );
+      return;
+    }
+  }
+  const result = await submitOrder(config, state, statePath, emergencyStopPath, orderDetails);
   if (result.shadow) {
     const realizedPnlUsdt = confirmedProceedsUsdt - position.costBasisUsdt;
     state.realizedPnlUsdt += realizedPnlUsdt;
@@ -1224,6 +1355,58 @@ async function evaluateExit(config, state, statePath, emergencyStopPath) {
       `订单: ${result.orderId}`
     ].join("\n")
   );
+}
+
+async function processTradeApproval(config, state, statePath, emergencyStopPath) {
+  const request = state.approvalRequest;
+  if (!request) return false;
+  const decisionDirectory = resolve(projectRoot, config.approvalDecisionDirectory);
+  const decision = await loadApprovalDecision(decisionDirectory, request.approvalId);
+  const outcome = approvalDecisionStatus(request, decision);
+  if (outcome.status === "WAITING") {
+    await traceAction("trade_approval", "waiting", {
+      approvalId: request.approvalId,
+      side: request.side,
+      symbol: request.symbol,
+      expiresAt: request.expiresAt
+    }, currentCycleId);
+    return true;
+  }
+
+  state.approvalRequest = null;
+  state.lastApprovalDecision = {
+    approvalId: request.approvalId,
+    side: request.side,
+    symbol: request.symbol,
+    status: outcome.status,
+    decidedAt: decision?.decidedAt || new Date().toISOString()
+  };
+  await saveJson(statePath, state);
+  await traceAction("trade_approval", outcome.status === "APPROVED" ? "approved" : "closed", {
+    approvalId: request.approvalId,
+    side: request.side,
+    symbol: request.symbol,
+    outcome: outcome.status
+  }, currentCycleId);
+
+  if (outcome.status !== "APPROVED") {
+    await notify(
+      state,
+      `[Agentic Stock Bot] ${request.side} APPROVAL ${outcome.status}\n${request.symbol} ${request.address}\n未执行链上交易。`
+    );
+    return true;
+  }
+
+  await ensureNotEmergencyStopped(emergencyStopPath, state);
+  if (request.side === "BUY") {
+    if (state.position) throw new Error("Approved BUY blocked because a position already exists");
+    const assets = await resolveAssets([request.symbol]);
+    await evaluateEntry(config, state, assets, statePath, emergencyStopPath, request);
+    return true;
+  }
+  if (!state.position) throw new Error("Approved SELL blocked because the position no longer exists");
+  await evaluateExit(config, state, statePath, emergencyStopPath, request);
+  return true;
 }
 
 async function cycle(config, state, statePath, emergencyStopPath) {
@@ -1264,6 +1447,8 @@ async function cycle(config, state, statePath, emergencyStopPath) {
 
     if (state.pendingOrder) {
       await finalizePendingOrder(config, state, statePath);
+    } else if (state.approvalRequest) {
+      await processTradeApproval(config, state, statePath, emergencyStopPath);
     } else if (state.position) {
       await evaluateExit(config, state, statePath, emergencyStopPath);
     } else {

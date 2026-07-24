@@ -44,6 +44,9 @@
   "emergencyStopFile": "state/EMERGENCY_STOP",
   "emergencyStopHistoryDirectory": "state/emergency-stop-history",
   "processLockFile": "state/bot.lock",
+  "requireTradeApproval": true,
+  "approvalTtlSeconds": 300,
+  "approvalDecisionDirectory": "state/approval-decisions",
   "settingsCheckIntervalMinutes": 60,
   "sessionWarningHours": 24
 }

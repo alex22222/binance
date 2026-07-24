@@ -24,6 +24,7 @@ const config = {
   minTrend15mPct: 0.8,
   minDirectionalMinutes: 10,
   maxRoundTripCostPct: 0.7,
+  slippagePct: 0.5,
   slippageReservePct: 1,
   estimatedRoundTripGasUsdt: 0.1,
   minNetEdgePct: 0.3
@@ -120,6 +121,54 @@ test("shows pending orders and the latest signal for each symbol", () => {
   assert.equal(snapshot.signals.TSLA.initialRiskPct, 1.55);
   assert.equal(snapshot.signals.TSLA.costCoverageAllowed, false);
   assert.equal(snapshot.signals.NVDA.upMinutes, 6);
+});
+
+test("shows a fresh approval request as actionable and an expired one as read-only", () => {
+  const request = {
+    approvalId: "0123456789abcdef01234567",
+    status: "PENDING_CONFIRMATION",
+    side: "BUY",
+    symbol: "NVDA",
+    address: "0x1111111111111111111111111111111111111111",
+    fromToken: "0x55d398326f99059fF775485246999027B3197955",
+    toToken: "0x1111111111111111111111111111111111111111",
+    fromTokenQty: "50",
+    expectedOutputQty: "0.42",
+    createdAt: "2026-07-24T12:59:00.000Z",
+    expiresAt: "2026-07-24T13:04:00.000Z",
+    dyorRequired: true
+  };
+  const active = buildDashboardSnapshot({
+    config,
+    state: {
+      date: "2026-07-24",
+      realizedPnlUsdt: 0,
+      updatedAt: "2026-07-24T12:59:30.000Z",
+      position: null,
+      pendingOrder: null,
+      approvalRequest: request
+    },
+    traceRecords: [],
+    nowMs: Date.parse("2026-07-24T13:00:00.000Z")
+  });
+  assert.equal(active.approvalRequest.approvalId, request.approvalId);
+  assert.equal(active.approvalRequest.canDecide, true);
+
+  const expired = buildDashboardSnapshot({
+    config,
+    state: {
+      date: "2026-07-24",
+      realizedPnlUsdt: 0,
+      updatedAt: "2026-07-24T13:05:00.000Z",
+      position: null,
+      pendingOrder: null,
+      approvalRequest: request
+    },
+    traceRecords: [],
+    nowMs: Date.parse("2026-07-24T13:05:00.000Z")
+  });
+  assert.equal(expired.approvalRequest.canDecide, false);
+  assert.equal(expired.approvalRequest.displayStatus, "EXPIRED");
 });
 
 test("marks an old heartbeat as stale and exposes the last cycle error", () => {

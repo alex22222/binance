@@ -7,6 +7,7 @@ import { loadDashboardSnapshot } from "../src/dashboard.mjs";
 import { liveDashboardHtml } from "../src/live-dashboard-html.mjs";
 import { activateEmergencyStop, clearEmergencyStop } from "../src/reliability.mjs";
 import { createTracer } from "../src/trace.mjs";
+import { approvalDecisionStatus, recordApprovalDecision } from "../src/approvals.mjs";
 
 const projectRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const configPath = resolve(projectRoot, process.env.BOT_CONFIG || "config.json");
@@ -44,6 +45,11 @@ async function readJsonBody(request) {
   return body ? JSON.parse(body) : {};
 }
 
+function requireLocalOrigin(request) {
+  const origin = request.headers.origin;
+  if (origin && origin !== `http://${host}:${port}`) throw new Error("Cross-origin request rejected");
+}
+
 const server = createServer(async (request, response) => {
   try {
     if (request.method === "GET" && request.url === "/") {
@@ -72,6 +78,7 @@ const server = createServer(async (request, response) => {
       return;
     }
     if (request.method === "POST" && request.url === "/api/emergency-stop") {
+      requireLocalOrigin(request);
       const config = await loadConfig();
       await stopBot(config, "dashboard_operator");
       await traceOperatorAction(config, "emergency_stop", "activated", {
@@ -83,6 +90,7 @@ const server = createServer(async (request, response) => {
       return;
     }
     if (request.method === "POST" && request.url === "/api/emergency-resume") {
+      requireLocalOrigin(request);
       const body = await readJsonBody(request);
       if (body.confirm !== "RESUME") {
         response.writeHead(400, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
@@ -100,6 +108,70 @@ const server = createServer(async (request, response) => {
       });
       response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
       response.end(JSON.stringify({ success: true, emergencyStop: false, botRestarted: false }));
+      return;
+    }
+    if (request.method === "POST" && request.url === "/api/approval-decision") {
+      requireLocalOrigin(request);
+      if (!String(request.headers["content-type"] || "").startsWith("application/json")) {
+        response.writeHead(415, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        response.end(JSON.stringify({ success: false, error: "JSON request required" }));
+        return;
+      }
+      const body = await readJsonBody(request);
+      const config = await loadConfig();
+      const state = JSON.parse(await readFile(resolve(projectRoot, config.stateFile), "utf8"));
+      const approval = state.approvalRequest;
+      if (!approval || body.approvalId !== approval.approvalId) {
+        response.writeHead(409, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        response.end(JSON.stringify({ success: false, error: "Approval request is no longer current" }));
+        return;
+      }
+      const expectedConfirmation = `${body.decision}:${approval.approvalId}`;
+      if (!["APPROVE", "REJECT"].includes(body.decision) || body.confirmation !== expectedConfirmation) {
+        response.writeHead(400, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        response.end(JSON.stringify({ success: false, error: "Exact trade confirmation required" }));
+        return;
+      }
+      const auditUnavailable = approval.audit?.status === "OFFICIAL_RWA_UNSUPPORTED_ACKNOWLEDGED";
+      if (body.decision === "APPROVE" && auditUnavailable && body.auditUnavailableAcknowledged !== true) {
+        response.writeHead(400, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        response.end(JSON.stringify({ success: false, error: "Explicit acknowledgment of unavailable security audit required" }));
+        return;
+      }
+      const decision = {
+        approvalId: approval.approvalId,
+        decision: body.decision,
+        dyorAcknowledged: body.decision === "APPROVE" && body.dyorAcknowledged === true,
+        auditUnavailableAcknowledged: body.decision === "APPROVE" && auditUnavailable && body.auditUnavailableAcknowledged === true,
+        decidedAt: new Date().toISOString()
+      };
+      const outcome = approvalDecisionStatus(approval, decision);
+      if (!["APPROVED", "REJECTED"].includes(outcome.status)) {
+        response.writeHead(409, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        response.end(JSON.stringify({ success: false, error: `Approval is ${outcome.status}` }));
+        return;
+      }
+      await recordApprovalDecision(
+        resolve(projectRoot, config.approvalDecisionDirectory),
+        approval,
+        decision
+      );
+      await traceOperatorAction(config, "trade_approval", body.decision === "APPROVE" ? "approved" : "rejected", {
+        approvalId: approval.approvalId,
+        side: approval.side,
+        symbol: approval.symbol,
+        address: approval.address,
+        requestedBy: "dashboard",
+        dyorAcknowledged: decision.dyorAcknowledged,
+        auditUnavailableAcknowledged: decision.auditUnavailableAcknowledged
+      });
+      response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      response.end(JSON.stringify({
+        success: true,
+        approvalId: approval.approvalId,
+        decision: body.decision,
+        status: body.decision === "APPROVE" ? "APPROVED_PENDING_REVALIDATION" : "REJECTED"
+      }));
       return;
     }
     response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });

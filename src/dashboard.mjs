@@ -57,6 +57,19 @@ export function buildDashboardSnapshot({ config, state, traceRecords, nowMs = Da
           : ((finiteNumber(state.position.lastQuoteProceedsUsdt) / finiteNumber(state.position.costBasisUsdt)) - 1) * 100
       }
     : null;
+  const approvalRequest = state.approvalRequest
+    ? {
+        ...state.approvalRequest,
+        canDecide: (
+          state.approvalRequest.status === "PENDING_CONFIRMATION" &&
+          Number.isFinite(Date.parse(state.approvalRequest.expiresAt || "")) &&
+          nowMs <= Date.parse(state.approvalRequest.expiresAt)
+        ),
+        displayStatus: nowMs > Date.parse(state.approvalRequest.expiresAt || "")
+          ? "EXPIRED"
+          : state.approvalRequest.status
+      }
+    : null;
 
   return {
     generatedAt: new Date(nowMs).toISOString(),
@@ -98,6 +111,7 @@ export function buildDashboardSnapshot({ config, state, traceRecords, nowMs = Da
       minTrend15mPct: config.minTrend15mPct,
       minDirectionalMinutes: config.minDirectionalMinutes,
       maxRoundTripCostPct: config.maxRoundTripCostPct,
+      slippagePct: config.slippagePct,
       slippageReservePct: config.slippageReservePct,
       estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt,
       minNetEdgePct: config.minNetEdgePct,
@@ -109,6 +123,7 @@ export function buildDashboardSnapshot({ config, state, traceRecords, nowMs = Da
       signalReviewMinR: config.signalReviewMinR
     },
     position,
+    approvalRequest,
     pendingOrder: state.pendingOrder || null,
     signals: latestSignals(traceRecords),
     recentActions: traceRecords.slice(-80).reverse()

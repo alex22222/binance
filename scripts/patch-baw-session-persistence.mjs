@@ -8,11 +8,20 @@ import {
   stat,
   writeFile
 } from "node:fs/promises";
+import { join } from "node:path";
 import { patchBawSessionPersistence } from "../src/baw-session-patch.mjs";
 
 const checkOnly = process.argv.includes("--check");
-const bawExecutable = process.env.BAW_CLI_PATH ||
-  execFileSync("/usr/bin/which", ["baw"], { encoding: "utf8" }).trim();
+const globalNodeModules = execFileSync("/usr/local/bin/npm", ["root", "-g"], {
+  encoding: "utf8"
+}).trim();
+const bawExecutable = process.env.BAW_CLI_PATH || join(
+  globalNodeModules,
+  "@binance",
+  "agentic-wallet",
+  "dist",
+  "index.js"
+);
 const target = await realpath(bawExecutable);
 const source = await readFile(target, "utf8");
 const result = patchBawSessionPersistence(source);
