@@ -1,0 +1,30 @@
+{
+  "mode": "shadow",
+  "symbols": [
+    "NVDA",
+    "TSLA",
+    "AAPL",
+    "MSFT",
+    "AMZN",
+    "META",
+    "CRCL",
+    "GOOGL",
+    "SPY",
+    "QQQ"
+  ],
+  "maxTradeUsdt": 50,
+  "dailyLossLimitUsdt": 10,
+  "maxOpenPositions": 1,
+  "pollSeconds": 60,
+  "entryIntervalMinutes": 15,
+  "reentryCooldownMinutes": 30,
+  "stopLossPct": 8,
+  "takeProfitPct": 10,
+  "minTrend15mPct": 0.8,
+  "minDirectionalMinutes": 10,
+  "maxRoundTripCostPct": 0.7,
+  "slippagePct": 0.5,
+  "allowUnsupportedAuditForOfficialRwa": true,
+  "stateFile": "state/bot-state.json",
+  "traceFile": "state/action-trace.jsonl"
+}

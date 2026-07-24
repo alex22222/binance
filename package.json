@@ -1,0 +1,11 @@
+{
+  "name": "binance-agentic-stock-bot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "NODE_OPTIONS=--use-env-proxy node src/bot.mjs",
+    "once": "NODE_OPTIONS=--use-env-proxy node src/bot.mjs --once",
+    "test:feishu": "NODE_OPTIONS=--use-env-proxy node src/bot.mjs --test-feishu",
+    "test": "node --test"
+  }
+}

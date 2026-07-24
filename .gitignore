@@ -1,0 +1,7 @@
+config.json
+state/
+*.log
+SESSION_CONTEXT.md
+LOOP_STATE.md
+artifacts/
+show-agentic-wallet-qr.command
