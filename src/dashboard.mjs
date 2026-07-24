@@ -1,0 +1,138 @@
+import { readFile } from "node:fs/promises";
+import { readEmergencyStop } from "./reliability.mjs";
+
+function finiteNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function latestSignals(traceRecords) {
+  const signals = {};
+  for (const record of traceRecords) {
+    if (!["candidate_rejected", "candidate_evaluated", "candidate_selected"].includes(record.event)) continue;
+    const symbol = record.details?.symbol;
+    if (!symbol) continue;
+    signals[symbol] = {
+      event: record.event,
+      status: record.status,
+      timestamp: record.timestamp,
+      trend15mPct: finiteNumber(record.details.trend15mPct, null),
+      upMinutes: finiteNumber(record.details.upMinutes, null),
+      roundTripCostPct: finiteNumber(record.details.roundTripCostPct, null),
+      allInCostPct: finiteNumber(record.details.allInCostPct, null),
+      netEdgeProxyPct: finiteNumber(record.details.netEdgeProxyPct, null),
+      costCoverageAllowed: record.details.costCoverageAllowed ?? null,
+      costCoverageReason: record.details.costCoverageReason || null,
+      atr15Pct: finiteNumber(record.details.atr15Pct, null),
+      initialRiskPct: finiteNumber(record.details.initialRiskPct, null),
+      finalTakeProfitPct: finiteNumber(record.details.finalTakeProfitPct, null),
+      reason: record.details.reason || null
+    };
+  }
+  return signals;
+}
+
+export function buildDashboardSnapshot({ config, state, traceRecords, nowMs = Date.now() }) {
+  const updatedAtMs = Date.parse(state.updatedAt || "");
+  const staleAfterMs = Math.max(15_000, finiteNumber(config.pollSeconds, 60) * 3_000);
+  const heartbeatAgeMs = Number.isFinite(updatedAtMs) ? Math.max(0, nowMs - updatedAtMs) : null;
+  const realizedPnlUsdt = finiteNumber(state.realizedPnlUsdt);
+  const position = state.position
+    ? {
+        ...state.position,
+        quantity: finiteNumber(state.position.quantity),
+        costBasisUsdt: finiteNumber(state.position.costBasisUsdt),
+        initialRiskPct: finiteNumber(state.position.initialRiskPct, null),
+        profitFloorPct: finiteNumber(state.position.profitFloorPct, null),
+        entryAtr15Pct: finiteNumber(state.position.entryAtr15Pct, null),
+        currentAtr15Pct: finiteNumber(state.position.currentAtr15Pct, null),
+        peakReturnPct: finiteNumber(state.position.peakReturnPct, 0),
+        trailingStopPct: finiteNumber(state.position.trailingStopPct, null),
+        lastQuoteProceedsUsdt: finiteNumber(state.position.lastQuoteProceedsUsdt, null),
+        unrealizedPnlUsdt: state.position.lastQuoteProceedsUsdt == null
+          ? null
+          : finiteNumber(state.position.lastQuoteProceedsUsdt) - finiteNumber(state.position.costBasisUsdt),
+        returnPct: state.position.lastQuoteProceedsUsdt == null || !(finiteNumber(state.position.costBasisUsdt) > 0)
+          ? null
+          : ((finiteNumber(state.position.lastQuoteProceedsUsdt) / finiteNumber(state.position.costBasisUsdt)) - 1) * 100
+      }
+    : null;
+
+  return {
+    generatedAt: new Date(nowMs).toISOString(),
+    mode: config.mode,
+    executionPolicy: "PER_TRADE_CONFIRMATION_REQUIRED",
+    health: {
+      status: state.emergencyStop?.active
+        ? "HALTED"
+        : state.walletSession?.status === "EXPIRED"
+          ? "AUTH_REQUIRED"
+        : heartbeatAgeMs == null
+          ? "WAITING"
+          : heartbeatAgeMs > staleAfterMs
+            ? "STALE"
+            : state.lastError
+              ? "DEGRADED"
+              : "RUNNING",
+      updatedAt: state.updatedAt || null,
+      heartbeatAgeMs,
+      lastError: state.lastError || null,
+      walletSession: state.walletSession || null,
+      emergencyStop: state.emergencyStop || null
+    },
+    risk: {
+      maxTradeUsdt: finiteNumber(config.maxTradeUsdt),
+      dailyLossLimitUsdt: finiteNumber(config.dailyLossLimitUsdt),
+      realizedPnlUsdt,
+      dailyLossRemainingUsdt: Math.max(0, finiteNumber(config.dailyLossLimitUsdt) + realizedPnlUsdt),
+      maxOpenPositions: config.maxOpenPositions,
+      disasterStopLossPct: finiteNumber(config.disasterStopLossPct),
+      minInitialStopPct: finiteNumber(config.minInitialStopPct),
+      maxInitialStopPct: finiteNumber(config.maxInitialStopPct),
+      profitProtectionR: finiteNumber(config.profitProtectionR),
+      finalTakeProfitR: finiteNumber(config.finalTakeProfitR)
+    },
+    strategy: {
+      symbols: config.symbols,
+      entryIntervalMinutes: config.entryIntervalMinutes,
+      minTrend15mPct: config.minTrend15mPct,
+      minDirectionalMinutes: config.minDirectionalMinutes,
+      maxRoundTripCostPct: config.maxRoundTripCostPct,
+      slippageReservePct: config.slippageReservePct,
+      estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt,
+      minNetEdgePct: config.minNetEdgePct,
+      atrPeriod: config.atrPeriod,
+      atrStopMultiplier: config.atrStopMultiplier,
+      initialStopCostBufferPct: config.initialStopCostBufferPct,
+      trailingAtrMultiplier: config.trailingAtrMultiplier,
+      signalReviewHours: config.signalReviewHours,
+      signalReviewMinR: config.signalReviewMinR
+    },
+    position,
+    pendingOrder: state.pendingOrder || null,
+    signals: latestSignals(traceRecords),
+    recentActions: traceRecords.slice(-80).reverse()
+  };
+}
+
+export async function loadDashboardSnapshot({ configPath, statePath, tracePath, emergencyStopPath, nowMs = Date.now() }) {
+  const [configText, stateText, traceText, emergencyStop] = await Promise.all([
+    readFile(configPath, "utf8"),
+    readFile(statePath, "utf8").catch((error) => error.code === "ENOENT" ? "{}" : Promise.reject(error)),
+    readFile(tracePath, "utf8").catch((error) => error.code === "ENOENT" ? "" : Promise.reject(error)),
+    emergencyStopPath ? readEmergencyStop(emergencyStopPath) : null
+  ]);
+  const traceRecords = traceText
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  return buildDashboardSnapshot({
+    config: JSON.parse(configText),
+    state: {
+      ...JSON.parse(stateText),
+      emergencyStop
+    },
+    traceRecords,
+    nowMs
+  });
+}

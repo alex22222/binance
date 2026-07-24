@@ -1,0 +1,206 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { buildDashboardSnapshot } from "../src/dashboard.mjs";
+
+const config = {
+  mode: "shadow",
+  symbols: ["NVDA", "TSLA"],
+  maxTradeUsdt: 50,
+  dailyLossLimitUsdt: 10,
+  maxOpenPositions: 1,
+  pollSeconds: 60,
+  entryIntervalMinutes: 15,
+  disasterStopLossPct: 8,
+  atrPeriod: 14,
+  atrStopMultiplier: 1.5,
+  minInitialStopPct: 1,
+  maxInitialStopPct: 3.5,
+  initialStopCostBufferPct: 0.5,
+  profitProtectionR: 1,
+  trailingAtrMultiplier: 1,
+  finalTakeProfitR: 2,
+  signalReviewHours: 4,
+  signalReviewMinR: 0.5,
+  minTrend15mPct: 0.8,
+  minDirectionalMinutes: 10,
+  maxRoundTripCostPct: 0.7,
+  slippageReservePct: 1,
+  estimatedRoundTripGasUsdt: 0.1,
+  minNetEdgePct: 0.3
+};
+
+test("builds a live position snapshot from the latest executable sell quote", () => {
+  const nowMs = Date.parse("2026-07-24T13:00:00.000Z");
+  const snapshot = buildDashboardSnapshot({
+    config,
+    state: {
+      date: "2026-07-24",
+      realizedPnlUsdt: -1,
+      updatedAt: "2026-07-24T12:59:30.000Z",
+      lastError: null,
+      pendingOrder: null,
+      position: {
+        symbol: "NVDA",
+        address: "0xabc",
+        quantity: 0.5,
+        costBasisUsdt: 50,
+        initialRiskPct: 2,
+        profitFloorPct: 1.7,
+        entryAtr15Pct: 1,
+        currentAtr15Pct: 0.9,
+        peakReturnPct: 8.5,
+        profitProtectionActive: true,
+        trailingStopPct: 7.6,
+        openedAt: "2026-07-24T12:00:00.000Z",
+        lastQuoteProceedsUsdt: 54,
+        lastQuoteAt: "2026-07-24T12:59:30.000Z",
+        shadow: false
+      }
+    },
+    traceRecords: [],
+    nowMs
+  });
+
+  assert.equal(snapshot.health.status, "RUNNING");
+  assert.equal(snapshot.position.unrealizedPnlUsdt, 4);
+  assert.ok(Math.abs(snapshot.position.returnPct - 8) < 1e-9);
+  assert.equal(snapshot.risk.dailyLossRemainingUsdt, 9);
+  assert.equal(snapshot.risk.disasterStopLossPct, 8);
+  assert.equal(snapshot.position.initialRiskPct, 2);
+  assert.equal(snapshot.position.profitFloorPct, 1.7);
+  assert.equal(snapshot.position.trailingStopPct, 7.6);
+  assert.equal(snapshot.position.address, "0xabc");
+});
+
+test("shows pending orders and the latest signal for each symbol", () => {
+  const snapshot = buildDashboardSnapshot({
+    config,
+    state: {
+      date: "2026-07-24",
+      realizedPnlUsdt: 0,
+      updatedAt: "2026-07-24T12:59:30.000Z",
+      position: null,
+      pendingOrder: { side: "BUY", symbol: "TSLA", orderId: "order-1" }
+    },
+    traceRecords: [
+      {
+        timestamp: "2026-07-24T12:58:00.000Z",
+        sequence: 1,
+        event: "candidate_rejected",
+        status: "skipped",
+        details: { symbol: "NVDA", trend15mPct: -0.2, upMinutes: 6 }
+      },
+      {
+        timestamp: "2026-07-24T12:59:00.000Z",
+        sequence: 2,
+        event: "candidate_evaluated",
+        status: "succeeded",
+        details: {
+          symbol: "TSLA",
+          trend15mPct: 1.1,
+          upMinutes: 11,
+          roundTripCostPct: 0.4,
+          allInCostPct: 0.9,
+          netEdgeProxyPct: 0.2,
+          atr15Pct: 0.7,
+          initialRiskPct: 1.55,
+          finalTakeProfitPct: 3.1,
+          costCoverageAllowed: false,
+          costCoverageReason: "INSUFFICIENT_NET_EDGE"
+        }
+      }
+    ],
+    nowMs: Date.parse("2026-07-24T13:00:00.000Z")
+  });
+
+  assert.equal(snapshot.pendingOrder.orderId, "order-1");
+  assert.equal(snapshot.signals.TSLA.trend15mPct, 1.1);
+  assert.equal(snapshot.signals.TSLA.allInCostPct, 0.9);
+  assert.equal(snapshot.signals.TSLA.atr15Pct, 0.7);
+  assert.equal(snapshot.signals.TSLA.initialRiskPct, 1.55);
+  assert.equal(snapshot.signals.TSLA.costCoverageAllowed, false);
+  assert.equal(snapshot.signals.NVDA.upMinutes, 6);
+});
+
+test("marks an old heartbeat as stale and exposes the last cycle error", () => {
+  const snapshot = buildDashboardSnapshot({
+    config,
+    state: {
+      date: "2026-07-24",
+      realizedPnlUsdt: 0,
+      updatedAt: "2026-07-24T12:50:00.000Z",
+      lastError: "Wallet status is UNCONNECTED",
+      position: null,
+      pendingOrder: null
+    },
+    traceRecords: [],
+    nowMs: Date.parse("2026-07-24T13:00:00.000Z")
+  });
+
+  assert.equal(snapshot.health.status, "STALE");
+  assert.equal(snapshot.health.lastError, "Wallet status is UNCONNECTED");
+});
+
+test("marks a recent heartbeat as degraded when the latest cycle failed", () => {
+  const snapshot = buildDashboardSnapshot({
+    config,
+    state: {
+      date: "2026-07-24",
+      realizedPnlUsdt: 0,
+      updatedAt: "2026-07-24T12:59:59.000Z",
+      lastError: "NETWORK_ERROR: Connection reset by server",
+      position: null,
+      pendingOrder: null
+    },
+    traceRecords: [],
+    nowMs: Date.parse("2026-07-24T13:00:00.000Z")
+  });
+
+  assert.equal(snapshot.health.status, "DEGRADED");
+});
+
+test("distinguishes a required wallet login from a service degradation", () => {
+  const snapshot = buildDashboardSnapshot({
+    config,
+    state: {
+      date: "2026-07-24",
+      realizedPnlUsdt: 0,
+      updatedAt: "2026-07-24T12:59:59.000Z",
+      lastError: "SESSION_EXPIRED: Please log in first.",
+      walletSession: {
+        status: "EXPIRED",
+        errorCode: 10003002,
+        errorName: "SESSION_EXPIRED"
+      },
+      position: null,
+      pendingOrder: null
+    },
+    traceRecords: [],
+    nowMs: Date.parse("2026-07-24T13:00:00.000Z")
+  });
+
+  assert.equal(snapshot.health.status, "AUTH_REQUIRED");
+});
+
+test("shows a durable emergency stop as halted even when the last heartbeat is recent", () => {
+  const snapshot = buildDashboardSnapshot({
+    config,
+    state: {
+      date: "2026-07-24",
+      realizedPnlUsdt: 0,
+      updatedAt: "2026-07-24T12:59:59.000Z",
+      emergencyStop: {
+        active: true,
+        reason: "operator",
+        activatedAt: "2026-07-24T12:59:58.000Z"
+      },
+      position: null,
+      pendingOrder: null
+    },
+    traceRecords: [],
+    nowMs: Date.parse("2026-07-24T13:00:00.000Z")
+  });
+
+  assert.equal(snapshot.health.status, "HALTED");
+  assert.equal(snapshot.health.emergencyStop.reason, "operator");
+});

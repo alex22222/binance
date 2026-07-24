@@ -6,15 +6,35 @@ import { promisify } from "node:util";
 import {
   analyzeCandles,
   auditDecision,
+  calculateAtrPct,
+  costCoverageDecision,
   dailyLossReached,
-  exitReason,
+  dynamicExitDecision,
+  executionCostEstimate,
+  initialRiskDecision,
   pendingOrderAction,
   rankCandidates,
   roundTripCostPct,
+  simulateRoundTrip,
   uniqueSymbols,
   validateConfig
 } from "./strategy.mjs";
 import { createTracer } from "./trace.mjs";
+import { retry } from "./retry.mjs";
+import {
+  BawError,
+  acquireProcessLock,
+  assertQuoteFresh,
+  createOrderIntent,
+  isTransientNetworkError,
+  matchingOrdersForIntent,
+  quoteDriftPct,
+  readEmergencyStop,
+  recoveryActionForPending,
+  resolveWalletStatus,
+  runtimeFailureUpdate,
+  walletSessionStatusFromSettings
+} from "./reliability.mjs";
 
 const execFileAsync = promisify(execFile);
 const BSC_CHAIN_ID = "56";
@@ -23,11 +43,14 @@ const API_BASE = "https://www.binance.com/bapi/defi";
 const AUDIT_URL = "https://web3.binance.com/bapi/defi/v1/public/wallet-direct/security/token/audit";
 const once = process.argv.includes("--once");
 const testFeishu = process.argv.includes("--test-feishu");
+const mockTrade = process.argv.includes("--mock-trade");
 const projectRoot = resolve(import.meta.dirname, "..");
 const configPath = resolve(projectRoot, process.env.BOT_CONFIG || "config.json");
 let feishuTokenCache = null;
 let traceAction = async () => {};
 let currentCycleId = null;
+let shutdownRequested = false;
+let wakeLoop = null;
 
 function log(message, fields = {}) {
   console.log(JSON.stringify({ time: new Date().toISOString(), message, ...fields }));
@@ -61,7 +84,11 @@ function freshState() {
     pendingOrder: null,
     cooldownUntil: {},
     lastEntryDecisionAt: 0,
-    pendingNotifications: []
+    pendingNotifications: [],
+    updatedAt: null,
+    lastError: null,
+    lastSettingsCheckAt: 0,
+    sessionWarningFor: null
   };
 }
 
@@ -84,17 +111,37 @@ async function fetchJson(url, options = {}) {
   const endpoint = new URL(url).pathname;
   await traceAction("external_api_call", "started", { endpoint, method: options.method || "GET" }, currentCycleId);
   try {
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        "Accept-Encoding": "identity",
-        "User-Agent": "binance-web3-stock-bot/1.0",
-        ...options.headers
+    const body = await retry(async () => {
+      const response = await fetch(url, {
+        ...options,
+        signal: AbortSignal.timeout(10_000),
+        headers: {
+          "Accept-Encoding": "identity",
+          "User-Agent": "binance-web3-stock-bot/1.0",
+          ...options.headers
+        }
+      });
+      if (!response.ok) {
+        const error = new Error(`HTTP ${response.status} from ${endpoint}`);
+        error.status = response.status;
+        throw error;
+      }
+      const result = await response.json();
+      if (result.success !== true) throw new Error(result.message || result.messageDetail || `API error ${result.code}`);
+      return result;
+    }, {
+      attempts: 3,
+      delayMs: 500,
+      shouldRetry: isTransientNetworkError,
+      onRetry: async (error, attempt, nextAttempt) => {
+        await traceAction("external_api_retry", "scheduled", {
+          endpoint,
+          attempt,
+          nextAttempt,
+          error: error.message
+        }, currentCycleId);
       }
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status} from ${endpoint}`);
-    const body = await response.json();
-    if (body.success !== true) throw new Error(body.message || body.messageDetail || `API error ${body.code}`);
     await traceAction("external_api_call", "succeeded", { endpoint, method: options.method || "GET" }, currentCycleId);
     return body.data;
   } catch (error) {
@@ -103,9 +150,20 @@ async function fetchJson(url, options = {}) {
   }
 }
 
-async function baw(args) {
-  const operation = args.slice(0, 2).join(" ");
-  await traceAction("wallet_cli", "started", { operation }, currentCycleId);
+function bawResultFromOutput(output, operation) {
+  const result = JSON.parse(String(output));
+  if (!result.success) {
+    throw new BawError({
+      code: result.error?.code,
+      name: result.error?.name,
+      message: result.error?.message,
+      operation
+    });
+  }
+  return result.data;
+}
+
+async function executeBaw(args, operation) {
   const nodeOptions = process.env.NODE_OPTIONS?.includes("--use-env-proxy")
     ? process.env.NODE_OPTIONS
     : [process.env.NODE_OPTIONS, "--use-env-proxy"].filter(Boolean).join(" ");
@@ -114,12 +172,51 @@ async function baw(args) {
       env: { ...process.env, NODE_OPTIONS: nodeOptions },
       maxBuffer: 1024 * 1024
     });
-    const result = JSON.parse(stdout);
-    if (!result.success) throw new Error(`${result.error?.name || "BAW_ERROR"}: ${result.error?.message || "Command failed"}`);
-    await traceAction("wallet_cli", "succeeded", { operation }, currentCycleId);
-    return result.data;
+    return bawResultFromOutput(stdout, operation);
   } catch (error) {
-    await traceAction("wallet_cli", "failed", { operation, error: error.message }, currentCycleId);
+    if (error instanceof BawError) throw error;
+    if (error.stdout) {
+      try {
+        return bawResultFromOutput(error.stdout, operation);
+      } catch (parseError) {
+        if (parseError instanceof BawError) throw parseError;
+      }
+    }
+    throw error;
+  }
+}
+
+async function baw(args, { stateChanging = false } = {}) {
+  const operation = args.slice(0, 2).join(" ");
+  await traceAction("wallet_cli", "started", { operation }, currentCycleId);
+  try {
+    const data = await retry(
+      () => executeBaw(args, operation),
+      {
+        attempts: stateChanging ? 1 : 3,
+        delayMs: 500,
+        shouldRetry: isTransientNetworkError,
+        onRetry: async (error, attempt, nextAttempt) => {
+          await traceAction("wallet_cli_retry", "scheduled", {
+            operation,
+            attempt,
+            nextAttempt,
+            error: error.message
+          }, currentCycleId);
+        }
+      }
+    );
+    await traceAction("wallet_cli", "succeeded", { operation }, currentCycleId);
+    return data;
+  } catch (error) {
+    if (!error.operation) error.operation = operation;
+    await traceAction("wallet_cli", "failed", {
+      operation,
+      error: error.message,
+      code: error.code,
+      name: error.name,
+      stateChanging
+    }, currentCycleId);
     throw error;
   }
 }
@@ -142,16 +239,48 @@ function feishuReceiveIdType(receiveId) {
   throw new Error("FEISHU_RECEIVE_ID_TYPE is required for an unrecognized Feishu ID");
 }
 
+function errorTraceDetails(error) {
+  return {
+    error: error.message,
+    causeCode: error.cause?.code,
+    causeMessage: error.cause?.message
+  };
+}
+
+async function feishuFetch(url, options, stage) {
+  return retry(async () => {
+    const response = await fetch(url, options);
+    if (response.status === 429 || response.status >= 500) {
+      const error = new Error(`Feishu HTTP ${response.status}`);
+      error.retryable = true;
+      throw error;
+    }
+    return response;
+  }, {
+    attempts: 3,
+    delayMs: 500,
+    shouldRetry: (error) => error instanceof TypeError || error.retryable === true,
+    onRetry: async (error, attempt, nextAttempt) => {
+      await traceAction("feishu_retry", "scheduled", {
+        stage,
+        attempt,
+        nextAttempt,
+        ...errorTraceDetails(error)
+      }, currentCycleId);
+    }
+  });
+}
+
 async function feishuTenantToken() {
   if (feishuTokenCache?.expiresAt > Date.now() + 60_000) return feishuTokenCache.token;
-  const response = await fetch("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal", {
+  const response = await feishuFetch("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal", {
     method: "POST",
     headers: { "Content-Type": "application/json; charset=utf-8" },
     body: JSON.stringify({
       app_id: process.env.FEISHU_APP_ID,
       app_secret: process.env.FEISHU_APP_SECRET
     })
-  });
+  }, "tenant_token");
   const body = await response.json();
   if (!response.ok || body.code !== 0 || !body.tenant_access_token) {
     throw new Error(`Feishu token request failed: ${body.code ?? response.status} ${body.msg || ""}`.trim());
@@ -166,11 +295,11 @@ async function feishuTenantToken() {
 async function sendFeishu(text) {
   await traceAction("feishu_notification", "started", { messageLength: text.length }, currentCycleId);
   if (process.env.FEISHU_WEBHOOK_URL) {
-    const response = await fetch(process.env.FEISHU_WEBHOOK_URL, {
+    const response = await feishuFetch(process.env.FEISHU_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ msg_type: "text", content: { text } })
-    });
+    }, "webhook");
     if (!response.ok) throw new Error(`Feishu webhook failed: HTTP ${response.status}`);
     await traceAction("feishu_notification", "succeeded", { channel: "webhook", messageLength: text.length }, currentCycleId);
     return;
@@ -179,7 +308,7 @@ async function sendFeishu(text) {
   const receiveId = process.env.FEISHU_RECEIVE_ID;
   const receiveIdType = feishuReceiveIdType(receiveId);
   const token = await feishuTenantToken();
-  const response = await fetch(
+  const response = await feishuFetch(
     `https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=${encodeURIComponent(receiveIdType)}`,
     {
       method: "POST",
@@ -192,7 +321,8 @@ async function sendFeishu(text) {
         msg_type: "text",
         content: JSON.stringify({ text })
       })
-    }
+    },
+    "message"
   );
   const body = await response.json();
   if (!response.ok || body.code !== 0) {
@@ -213,7 +343,10 @@ async function notify(state, text) {
     await sendFeishu(text);
     return true;
   } catch (error) {
-    await traceAction("feishu_notification", "failed", { error: error.message, messageLength: text.length }, currentCycleId);
+    await traceAction("feishu_notification", "failed", {
+      ...errorTraceDetails(error),
+      messageLength: text.length
+    }, currentCycleId);
     state.pendingNotifications.push({ time: new Date().toISOString(), text });
     log("Feishu notification failed and was queued", { error: error.message });
     return false;
@@ -252,13 +385,13 @@ async function assetStatus(address) {
   return fetchJson(`${API_BASE}/v1/public/wallet-direct/buw/wallet/market/token/rwa/asset/market/status/ai?chainId=${BSC_CHAIN_ID}&contractAddress=${address}`);
 }
 
-async function candles(address) {
-  const data = await fetchJson(`${API_BASE}/v1/public/wallet-direct/buw/wallet/dex/market/token/kline/ai?chainId=${BSC_CHAIN_ID}&contractAddress=${address}&interval=1m&limit=31`);
+async function candles(address, interval = "1m", limit = 31) {
+  const data = await fetchJson(`${API_BASE}/v1/public/wallet-direct/buw/wallet/dex/market/token/kline/ai?chainId=${BSC_CHAIN_ID}&contractAddress=${address}&interval=${interval}&limit=${limit}`);
   return data.klineInfos || [];
 }
 
-async function quote(fromTokenQty, fromToken, toToken) {
-  return baw([
+async function quote(fromTokenQty, fromToken, toToken, slippagePct) {
+  const result = await baw([
     "market-order",
     "quote",
     "--fromTokenQty",
@@ -270,8 +403,12 @@ async function quote(fromTokenQty, fromToken, toToken) {
     "--binanceChainId",
     BSC_CHAIN_ID,
     "--slippage",
-    "0.5"
+    String(slippagePct)
   ]);
+  return {
+    ...result,
+    quotedAt: new Date().toISOString()
+  };
 }
 
 async function tokenBalance(address) {
@@ -284,6 +421,50 @@ async function tokenBalance(address) {
     BSC_CHAIN_ID
   ]);
   return Number(balances[0]?.balance || 0);
+}
+
+async function checkSessionExpiry(config, state) {
+  const now = Date.now();
+  if (now - Number(state.lastSettingsCheckAt || 0) < config.settingsCheckIntervalMinutes * 60_000) return;
+  state.lastSettingsCheckAt = now;
+  try {
+    const settings = await baw(["wallet", "settings"]);
+    const expiry = walletSessionStatusFromSettings({
+      settings,
+      nowMs: now,
+      warningMs: config.sessionWarningHours * 60 * 60 * 1000
+    });
+    state.walletSession = {
+      ...state.walletSession,
+      status: expiry.status === "UNKNOWN" ? state.walletSession?.status || "CONNECTED" : expiry.status,
+      checkedAt: new Date(now).toISOString(),
+      sessionExpireTime: settings.sessionExpireTime || null,
+      signInMaxTime: settings.signInMaxTime || null,
+      inactiveSignOutTime: settings.inactiveSignOutTime || null,
+      remainingMs: expiry.remainingMs
+    };
+    if (expiry.status === "EXPIRING" && state.sessionWarningFor !== expiry.maxExpireTime) {
+      await notify(
+        state,
+        `[Agentic Stock Bot] WALLET SESSION EXPIRING\n到期时间: ${expiry.maxExpireTime}\n请在到期前重新登录；机器人不会自动处理二维码授权。`
+      );
+      state.sessionWarningFor = expiry.maxExpireTime;
+    } else if (expiry.status === "CONNECTED") {
+      state.sessionWarningFor = null;
+    }
+    await traceAction("wallet_session_check", "succeeded", {
+      status: expiry.status,
+      sessionExpireTime: settings.sessionExpireTime || null,
+      signInMaxTime: settings.signInMaxTime || null,
+      remainingMs: expiry.remainingMs
+    }, currentCycleId);
+  } catch (error) {
+    await traceAction("wallet_session_check", "failed", {
+      error: error.message,
+      code: error.code,
+      name: error.name
+    }, currentCycleId);
+  }
 }
 
 async function audit(asset, config) {
@@ -352,7 +533,7 @@ async function swap(config, fromTokenQty, fromToken, toToken) {
     "true",
     "--gasLevel",
     "HIGH"
-  ]);
+  ], { stateChanging: true });
 }
 
 async function marketOrder(orderId) {
@@ -360,96 +541,243 @@ async function marketOrder(orderId) {
   return data.list?.[0] || null;
 }
 
-async function finalizePendingOrder(config, state) {
+async function ensureNotEmergencyStopped(emergencyStopPath, state) {
+  if (shutdownRequested) {
+    const error = new Error("Shutdown requested");
+    error.code = "SHUTDOWN_REQUESTED";
+    throw error;
+  }
+  const marker = await readEmergencyStop(emergencyStopPath);
+  if (!marker?.active) {
+    state.emergencyStop = null;
+    return;
+  }
+  state.emergencyStop = marker;
+  const error = new Error(`Emergency stop is active: ${marker.reason}`);
+  error.code = "EMERGENCY_STOP";
+  throw error;
+}
+
+async function submitOrder(config, state, statePath, emergencyStopPath, details) {
+  if (config.mode !== "live") {
+    return swap(config, details.fromTokenQty, details.fromToken, details.toToken);
+  }
+
+  await ensureNotEmergencyStopped(emergencyStopPath, state);
+  const intent = createOrderIntent(details);
+  state.pendingOrder = intent;
+  await saveJson(statePath, state);
+  await traceAction("order_intent", "persisted", {
+    intentId: intent.intentId,
+    side: intent.side,
+    symbol: intent.symbol,
+    address: intent.address
+  }, currentCycleId);
+
+  try {
+    await ensureNotEmergencyStopped(emergencyStopPath, state);
+    const result = await swap(config, details.fromTokenQty, details.fromToken, details.toToken);
+    state.pendingOrder = {
+      ...intent,
+      status: "SUBMITTED",
+      orderId: result.orderId,
+      submittedAt: new Date().toISOString()
+    };
+    await saveJson(statePath, state);
+    return result;
+  } catch (error) {
+    state.pendingOrder = {
+      ...intent,
+      status: "AMBIGUOUS",
+      ambiguousAt: new Date().toISOString(),
+      lastError: error.message
+    };
+    await saveJson(statePath, state);
+    await traceAction("order_submission", "ambiguous", {
+      intentId: intent.intentId,
+      side: intent.side,
+      symbol: intent.symbol,
+      error: error.message
+    }, currentCycleId);
+    throw error;
+  }
+}
+
+async function reconcilePendingOrder(state, statePath) {
+  const pending = state.pendingOrder;
+  const data = await baw([
+    "market-order",
+    "list",
+    "--fromToken",
+    pending.fromToken,
+    "--toToken",
+    pending.toToken,
+    "--startTime",
+    String(Date.parse(pending.createdAt) - 60_000),
+    "--endTime",
+    String(Date.now()),
+    "--pageSize",
+    "100",
+    "--binanceChainId",
+    BSC_CHAIN_ID
+  ]);
+  const matches = matchingOrdersForIntent(data.list || [], pending);
+  if (matches.length === 1) {
+    state.pendingOrder = {
+      ...pending,
+      status: "SUBMITTED",
+      orderId: matches[0].orderId,
+      reconciledAt: new Date().toISOString()
+    };
+    await saveJson(statePath, state);
+    await traceAction("order_recovery", "reconciled", {
+      intentId: pending.intentId,
+      orderId: matches[0].orderId
+    }, currentCycleId);
+    return "RECONCILED";
+  }
+
+  state.pendingOrder = {
+    ...pending,
+    status: "REVIEW_REQUIRED",
+    reviewReason: matches.length === 0 ? "NO_MATCHING_ORDER" : "MULTIPLE_MATCHING_ORDERS",
+    reviewedAt: new Date().toISOString()
+  };
+  await saveJson(statePath, state);
+  await traceAction("order_recovery", "halted", {
+    intentId: pending.intentId,
+    matchCount: matches.length,
+    reason: state.pendingOrder.reviewReason
+  }, currentCycleId);
+  return "REVIEW_REQUIRED";
+}
+
+async function finalizePendingOrder(config, state, statePath) {
   const pending = state.pendingOrder;
   if (!pending) return false;
-  const order = await marketOrder(pending.orderId);
+  const recoveryAction = recoveryActionForPending(pending);
+  if (recoveryAction === "RECONCILE") {
+    const result = await reconcilePendingOrder(state, statePath);
+    if (result === "REVIEW_REQUIRED") {
+      await notify(
+        state,
+        `[Agentic Stock Bot] ORDER REVIEW REQUIRED\n${pending.side} ${pending.symbol} ${pending.address}\nIntent: ${pending.intentId}`
+      );
+      return true;
+    }
+  } else if (recoveryAction === "HALT") {
+    await traceAction("pending_order", "halted", {
+      intentId: pending.intentId,
+      reason: pending.reviewReason || "review_required"
+    }, currentCycleId);
+    return true;
+  }
+
+  const submitted = state.pendingOrder;
+  const order = await marketOrder(submitted.orderId);
   const action = pendingOrderAction(order?.status);
   if (action === "WAIT") {
-    await traceAction("pending_order", "waiting", { orderId: pending.orderId, side: pending.side }, currentCycleId);
-    log("Order is still pending", { orderId: pending.orderId, side: pending.side });
+    await traceAction("pending_order", "waiting", { orderId: submitted.orderId, side: submitted.side }, currentCycleId);
+    log("Order is still pending", { orderId: submitted.orderId, side: submitted.side });
     return true;
   }
 
   if (action === "FAIL") {
-    await traceAction("pending_order", "failed", { orderId: pending.orderId, side: pending.side }, currentCycleId);
+    await traceAction("pending_order", "failed", { orderId: submitted.orderId, side: submitted.side }, currentCycleId);
     state.pendingOrder = null;
     await notify(
       state,
-      `[Agentic Stock Bot] ORDER FAILED\n${pending.side} ${pending.symbol}\n订单: ${pending.orderId}`
+      `[Agentic Stock Bot] ORDER FAILED\n${submitted.side} ${submitted.symbol}\n订单: ${submitted.orderId}`
     );
     return true;
   }
 
-  if (pending.side === "BUY") {
-    const quantity = await tokenBalance(pending.address);
-    if (!(quantity > 0)) throw new Error(`Finished BUY has no token balance for ${pending.symbol}`);
+  if (submitted.side === "BUY") {
+    const quantity = await tokenBalance(submitted.address);
+    if (!(quantity > 0)) throw new Error(`Finished BUY has no token balance for ${submitted.symbol}`);
     state.position = {
-      symbol: pending.symbol,
-      address: pending.address,
+      symbol: submitted.symbol,
+      address: submitted.address,
       quantity,
-      costBasisUsdt: pending.costBasisUsdt,
-      openedAt: pending.createdAt,
-      orderId: pending.orderId,
+      costBasisUsdt: submitted.costBasisUsdt,
+      entryCostCoverage: submitted.costCoverage,
+      initialRiskPct: submitted.initialRiskPct,
+      profitFloorPct: submitted.profitFloorPct,
+      entryAtr15Pct: submitted.entryAtr15Pct,
+      finalTakeProfitPct: submitted.finalTakeProfitPct,
+      peakReturnPct: 0,
+      profitProtectionActive: false,
+      trailingStopPct: null,
+      openedAt: submitted.createdAt,
+      orderId: submitted.orderId,
       shadow: false
     };
     state.pendingOrder = null;
     await traceAction("pending_order", "finished", {
-      orderId: pending.orderId,
-      side: pending.side,
-      symbol: pending.symbol,
+      orderId: submitted.orderId,
+      side: submitted.side,
+      symbol: submitted.symbol,
       quantity
     }, currentCycleId);
     await notify(
       state,
       [
         "[Agentic Stock Bot] BUY FINISHED",
-        `${pending.symbol} ${pending.address}`,
+        `${submitted.symbol} ${submitted.address}`,
         `实际持仓: ${quantity}`,
-        `投入: ${pending.costBasisUsdt} USDT`,
-        `订单: ${pending.orderId}`
+        `投入: ${submitted.costBasisUsdt} USDT`,
+        `订单: ${submitted.orderId}`
       ].join("\n")
     );
     return true;
   }
 
   const usdtAfter = await tokenBalance(USDT_ADDRESS);
-  const proceedsUsdt = Math.max(0, usdtAfter - pending.usdtBefore);
-  const realizedPnlUsdt = proceedsUsdt - pending.costBasisUsdt;
+  const proceedsUsdt = Math.max(0, usdtAfter - submitted.usdtBefore);
+  const realizedPnlUsdt = proceedsUsdt - submitted.costBasisUsdt;
   state.realizedPnlUsdt += realizedPnlUsdt;
-  state.cooldownUntil[pending.symbol] = Date.now() + config.reentryCooldownMinutes * 60_000;
+  state.cooldownUntil[submitted.symbol] = Date.now() + config.reentryCooldownMinutes * 60_000;
   state.position = null;
   state.pendingOrder = null;
   await traceAction("pending_order", "finished", {
-    orderId: pending.orderId,
-    side: pending.side,
-    symbol: pending.symbol,
+    orderId: submitted.orderId,
+    side: submitted.side,
+    symbol: submitted.symbol,
     proceedsUsdt,
     realizedPnlUsdt
   }, currentCycleId);
   await notify(
     state,
     [
-      `[Agentic Stock Bot] SELL FINISHED ${pending.reason}`,
-      `${pending.symbol} ${pending.address}`,
+      `[Agentic Stock Bot] SELL FINISHED ${submitted.reason}`,
+      `${submitted.symbol} ${submitted.address}`,
       `实际回收: ${proceedsUsdt.toFixed(4)} USDT`,
       `本笔盈亏: ${realizedPnlUsdt.toFixed(4)} USDT`,
       `当日累计已实现盈亏: ${state.realizedPnlUsdt.toFixed(4)} USDT`,
-      `订单: ${pending.orderId}`
+      `订单: ${submitted.orderId}`
     ].join("\n")
   );
   return true;
 }
 
 async function buildCandidate(symbol, asset, config) {
-  const [status, kline] = await Promise.all([assetStatus(asset.contractAddress), candles(asset.contractAddress)]);
-  const signal = analyzeCandles(kline);
+  const [status, minuteKline, atrKline] = await Promise.all([
+    assetStatus(asset.contractAddress),
+    candles(asset.contractAddress, "1m", 31),
+    candles(asset.contractAddress, "15m", config.atrPeriod + 2)
+  ]);
+  const signal = analyzeCandles(minuteKline);
   if (!signal) {
     await traceAction("candidate_rejected", "skipped", { symbol, reason: "insufficient_closed_candles" }, currentCycleId);
     return null;
   }
+  const atr = calculateAtrPct(atrKline, config.atrPeriod);
+  if (!atr) {
+    await traceAction("candidate_rejected", "skipped", { symbol, reason: "insufficient_closed_atr_candles" }, currentCycleId);
+    return null;
+  }
 
-  const candidate = { symbol, address: asset.contractAddress, asset, ...status, ...signal };
+  const candidate = { symbol, address: asset.contractAddress, asset, ...status, ...signal, atr15Pct: atr.atrPct };
   if (
     !candidate.openState ||
     candidate.reasonCode !== "TRADING" ||
@@ -462,28 +790,78 @@ async function buildCandidate(symbol, asset, config) {
       openState: candidate.openState,
       reasonCode: candidate.reasonCode,
       trend15mPct: candidate.trend15mPct,
-      upMinutes: candidate.upMinutes
+      upMinutes: candidate.upMinutes,
+      atr15Pct: candidate.atr15Pct
     }, currentCycleId);
     return { ...candidate, roundTripCostPct: Infinity };
   }
 
-  const buyQuote = await quote(config.maxTradeUsdt, USDT_ADDRESS, candidate.address);
-  const sellQuote = await quote(buyQuote.toCoinAmount, candidate.address, USDT_ADDRESS);
+  const buyQuote = await quote(config.maxTradeUsdt, USDT_ADDRESS, candidate.address, config.slippagePct);
+  const sellQuote = await quote(buyQuote.toCoinAmount, candidate.address, USDT_ADDRESS, config.slippagePct);
+  const quotedRoundTripCostPct = roundTripCostPct(config.maxTradeUsdt, Number(sellQuote.toCoinAmount));
+  const executionCost = executionCostEstimate({
+    tradeUsdt: config.maxTradeUsdt,
+    quotedRoundTripCostPct,
+    slippageReservePct: config.slippageReservePct,
+    estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt
+  });
+  const initialRisk = initialRiskDecision({
+    atr15Pct: atr.atrPct,
+    allInCostPct: executionCost.allInCostPct,
+    atrStopMultiplier: config.atrStopMultiplier,
+    costBufferPct: config.initialStopCostBufferPct,
+    minStopPct: config.minInitialStopPct,
+    maxStopPct: config.maxInitialStopPct
+  });
+  const finalTakeProfitPct = initialRisk.allowed
+    ? initialRisk.initialRiskPct * config.finalTakeProfitR
+    : null;
+  const costCoverage = initialRisk.allowed
+    ? costCoverageDecision({
+        tradeUsdt: config.maxTradeUsdt,
+        grossEdgeProxyPct: candidate.trend15mPct,
+        takeProfitPct: finalTakeProfitPct,
+        quotedRoundTripCostPct,
+        slippageReservePct: config.slippageReservePct,
+        estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt,
+        minNetEdgePct: config.minNetEdgePct
+      })
+    : {
+        allowed: false,
+        reason: initialRisk.reason,
+        ...executionCost
+      };
   const completed = {
     ...candidate,
     buyQuantity: buyQuote.toCoinAmount,
-    roundTripCostPct: roundTripCostPct(config.maxTradeUsdt, Number(sellQuote.toCoinAmount))
+    buyQuotedAt: buyQuote.quotedAt,
+    roundTripCostPct: quotedRoundTripCostPct,
+    costCoverage,
+    initialRisk,
+    initialRiskPct: initialRisk.initialRiskPct,
+    finalTakeProfitPct
   };
   await traceAction("candidate_evaluated", "succeeded", {
     symbol,
     trend15mPct: completed.trend15mPct,
     upMinutes: completed.upMinutes,
-    roundTripCostPct: completed.roundTripCostPct
+    roundTripCostPct: completed.roundTripCostPct,
+    costCoverageAllowed: costCoverage.allowed,
+    costCoverageReason: costCoverage.reason,
+    allInCostPct: costCoverage.allInCostPct,
+    netEdgeProxyPct: costCoverage.netEdgeProxyPct,
+    atr15Pct: completed.atr15Pct,
+    initialRiskAllowed: initialRisk.allowed,
+    initialRiskReason: initialRisk.reason,
+    initialRiskPct: completed.initialRiskPct,
+    finalTakeProfitPct,
+    gasCostPct: costCoverage.gasCostPct,
+    slippageReservePct: costCoverage.slippageReservePct
   }, currentCycleId);
   return completed;
 }
 
-async function evaluateEntry(config, state, assets) {
+async function evaluateEntry(config, state, assets, statePath, emergencyStopPath) {
   if (dailyLossReached(state.realizedPnlUsdt, config.dailyLossLimitUsdt)) {
     await traceAction("entry_decision", "skipped", { reason: "daily_loss_limit" }, currentCycleId);
     return;
@@ -521,7 +899,15 @@ async function evaluateEntry(config, state, assets) {
   await traceAction("candidate_selected", "succeeded", {
     symbol: selected.symbol,
     trend15mPct: selected.trend15mPct,
-    roundTripCostPct: selected.roundTripCostPct
+    upMinutes: selected.upMinutes,
+    roundTripCostPct: selected.roundTripCostPct,
+    costCoverageAllowed: selected.costCoverage.allowed,
+    costCoverageReason: selected.costCoverage.reason,
+    allInCostPct: selected.costCoverage.allInCostPct,
+    netEdgeProxyPct: selected.costCoverage.netEdgeProxyPct,
+    atr15Pct: selected.atr15Pct,
+    initialRiskPct: selected.initialRiskPct,
+    finalTakeProfitPct: selected.finalTakeProfitPct
   }, currentCycleId);
   const auditResult = await audit(selected.asset, config);
   if (config.mode === "live" && !feishuConfigured()) {
@@ -530,31 +916,130 @@ async function evaluateEntry(config, state, assets) {
 
   const usdtBefore = await tokenBalance(USDT_ADDRESS);
   if (usdtBefore < config.maxTradeUsdt) throw new Error(`Insufficient USDT: ${usdtBefore}`);
-  const result = await swap(config, config.maxTradeUsdt, USDT_ADDRESS, selected.address);
+  const freshBuyQuote = await quote(config.maxTradeUsdt, USDT_ADDRESS, selected.address, config.slippagePct);
+  assertQuoteFresh({
+    quotedAt: freshBuyQuote.quotedAt,
+    maxAgeMs: config.quoteMaxAgeSeconds * 1000
+  });
+  const driftPct = quoteDriftPct(selected.buyQuantity, freshBuyQuote.toCoinAmount);
+  if (driftPct > config.maxQuoteDriftPct) {
+    await traceAction("entry_decision", "skipped", {
+      reason: "quote_drift",
+      symbol: selected.symbol,
+      driftPct,
+      maxQuoteDriftPct: config.maxQuoteDriftPct
+    }, currentCycleId);
+    return;
+  }
+  const freshSellQuote = await quote(freshBuyQuote.toCoinAmount, selected.address, USDT_ADDRESS, config.slippagePct);
+  const freshRoundTripCostPct = roundTripCostPct(config.maxTradeUsdt, Number(freshSellQuote.toCoinAmount));
+  if (freshRoundTripCostPct > config.maxRoundTripCostPct) {
+    await traceAction("entry_decision", "skipped", {
+      reason: "fresh_round_trip_cost",
+      symbol: selected.symbol,
+      freshRoundTripCostPct
+    }, currentCycleId);
+    return;
+  }
+  const freshExecutionCost = executionCostEstimate({
+    tradeUsdt: config.maxTradeUsdt,
+    quotedRoundTripCostPct: freshRoundTripCostPct,
+    slippageReservePct: config.slippageReservePct,
+    estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt
+  });
+  const freshInitialRisk = initialRiskDecision({
+    atr15Pct: selected.atr15Pct,
+    allInCostPct: freshExecutionCost.allInCostPct,
+    atrStopMultiplier: config.atrStopMultiplier,
+    costBufferPct: config.initialStopCostBufferPct,
+    minStopPct: config.minInitialStopPct,
+    maxStopPct: config.maxInitialStopPct
+  });
+  if (!freshInitialRisk.allowed) {
+    await traceAction("entry_decision", "skipped", {
+      reason: "fresh_initial_risk_rejected",
+      symbol: selected.symbol,
+      atr15Pct: selected.atr15Pct,
+      allInCostPct: freshExecutionCost.allInCostPct,
+      requiredRiskPct: freshInitialRisk.requiredRiskPct,
+      maxInitialStopPct: config.maxInitialStopPct
+    }, currentCycleId);
+    return;
+  }
+  const freshFinalTakeProfitPct = freshInitialRisk.initialRiskPct * config.finalTakeProfitR;
+  const freshProfitFloorPct = freshExecutionCost.allInCostPct + config.minNetEdgePct;
+  const freshCostCoverage = costCoverageDecision({
+    tradeUsdt: config.maxTradeUsdt,
+    grossEdgeProxyPct: selected.trend15mPct,
+    takeProfitPct: freshFinalTakeProfitPct,
+    quotedRoundTripCostPct: freshRoundTripCostPct,
+    slippageReservePct: config.slippageReservePct,
+    estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt,
+    minNetEdgePct: config.minNetEdgePct
+  });
+  await traceAction("cost_coverage_decision", freshCostCoverage.allowed ? "succeeded" : "skipped", {
+    symbol: selected.symbol,
+    ...freshCostCoverage
+  }, currentCycleId);
+  if (!freshCostCoverage.allowed) {
+    await traceAction("entry_decision", "skipped", {
+      reason: "fresh_cost_not_covered",
+      symbol: selected.symbol,
+      costCoverageReason: freshCostCoverage.reason,
+      allInCostPct: freshCostCoverage.allInCostPct,
+      netEdgeProxyPct: freshCostCoverage.netEdgeProxyPct,
+      atr15Pct: selected.atr15Pct,
+      initialRiskPct: freshInitialRisk.initialRiskPct,
+      finalTakeProfitPct: freshFinalTakeProfitPct
+    }, currentCycleId);
+    return;
+  }
+  const createdAt = new Date().toISOString();
+  const result = await submitOrder(config, state, statePath, emergencyStopPath, {
+    side: "BUY",
+    symbol: selected.symbol,
+    address: selected.address,
+    fromToken: USDT_ADDRESS,
+    toToken: selected.address,
+    fromTokenQty: config.maxTradeUsdt,
+    costBasisUsdt: config.maxTradeUsdt,
+    costCoverage: freshCostCoverage,
+    initialRiskPct: freshInitialRisk.initialRiskPct,
+    profitFloorPct: freshProfitFloorPct,
+    entryAtr15Pct: selected.atr15Pct,
+    finalTakeProfitPct: freshFinalTakeProfitPct,
+    usdtBefore,
+    createdAt
+  });
   if (result.shadow) {
     state.position = {
       symbol: selected.symbol,
       address: selected.address,
-      quantity: selected.buyQuantity,
+      quantity: freshBuyQuote.toCoinAmount,
       costBasisUsdt: config.maxTradeUsdt,
-      openedAt: new Date().toISOString(),
+      entryCostCoverage: freshCostCoverage,
+      initialRiskPct: freshInitialRisk.initialRiskPct,
+      profitFloorPct: freshProfitFloorPct,
+      entryAtr15Pct: selected.atr15Pct,
+      finalTakeProfitPct: freshFinalTakeProfitPct,
+      peakReturnPct: 0,
+      profitProtectionActive: false,
+      trailingStopPct: null,
+      openedAt: createdAt,
       orderId: result.orderId,
       shadow: true
-    };
-  } else {
-    state.pendingOrder = {
-      side: "BUY",
-      symbol: selected.symbol,
-      address: selected.address,
-      costBasisUsdt: config.maxTradeUsdt,
-      createdAt: new Date().toISOString(),
-      orderId: result.orderId
     };
   }
   await traceAction("buy_submission", result.shadow ? "simulated" : "submitted", {
     symbol: selected.symbol,
     address: selected.address,
     amountUsdt: config.maxTradeUsdt,
+    allInCostPct: freshCostCoverage.allInCostPct,
+    netEdgeProxyPct: freshCostCoverage.netEdgeProxyPct,
+    atr15Pct: selected.atr15Pct,
+    initialRiskPct: freshInitialRisk.initialRiskPct,
+    profitFloorPct: freshProfitFloorPct,
+    finalTakeProfitPct: freshFinalTakeProfitPct,
     orderId: result.orderId
   }, currentCycleId);
   await notify(
@@ -564,96 +1049,230 @@ async function evaluateEntry(config, state, assets) {
       `${selected.symbol} ${selected.address}`,
       `投入: ${config.maxTradeUsdt} USDT`,
       `15分钟趋势: ${selected.trend15mPct.toFixed(3)}%`,
-      `估算往返成本: ${selected.roundTripCostPct.toFixed(3)}%`,
+      `报价往返成本: ${freshRoundTripCostPct.toFixed(3)}%`,
+      `全成本估算: ${freshCostCoverage.allInCostPct.toFixed(3)}%`,
+      `扣除成本后信号余量: ${freshCostCoverage.netEdgeProxyPct.toFixed(3)}%`,
+      `ATR15: ${selected.atr15Pct.toFixed(3)}%`,
+      `初始风险 R: ${freshInitialRisk.initialRiskPct.toFixed(3)}%`,
+      `成本保护下限: ${freshProfitFloorPct.toFixed(3)}%`,
+      `最终止盈 2R: ${freshFinalTakeProfitPct.toFixed(3)}%`,
       `审计: ${auditResult.riskLevel || auditResult.status}`,
       `订单: ${result.orderId}`
     ].join("\n")
   );
 }
 
-async function evaluateExit(config, state) {
+async function evaluateExit(config, state, statePath, emergencyStopPath) {
   const position = state.position;
   if (!position) return;
 
   const quantity = position.shadow ? Number(position.quantity) : await tokenBalance(position.address);
   if (!(quantity > 0)) throw new Error(`Position balance missing for ${position.symbol}`);
-  const sellQuote = await quote(quantity, position.address, USDT_ADDRESS);
+  if (!(Number(position.initialRiskPct) > 0)) {
+    throw new Error(`Position risk metadata missing for ${position.symbol}`);
+  }
+  const [sellQuote, minuteKline, atrKline] = await Promise.all([
+    quote(quantity, position.address, USDT_ADDRESS, config.slippagePct),
+    candles(position.address, "1m", 31),
+    candles(position.address, "15m", config.atrPeriod + 2)
+  ]);
+  const signal = analyzeCandles(minuteKline);
+  const atr = calculateAtrPct(atrKline, config.atrPeriod);
+  if (!atr) throw new Error(`ATR data missing for ${position.symbol}`);
+  const signalValid = signal
+    ? signal.trend15mPct >= config.minTrend15mPct && signal.upMinutes >= config.minDirectionalMinutes
+    : null;
   const proceedsUsdt = Number(sellQuote.toCoinAmount);
-  const reason = exitReason({
-    proceedsUsdt,
-    costBasisUsdt: position.costBasisUsdt,
-    stopLossPct: config.stopLossPct,
-    takeProfitPct: config.takeProfitPct
+  const returnPct = ((proceedsUsdt / position.costBasisUsdt) - 1) * 100;
+  const storedProfitFloorPct = Number(position.profitFloorPct);
+  const entryAllInCostPct = Number(position.entryCostCoverage?.allInCostPct);
+  const profitFloorPct = storedProfitFloorPct > 0
+    ? storedProfitFloorPct
+    : (Number.isFinite(entryAllInCostPct) ? entryAllInCostPct : 0) + config.minNetEdgePct;
+  position.lastQuoteProceedsUsdt = proceedsUsdt;
+  position.lastQuoteAt = sellQuote.quotedAt;
+  position.currentAtr15Pct = atr.atrPct;
+  position.lastSignalValid = signalValid;
+  position.lastSignalTrend15mPct = signal?.trend15mPct ?? null;
+  position.profitFloorPct = profitFloorPct;
+  const reason = dynamicExitDecision({
+    returnPct,
+    initialRiskPct: Number(position.initialRiskPct),
+    atr15Pct: atr.atrPct,
+    peakReturnPct: Number(position.peakReturnPct || 0),
+    profitProtectionActive: position.profitProtectionActive === true,
+    openedAtMs: Date.parse(position.openedAt),
+    signalValid,
+    disasterStopLossPct: config.disasterStopLossPct,
+    profitProtectionR: config.profitProtectionR,
+    trailingAtrMultiplier: config.trailingAtrMultiplier,
+    finalTakeProfitR: config.finalTakeProfitR,
+    signalReviewHours: config.signalReviewHours,
+    signalReviewMinR: config.signalReviewMinR,
+    profitFloorPct
   });
-  if (!reason) {
+  position.peakReturnPct = reason.peakReturnPct;
+  position.profitProtectionActive = reason.profitProtectionActive;
+  position.trailingStopPct = reason.trailingStopPct;
+  if (!reason.type) {
     await traceAction("exit_decision", "skipped", {
       symbol: position.symbol,
-      reason: "within_stop_and_take_profit",
+      reason: "dynamic_exit_not_triggered",
       proceedsUsdt,
-      returnPct: ((proceedsUsdt / position.costBasisUsdt) - 1) * 100
+      returnPct,
+      atr15Pct: atr.atrPct,
+      initialRiskPct: position.initialRiskPct,
+      peakReturnPct: reason.peakReturnPct,
+      profitProtectionActive: reason.profitProtectionActive,
+      trailingStopPct: reason.trailingStopPct,
+      profitFloorPct,
+      finalTakeProfitPct: reason.finalTakeProfitPct,
+      signalValid,
+      heldMs: reason.heldMs
     }, currentCycleId);
-    log("Position monitored", { symbol: position.symbol, returnPct: ((proceedsUsdt / position.costBasisUsdt) - 1) * 100 });
+    log("Position monitored", {
+      symbol: position.symbol,
+      returnPct,
+      peakReturnPct: reason.peakReturnPct,
+      trailingStopPct: reason.trailingStopPct
+    });
     return;
   }
 
+  const confirmationQuote = await quote(quantity, position.address, USDT_ADDRESS, config.slippagePct);
+  assertQuoteFresh({
+    quotedAt: confirmationQuote.quotedAt,
+    maxAgeMs: config.quoteMaxAgeSeconds * 1000
+  });
+  const confirmedProceedsUsdt = Number(confirmationQuote.toCoinAmount);
+  const confirmedReturnPct = ((confirmedProceedsUsdt / position.costBasisUsdt) - 1) * 100;
+  const confirmedReason = dynamicExitDecision({
+    returnPct: confirmedReturnPct,
+    initialRiskPct: Number(position.initialRiskPct),
+    atr15Pct: atr.atrPct,
+    peakReturnPct: reason.peakReturnPct,
+    profitProtectionActive: reason.profitProtectionActive,
+    openedAtMs: Date.parse(position.openedAt),
+    signalValid,
+    disasterStopLossPct: config.disasterStopLossPct,
+    profitProtectionR: config.profitProtectionR,
+    trailingAtrMultiplier: config.trailingAtrMultiplier,
+    finalTakeProfitR: config.finalTakeProfitR,
+    signalReviewHours: config.signalReviewHours,
+    signalReviewMinR: config.signalReviewMinR,
+    profitFloorPct
+  });
+  position.peakReturnPct = confirmedReason.peakReturnPct;
+  position.profitProtectionActive = confirmedReason.profitProtectionActive;
+  position.trailingStopPct = confirmedReason.trailingStopPct;
+  if (!confirmedReason.type) {
+    await traceAction("exit_decision", "skipped", {
+      symbol: position.symbol,
+      reason: "fresh_quote_no_longer_triggers_exit",
+      proceedsUsdt: confirmedProceedsUsdt,
+      returnPct: confirmedReturnPct,
+      peakReturnPct: confirmedReason.peakReturnPct,
+      trailingStopPct: confirmedReason.trailingStopPct,
+      profitFloorPct
+    }, currentCycleId);
+    return;
+  }
   const usdtBefore = config.mode === "live" ? await tokenBalance(USDT_ADDRESS) : null;
-  const result = await swap(config, quantity, position.address, USDT_ADDRESS);
+  const createdAt = new Date().toISOString();
+  const result = await submitOrder(config, state, statePath, emergencyStopPath, {
+    side: "SELL",
+    symbol: position.symbol,
+    address: position.address,
+    fromToken: position.address,
+    toToken: USDT_ADDRESS,
+    fromTokenQty: quantity,
+    quantity,
+    costBasisUsdt: position.costBasisUsdt,
+    usdtBefore,
+    reason: confirmedReason.type,
+    createdAt
+  });
   if (result.shadow) {
-    const realizedPnlUsdt = proceedsUsdt - position.costBasisUsdt;
+    const realizedPnlUsdt = confirmedProceedsUsdt - position.costBasisUsdt;
     state.realizedPnlUsdt += realizedPnlUsdt;
     state.cooldownUntil[position.symbol] = Date.now() + config.reentryCooldownMinutes * 60_000;
     state.position = null;
-  } else {
-    state.pendingOrder = {
-      side: "SELL",
-      symbol: position.symbol,
-      address: position.address,
-      quantity,
-      costBasisUsdt: position.costBasisUsdt,
-      usdtBefore,
-      reason: reason.type,
-      createdAt: new Date().toISOString(),
-      orderId: result.orderId
-    };
   }
   await traceAction("sell_submission", result.shadow ? "simulated" : "submitted", {
     symbol: position.symbol,
     address: position.address,
-    reason: reason.type,
-    expectedProceedsUsdt: proceedsUsdt,
+    reason: confirmedReason.type,
+    expectedProceedsUsdt: confirmedProceedsUsdt,
+    returnPct: confirmedReason.returnPct,
+    initialRiskPct: position.initialRiskPct,
+    atr15Pct: atr.atrPct,
+    trailingStopPct: confirmedReason.trailingStopPct,
+    profitFloorPct,
     orderId: result.orderId
   }, currentCycleId);
   await notify(
     state,
     [
-      `[Agentic Stock Bot] SELL SUBMITTED ${config.mode.toUpperCase()} ${reason.type}`,
+      `[Agentic Stock Bot] SELL SUBMITTED ${config.mode.toUpperCase()} ${confirmedReason.type}`,
       `${position.symbol} ${position.address}`,
-      `预计回收: ${proceedsUsdt.toFixed(4)} USDT`,
-      `预计盈亏: ${(proceedsUsdt - position.costBasisUsdt).toFixed(4)} USDT (${reason.returnPct.toFixed(3)}%)`,
+      `预计回收: ${confirmedProceedsUsdt.toFixed(4)} USDT`,
+      `预计盈亏: ${(confirmedProceedsUsdt - position.costBasisUsdt).toFixed(4)} USDT (${confirmedReason.returnPct.toFixed(3)}%)`,
+      `初始风险 R: ${Number(position.initialRiskPct).toFixed(3)}%`,
+      `ATR15: ${atr.atrPct.toFixed(3)}%`,
+      `成本保护下限: ${profitFloorPct.toFixed(3)}%`,
+      `移动保护线: ${confirmedReason.trailingStopPct == null ? "未启用" : `${confirmedReason.trailingStopPct.toFixed(3)}%`}`,
       `订单: ${result.orderId}`
     ].join("\n")
   );
 }
 
-async function cycle(config, state, statePath) {
+async function cycle(config, state, statePath, emergencyStopPath) {
   currentCycleId = randomUUID();
   await traceAction("cycle", "started", {
     hasPosition: Boolean(state.position),
     hasPendingOrder: Boolean(state.pendingOrder)
   }, currentCycleId);
   try {
+    await ensureNotEmergencyStopped(emergencyStopPath, state);
     await flushNotifications(state);
-    const wallet = await baw(["wallet", "status"]);
-    if (wallet.status !== "CONNECTED") throw new Error(`Wallet status is ${wallet.status}`);
+    const wallet = await resolveWalletStatus((args) => baw(args));
+    if (wallet.verifiedBy) {
+      await traceAction("wallet_status_fallback", "succeeded", {
+        status: wallet.status,
+        verifiedBy: wallet.verifiedBy
+      }, currentCycleId);
+    }
+    if (wallet.status !== "CONNECTED") {
+      throw new BawError({
+        code: 100001005,
+        name: "WALLET_UNCONNECTED",
+        message: `Wallet status is ${wallet.status}`,
+        operation: "wallet status"
+      });
+    }
+    if (state.walletSession?.status === "EXPIRED") {
+      await notify(
+        state,
+        `[Agentic Stock Bot] WALLET SESSION RECOVERED\n时间: ${new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}`
+      );
+    }
+    state.walletSession = {
+      status: "CONNECTED",
+      checkedAt: new Date().toISOString()
+    };
+    await checkSessionExpiry(config, state);
 
     if (state.pendingOrder) {
-      await finalizePendingOrder(config, state);
+      await finalizePendingOrder(config, state, statePath);
     } else if (state.position) {
-      await evaluateExit(config, state);
+      await evaluateExit(config, state, statePath, emergencyStopPath);
     } else {
       const assets = await resolveAssets(config.symbols);
-      await evaluateEntry(config, state, assets);
+      await evaluateEntry(config, state, assets, statePath, emergencyStopPath);
     }
+    state.updatedAt = new Date().toISOString();
+    state.lastError = null;
+    state.lastFailureFingerprint = null;
     await saveJson(statePath, state);
     await traceAction("state_saved", "succeeded", {
       hasPosition: Boolean(state.position),
@@ -667,6 +1286,132 @@ async function cycle(config, state, statePath) {
   } finally {
     currentCycleId = null;
   }
+}
+
+async function runMockTrade(config, runId) {
+  currentCycleId = randomUUID();
+  const startedAt = new Date().toISOString();
+  const symbol = config.symbols.includes("NVDA") ? "NVDA" : config.symbols[0];
+  const amountUsdt = Math.min(50, config.maxTradeUsdt);
+  const buyPrice = 100;
+  const sellPrice = 110;
+  const orderId = `mock-${Date.now()}`;
+  const resultPath = resolve(projectRoot, "state", "mock-trades", `${runId}.json`);
+  const notificationState = freshState();
+
+  await traceAction("mock_trade", "started", {
+    symbol,
+    amountUsdt,
+    walletAccess: false,
+    onchainBroadcast: false
+  }, currentCycleId);
+
+  try {
+    const asset = (await resolveAssets([symbol])).get(symbol);
+    const simulation = simulateRoundTrip({ amountUsdt, buyPrice, sellPrice });
+
+    await traceAction("buy_submission", "simulated", {
+      symbol,
+      address: asset.contractAddress,
+      amountUsdt,
+      buyPrice,
+      quantity: simulation.quantity,
+      orderId
+    }, currentCycleId);
+    await traceAction("position_change", "simulated", {
+      symbol,
+      from: "FLAT",
+      to: "LONG",
+      quantity: simulation.quantity
+    }, currentCycleId);
+    await traceAction("exit_decision", "triggered", {
+      symbol,
+      reason: "TAKE_PROFIT",
+      returnPct: simulation.returnPct
+    }, currentCycleId);
+    await traceAction("sell_submission", "simulated", {
+      symbol,
+      address: asset.contractAddress,
+      quantity: simulation.quantity,
+      sellPrice,
+      proceedsUsdt: simulation.proceedsUsdt,
+      orderId
+    }, currentCycleId);
+    await traceAction("position_change", "simulated", {
+      symbol,
+      from: "LONG",
+      to: "FLAT",
+      realizedPnlUsdt: simulation.realizedPnlUsdt
+    }, currentCycleId);
+
+    const notificationSent = await notify(
+      notificationState,
+      [
+        "[Agentic Stock Bot] MOCK ROUND TRIP COMPLETED",
+        `标的: ${symbol} ${asset.contractAddress}`,
+        `模拟买入: ${amountUsdt.toFixed(2)} USDT @ ${buyPrice.toFixed(2)}`,
+        `模拟卖出: ${simulation.proceedsUsdt.toFixed(2)} USDT @ ${sellPrice.toFixed(2)}`,
+        `模拟已实现盈亏: +${simulation.realizedPnlUsdt.toFixed(2)} USDT (${simulation.returnPct.toFixed(2)}%)`,
+        `退出原因: TAKE_PROFIT`,
+        `模拟订单: ${orderId}`,
+        "未访问钱包，未广播链上交易"
+      ].join("\n")
+    );
+    const record = {
+      runId,
+      cycleId: currentCycleId,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      mode: "mock",
+      symbol,
+      address: asset.contractAddress,
+      amountUsdt,
+      buyPrice,
+      sellPrice,
+      orderId,
+      exitReason: "TAKE_PROFIT",
+      notificationSent,
+      walletAccess: false,
+      onchainBroadcast: false,
+      ...simulation
+    };
+    await saveJson(resultPath, record);
+    await traceAction("mock_result_saved", "succeeded", {
+      resultPath: resultPath.replace(`${projectRoot}/`, ""),
+      notificationSent
+    }, currentCycleId);
+    await traceAction("mock_trade", "succeeded", {
+      symbol,
+      realizedPnlUsdt: simulation.realizedPnlUsdt,
+      returnPct: simulation.returnPct
+    }, currentCycleId);
+    log("Mock round trip completed", {
+      symbol,
+      realizedPnlUsdt: simulation.realizedPnlUsdt,
+      resultPath
+    });
+    return record;
+  } catch (error) {
+    await traceAction("mock_trade", "failed", { error: error.message }, currentCycleId);
+    throw error;
+  } finally {
+    currentCycleId = null;
+  }
+}
+
+async function waitForNextCycle(milliseconds) {
+  if (shutdownRequested) return;
+  await new Promise((resolvePromise) => {
+    const timer = setTimeout(() => {
+      wakeLoop = null;
+      resolvePromise();
+    }, milliseconds);
+    wakeLoop = () => {
+      clearTimeout(timer);
+      wakeLoop = null;
+      resolvePromise();
+    };
+  });
 }
 
 async function main() {
@@ -684,6 +1429,8 @@ async function main() {
   validateConfig(config);
   const statePath = resolve(projectRoot, config.stateFile);
   const tracePath = resolve(projectRoot, config.traceFile);
+  const emergencyStopPath = resolve(projectRoot, config.emergencyStopFile);
+  const processLockPath = resolve(projectRoot, config.processLockFile);
   const runId = randomUUID();
   traceAction = createTracer(tracePath, { runId });
   const state = await loadState(statePath);
@@ -694,36 +1441,100 @@ async function main() {
   if (config.mode === "live" && !feishuConfigured()) {
     throw new Error("Live mode requires Feishu credentials");
   }
-  if (config.mode === "live") {
-    await sendFeishu(
-      `[Agentic Stock Bot] LIVE STARTED\n单笔上限: ${config.maxTradeUsdt} USDT\n日亏损上限: ${config.dailyLossLimitUsdt} USDT`
-    );
+  if (mockTrade) {
+    await traceAction("startup", "succeeded", {
+      mode: "mock",
+      configuredMode: config.mode,
+      walletAccess: false,
+      onchainBroadcast: false
+    });
+    await runMockTrade(config, runId);
+    return;
   }
+  const processLock = await acquireProcessLock(processLockPath);
+  const requestShutdown = () => {
+    shutdownRequested = true;
+    if (wakeLoop) wakeLoop();
+  };
+  process.on("SIGINT", requestShutdown);
+  process.on("SIGTERM", requestShutdown);
 
-  log("Bot started", {
-    mode: config.mode,
-    symbols: config.symbols,
-    maxTradeUsdt: config.maxTradeUsdt,
-    dailyLossLimitUsdt: config.dailyLossLimitUsdt
-  });
-  await traceAction("startup", "succeeded", {
-    mode: config.mode,
-    symbols: config.symbols,
-    maxTradeUsdt: config.maxTradeUsdt,
-    dailyLossLimitUsdt: config.dailyLossLimitUsdt,
-    allowUnsupportedAuditForOfficialRwa: config.allowUnsupportedAuditForOfficialRwa
-  });
-
-  do {
-    try {
-      await cycle(config, state, statePath);
-    } catch (error) {
-      log("Cycle failed closed", { error: error.message });
-      await notify(state, `[Agentic Stock Bot] ERROR\n${error.message}`);
-      await saveJson(statePath, state);
+  try {
+    await ensureNotEmergencyStopped(emergencyStopPath, state);
+    if (config.mode === "live") {
+      await sendFeishu(
+        `[Agentic Stock Bot] LIVE STARTED\n单笔上限: ${config.maxTradeUsdt} USDT\n日亏损上限: ${config.dailyLossLimitUsdt} USDT`
+      );
     }
-    if (!once) await new Promise((resolvePromise) => setTimeout(resolvePromise, config.pollSeconds * 1000));
-  } while (!once);
+
+    log("Bot started", {
+      mode: config.mode,
+      symbols: config.symbols,
+      maxTradeUsdt: config.maxTradeUsdt,
+      dailyLossLimitUsdt: config.dailyLossLimitUsdt
+    });
+    await traceAction("startup", "succeeded", {
+      mode: config.mode,
+      symbols: config.symbols,
+      maxTradeUsdt: config.maxTradeUsdt,
+      dailyLossLimitUsdt: config.dailyLossLimitUsdt,
+      maxRoundTripCostPct: config.maxRoundTripCostPct,
+      slippageReservePct: config.slippageReservePct,
+      estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt,
+      minNetEdgePct: config.minNetEdgePct,
+      atrPeriod: config.atrPeriod,
+      atrStopMultiplier: config.atrStopMultiplier,
+      minInitialStopPct: config.minInitialStopPct,
+      maxInitialStopPct: config.maxInitialStopPct,
+      initialStopCostBufferPct: config.initialStopCostBufferPct,
+      profitProtectionR: config.profitProtectionR,
+      trailingAtrMultiplier: config.trailingAtrMultiplier,
+      finalTakeProfitR: config.finalTakeProfitR,
+      signalReviewHours: config.signalReviewHours,
+      signalReviewMinR: config.signalReviewMinR,
+      disasterStopLossPct: config.disasterStopLossPct,
+      allowUnsupportedAuditForOfficialRwa: config.allowUnsupportedAuditForOfficialRwa
+    });
+
+    do {
+      try {
+        await cycle(config, state, statePath, emergencyStopPath);
+      } catch (error) {
+        log("Cycle failed closed", { error: error.message, code: error.code });
+        const failure = runtimeFailureUpdate(state, error);
+        Object.assign(state, failure.patch);
+        if (error.code === "EMERGENCY_STOP") {
+          state.emergencyStop = await readEmergencyStop(emergencyStopPath);
+          shutdownRequested = true;
+        }
+        if (failure.shouldNotify) {
+          await notify(state, `[Agentic Stock Bot] ERROR\n${error.message}`);
+        }
+        await saveJson(statePath, state);
+      }
+      if (once || shutdownRequested) break;
+      await waitForNextCycle(config.pollSeconds * 1000);
+    } while (!shutdownRequested);
+
+    await traceAction("shutdown", "succeeded", {
+      reason: state.emergencyStop?.active ? "emergency_stop" : shutdownRequested ? "signal" : "once"
+    });
+  } catch (error) {
+    if (error.code === "EMERGENCY_STOP") {
+      state.emergencyStop = await readEmergencyStop(emergencyStopPath);
+      state.updatedAt = new Date().toISOString();
+      state.lastError = error.message;
+      await saveJson(statePath, state);
+      await traceAction("startup", "halted", { reason: error.message });
+      log("Bot halted before startup", { error: error.message });
+      return;
+    }
+    throw error;
+  } finally {
+    process.off("SIGINT", requestShutdown);
+    process.off("SIGTERM", requestShutdown);
+    await processLock.release();
+  }
 }
 
 await main();
