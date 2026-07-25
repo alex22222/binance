@@ -13,10 +13,17 @@ function latestSignals(traceRecords) {
     if (!["candidate_rejected", "candidate_evaluated", "candidate_selected"].includes(record.event)) continue;
     const symbol = record.details?.symbol;
     if (!symbol) continue;
+    const timestampMs = Date.parse(record.timestamp || "");
+    const previousTimestampMs = Date.parse(signals[symbol]?.timestamp || "");
+    if (
+      Number.isFinite(previousTimestampMs) &&
+      (!Number.isFinite(timestampMs) || previousTimestampMs > timestampMs)
+    ) continue;
     signals[symbol] = {
       event: record.event,
       status: record.status,
       timestamp: record.timestamp,
+      source: record.details.signalSource === "local-history" ? "local-history" : "server-live",
       trend15mPct: finiteNumber(record.details.trend15mPct, null),
       upMinutes: finiteNumber(record.details.upMinutes, null),
       roundTripCostPct: finiteNumber(record.details.roundTripCostPct, null),
@@ -33,7 +40,14 @@ function latestSignals(traceRecords) {
   return signals;
 }
 
-export function buildDashboardSnapshot({ config, state, traceRecords, strategyControl = null, nowMs = Date.now() }) {
+export function buildDashboardSnapshot({
+  config,
+  state,
+  traceRecords,
+  signalHistoryRecords = [],
+  strategyControl = null,
+  nowMs = Date.now()
+}) {
   const updatedAtMs = Date.parse(state.updatedAt || "");
   const staleAfterMs = Math.max(15_000, finiteNumber(config.pollSeconds, 60) * 3_000);
   const heartbeatAgeMs = Number.isFinite(updatedAtMs) ? Math.max(0, nowMs - updatedAtMs) : null;
@@ -77,6 +91,7 @@ export function buildDashboardSnapshot({ config, state, traceRecords, strategyCo
     generatedAt: new Date(nowMs).toISOString(),
     mode: config.mode,
     executionPolicy: "PER_TRADE_CONFIRMATION_REQUIRED",
+    marketSession: state.lastMarketSession || null,
     health: {
       status: state.emergencyStop?.active
         ? "HALTED"
@@ -130,22 +145,37 @@ export function buildDashboardSnapshot({ config, state, traceRecords, strategyCo
     position,
     approvalRequest,
     pendingOrder: state.pendingOrder || null,
-    signals: latestSignals(traceRecords),
+    signals: latestSignals([...signalHistoryRecords, ...traceRecords]),
     recentActions: traceRecords.slice(-80).reverse()
   };
 }
 
-export async function loadDashboardSnapshot({ configPath, statePath, tracePath, emergencyStopPath, strategyControlPath, nowMs = Date.now() }) {
-  const [configText, stateText, traceText, emergencyStop, strategyControl] = await Promise.all([
+export async function loadDashboardSnapshot({
+  configPath,
+  statePath,
+  tracePath,
+  signalHistoryPath = null,
+  emergencyStopPath,
+  strategyControlPath,
+  nowMs = Date.now()
+}) {
+  const [configText, stateText, traceText, signalHistoryText, emergencyStop, strategyControl] = await Promise.all([
     readFile(configPath, "utf8"),
     readFile(statePath, "utf8").catch((error) => error.code === "ENOENT" ? "{}" : Promise.reject(error)),
     readFile(tracePath, "utf8").catch((error) => error.code === "ENOENT" ? "" : Promise.reject(error)),
+    signalHistoryPath
+      ? readFile(signalHistoryPath, "utf8").catch((error) => error.code === "ENOENT" ? "" : Promise.reject(error))
+      : "",
     emergencyStopPath ? readEmergencyStop(emergencyStopPath) : null,
     strategyControlPath
       ? readFile(strategyControlPath, "utf8").then(JSON.parse).catch((error) => error.code === "ENOENT" ? null : Promise.reject(error))
       : null
   ]);
   const traceRecords = traceText
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  const signalHistoryRecords = signalHistoryText
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line));
@@ -156,6 +186,7 @@ export async function loadDashboardSnapshot({ configPath, statePath, tracePath, 
       emergencyStop
     },
     traceRecords,
+    signalHistoryRecords,
     strategyControl,
     nowMs
   });

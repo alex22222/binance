@@ -111,6 +111,7 @@ const server = createServer(async (request, response) => {
         configPath,
         statePath: resolve(projectRoot, config.stateFile),
         tracePath: resolve(projectRoot, config.traceFile),
+        signalHistoryPath: resolve(projectRoot, "state/dashboard-signal-history.jsonl"),
         emergencyStopPath: resolve(projectRoot, config.emergencyStopFile),
         strategyControlPath: resolve(projectRoot, config.strategyControlFile)
       });

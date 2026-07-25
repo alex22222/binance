@@ -124,6 +124,66 @@ test("shows pending orders and the latest signal for each symbol", () => {
   assert.equal(snapshot.signals.NVDA.upMinutes, 6);
 });
 
+test("uses read-only local signal history until a newer server signal replaces it", () => {
+  const snapshot = buildDashboardSnapshot({
+    config,
+    state: {
+      date: "2026-07-25",
+      realizedPnlUsdt: 0,
+      updatedAt: "2026-07-25T15:38:05.000Z",
+      lastMarketSession: "offhours",
+      position: null,
+      pendingOrder: null
+    },
+    signalHistoryRecords: [
+      {
+        timestamp: "2026-07-25T01:45:00.000Z",
+        event: "candidate_rejected",
+        status: "skipped",
+        details: {
+          symbol: "NVDA",
+          trend15mPct: 0.01,
+          upMinutes: 4,
+          atr15Pct: 0.07,
+          signalSource: "local-history"
+        }
+      },
+      {
+        timestamp: "2026-07-25T01:45:00.000Z",
+        event: "candidate_rejected",
+        status: "skipped",
+        details: {
+          symbol: "TSLA",
+          trend15mPct: -0.02,
+          upMinutes: 7,
+          atr15Pct: 0.14,
+          signalSource: "local-history"
+        }
+      }
+    ],
+    traceRecords: [
+      {
+        timestamp: "2026-07-25T13:35:00.000Z",
+        event: "candidate_evaluated",
+        status: "succeeded",
+        details: {
+          symbol: "NVDA",
+          trend15mPct: 0.2,
+          upMinutes: 10,
+          atr15Pct: 0.1
+        }
+      }
+    ],
+    nowMs: Date.parse("2026-07-25T15:40:00.000Z")
+  });
+
+  assert.equal(snapshot.marketSession, "offhours");
+  assert.equal(snapshot.signals.NVDA.trend15mPct, 0.2);
+  assert.equal(snapshot.signals.NVDA.source, "server-live");
+  assert.equal(snapshot.signals.TSLA.trend15mPct, -0.02);
+  assert.equal(snapshot.signals.TSLA.source, "local-history");
+});
+
 test("shows a fresh approval request as actionable and an expired one as read-only", () => {
   const request = {
     approvalId: "0123456789abcdef01234567",

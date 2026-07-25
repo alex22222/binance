@@ -85,7 +85,10 @@ export function liveDashboardHtml() {
     .signal-table-head { padding: 10px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; letter-spacing: .05em; }
     .signal { min-height: 58px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
     .signal:last-child { border-bottom: 0; }
-    .signal-code { font-weight: 780; }
+    .signal.historical { background: rgba(245,193,79,.025); }
+    .signal-code { display: flex; flex-direction: column; gap: 3px; font-weight: 780; }
+    .signal-source { color: var(--gold); font-size: 9px; font-weight: 700; }
+    .signal-context { color: var(--muted); font-size: 11px; }
     .signal-direction { font-size: 18px; }
     .signal-strength, .signal-time { color: var(--muted); font-size: 11px; }
     .signal-change { font-size: 14px; letter-spacing: -.02em; }
@@ -176,7 +179,7 @@ export function liveDashboardHtml() {
     </section>
 
     <section class="signals-section">
-      <div class="section-head"><h2>信号</h2></div>
+      <div class="section-head"><h2>信号</h2><span class="signal-context" id="signalContext">读取市场状态…</span></div>
       <div class="panel signals">
         <div class="signal-table-head" aria-hidden="true"><span>代码</span><span>方向</span><span>强度 / 15分钟</span><span>变化</span><span>更新时间</span></div>
         <div id="signals"></div>
@@ -361,15 +364,38 @@ export function liveDashboardHtml() {
     function renderSignals(data) {
       const root = document.getElementById("signals");
       root.replaceChildren();
+      const availableSignals = Object.values(data.signals);
+      const historicalCount = availableSignals.filter((signal) => signal.source === "local-history").length;
+      const liveCount = availableSignals.length - historicalCount;
+      const marketClosed = ["offhours", "closed"].includes(data.marketSession);
+      const context = document.getElementById("signalContext");
+      context.className = "signal-context" + (historicalCount ? " gold" : "");
+      context.textContent = historicalCount
+        ? marketClosed
+          ? "休市中 · 显示本地历史信号"
+          : historicalCount + " 条本地历史 · 等待服务器更新"
+        : marketClosed
+          ? "休市中 · 常规时段自动扫描"
+          : liveCount
+            ? "服务器实时信号"
+            : "等待首次常规时段扫描";
       data.strategy.symbols.forEach((symbol) => {
         const signal = data.signals[symbol];
+        const historical = signal?.source === "local-history";
         const costsCovered = signal?.costCoverageAllowed === true;
         const signalPassed = signal && signal.trend15mPct >= signal.atr15Pct * data.strategy.entryAtrMultiplier && signal.upMinutes >= data.strategy.minDirectionalMinutes;
         const direction = !signal ? "—" : signal.trend15mPct > 0 ? "↑" : signal.trend15mPct < 0 ? "↓" : "—";
-        const row = el("article", "signal");
-        row.title = !signal ? "等待信号" : costsCovered ? "成本已覆盖" : signal.costCoverageReason || "未通过成本门槛";
+        const row = el("article", "signal" + (historical ? " historical" : ""));
+        const code = el("span", "signal-code");
+        code.append(el("strong", "", symbol));
+        if (historical) code.append(el("small", "signal-source", "本地历史"));
+        row.title = !signal
+          ? marketClosed ? "休市中，等待常规时段扫描" : "等待信号"
+          : historical
+            ? "本地历史信号，仅供参考，不触发交易"
+            : costsCovered ? "成本已覆盖" : signal.costCoverageReason || "未通过成本门槛";
         row.append(
-          el("span", "signal-code", symbol),
+          code,
           el("span", "signal-direction " + (!signal ? "muted" : signal.trend15mPct >= 0 ? "green" : "red"), direction),
           el("span", "signal-strength", signal ? (signal.upMinutes ?? "—") + "/15 ↑" : "—"),
           el("span", "signal-change " + (signalPassed ? "green" : signal ? "red" : "muted"), signal ? pct(signal.trend15mPct) : "—"),

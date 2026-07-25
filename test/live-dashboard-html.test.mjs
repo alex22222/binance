@@ -47,6 +47,10 @@ test("live dashboard provides an approval-first iPhone layout and compact signal
   assert.match(html, />更新时间<\/span>/);
   assert.match(html, /signal\?\.timestamp/);
   assert.match(html, /id="signalToggle"/);
+  assert.match(html, /id="signalContext"/);
+  assert.match(html, /休市中 · 显示本地历史信号/);
+  assert.match(html, /本地历史/);
+  assert.match(html, /signal\.source/);
   assert.match(html, /signals\.classList\.toggle\("expanded"\)/);
   assert.match(html, /\.approval-button \{[^}]*min-height: 52px;/);
   assert.match(html, /@media \(max-width: 600px\)/);
