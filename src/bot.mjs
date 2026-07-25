@@ -35,6 +35,7 @@ import {
   createApprovalRequest,
   loadApprovalDecision
 } from "./approvals.mjs";
+import { feishuMessageWithDashboardLink } from "./feishu-message.mjs";
 import {
   BawError,
   acquireProcessLock,
@@ -318,15 +319,16 @@ async function feishuTenantToken() {
 }
 
 async function sendFeishu(text) {
-  await traceAction("feishu_notification", "started", { messageLength: text.length }, currentCycleId);
+  const message = feishuMessageWithDashboardLink(text);
+  await traceAction("feishu_notification", "started", { messageLength: message.length }, currentCycleId);
   if (process.env.FEISHU_WEBHOOK_URL) {
     const response = await feishuFetch(process.env.FEISHU_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ msg_type: "text", content: { text } })
+      body: JSON.stringify({ msg_type: "text", content: { text: message } })
     }, "webhook");
     if (!response.ok) throw new Error(`Feishu webhook failed: HTTP ${response.status}`);
-    await traceAction("feishu_notification", "succeeded", { channel: "webhook", messageLength: text.length }, currentCycleId);
+    await traceAction("feishu_notification", "succeeded", { channel: "webhook", messageLength: message.length }, currentCycleId);
     return;
   }
 
@@ -344,7 +346,7 @@ async function sendFeishu(text) {
       body: JSON.stringify({
         receive_id: receiveId,
         msg_type: "text",
-        content: JSON.stringify({ text })
+        content: JSON.stringify({ text: message })
       })
     },
     "message"
@@ -353,7 +355,7 @@ async function sendFeishu(text) {
   if (!response.ok || body.code !== 0) {
     throw new Error(`Feishu message failed: ${body.code ?? response.status} ${body.msg || ""}`.trim());
   }
-  await traceAction("feishu_notification", "succeeded", { channel: "app", messageLength: text.length }, currentCycleId);
+  await traceAction("feishu_notification", "succeeded", { channel: "app", messageLength: message.length }, currentCycleId);
 }
 
 async function notify(state, text) {
@@ -573,7 +575,7 @@ async function requestTradeApproval(config, state, statePath, details) {
       `审计: ${request.audit?.riskLevel || request.audit?.status || "TRUSTED_TARGET"}`,
       `确认截止: ${request.expiresAt}`,
       `审批编号: ${request.approvalId}`,
-      "请在本机 http://127.0.0.1:4173/ 查看完整数据并逐笔确认。真实链上交易不可撤销，请先自行研究（DYOR）。"
+      "请打开手机 Dashboard 查看完整数据并逐笔确认。真实链上交易不可撤销，请先自行研究（DYOR）。"
     ].join("\n")
   );
   return request;

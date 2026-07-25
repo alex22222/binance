@@ -51,6 +51,7 @@ macOS Keychain or change the instance ID after login.
 Set a long random `DASHBOARD_PASSWORD`, an operator username, and the exact
 HTTPS origin in `/etc/binance-agentic-stock-bot.env`. Copy `Caddyfile.example`
 to `/etc/caddy/Caddyfile`, replace the domain, validate it, and reload Caddy.
+Bot notifications append `DASHBOARD_PUBLIC_ORIGIN` as a mobile Dashboard link.
 
 HTTP Basic Auth is accepted only over the TLS reverse proxy. The Node dashboard
 continues to bind to loopback and rejects state-changing requests from origins

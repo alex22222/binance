@@ -215,7 +215,9 @@ export DASHBOARD_PASSWORD='use-a-long-random-password'
 An HTTPS reverse proxy must be used for public access. Set
 `DASHBOARD_PUBLIC_ORIGIN` to the exact public origin, such as
 `https://stocks.example.com`; state-changing requests from any other Origin are
-rejected.
+rejected. Bot notifications sent to Feishu append this HTTPS address as the
+mobile Dashboard link. Loopback and non-HTTPS addresses are never sent as phone
+links.
 
 ## Ubuntu server deployment
 
