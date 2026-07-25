@@ -314,6 +314,7 @@ export function liveDashboardHtml() {
         const check = el("label", "approval-check");
         auditAcknowledgement = el("input");
         auditAcknowledgement.type = "checkbox";
+        auditAcknowledgement.checked = true;
         const copy = el("span", "", "审计数据不可用：此官方 RWA 标的在 BSC 上没有可用的安全审计数据。我已阅读并仍要继续本笔交易。");
         check.append(auditAcknowledgement, copy);
         panel.append(check);

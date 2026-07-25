@@ -8,6 +8,8 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.match(html, /当前为 SHADOW 模拟/);
   assert.match(html, /auditUnavailableAcknowledged/);
   assert.match(html, /审计数据不可用/);
+  assert.match(html, /auditAcknowledgement\.checked = true/);
+  assert.match(html, /requiresAuditAcknowledgement && !auditAcknowledgement\.checked/);
   assert.doesNotMatch(html, /if \(!window\.confirm\(warning\)\) return/);
   assert.doesNotMatch(html, /实时持仓，一眼看清/);
   assert.doesNotMatch(html, /Local only · Safety control dashboard/);
