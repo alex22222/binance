@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadDashboardSnapshot } from "../src/dashboard.mjs";
 import { liveDashboardHtml } from "../src/live-dashboard-html.mjs";
+import { dashboardLoginHtml } from "../src/dashboard-login-html.mjs";
 import { strategyLabHtml } from "../src/strategy-lab-html.mjs";
 import { activateEmergencyStop, clearEmergencyStop } from "../src/reliability.mjs";
 import { createTracer } from "../src/trace.mjs";
@@ -13,6 +14,8 @@ import { assertSwitchableStrategy, writeStrategyControl } from "../src/strategy-
 import {
   dashboardAllowedOrigins,
   dashboardAuthConfig,
+  dashboardCredentialsAuthorized,
+  dashboardSessionCookie,
   dashboardRequestAuthorized
 } from "../src/dashboard-auth.mjs";
 
@@ -54,6 +57,15 @@ async function readJsonBody(request) {
   return body ? JSON.parse(body) : {};
 }
 
+async function readFormBody(request) {
+  let body = "";
+  for await (const chunk of request) {
+    body += chunk;
+    if (body.length > 4_096) throw new Error("Request body too large");
+  }
+  return new URLSearchParams(body);
+}
+
 function requireAllowedOrigin(request) {
   const origin = request.headers.origin;
   if (origin && !allowedOrigins.has(origin.replace(/\/$/, ""))) {
@@ -65,6 +77,15 @@ function requireAllowedOrigin(request) {
 
 function requireAuthentication(request, response) {
   if (dashboardRequestAuthorized(request, authConfig)) return true;
+  if (request.method === "GET" && ["/", "/strategies"].includes(request.url)) {
+    response.writeHead(303, {
+      "Location": "/login",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff"
+    });
+    response.end();
+    return false;
+  }
   response.writeHead(401, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
@@ -76,8 +97,44 @@ function requireAuthentication(request, response) {
 }
 
 const server = createServer(async (request, response) => {
-  if (!requireAuthentication(request, response)) return;
   try {
+    if (request.method === "GET" && request.url === "/login") {
+      response.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.end(dashboardLoginHtml());
+      return;
+    }
+    if (request.method === "POST" && request.url === "/login") {
+      if (!String(request.headers["content-type"] || "").startsWith("application/x-www-form-urlencoded")) {
+        response.writeHead(415, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+        response.end("Form submission required");
+        return;
+      }
+      const body = await readFormBody(request);
+      if (!dashboardCredentialsAuthorized(body.get("username"), body.get("password"), authConfig)) {
+        response.writeHead(401, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+          "X-Content-Type-Options": "nosniff"
+        });
+        response.end(dashboardLoginHtml({ invalid: true }));
+        return;
+      }
+      response.writeHead(303, {
+        "Location": "/",
+        "Set-Cookie": dashboardSessionCookie(authConfig),
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.end();
+      return;
+    }
+    if (!requireAuthentication(request, response)) return;
     if (request.method === "GET" && request.url === "/health") {
       response.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",

@@ -217,7 +217,9 @@ An HTTPS reverse proxy must be used for public access. Set
 `https://stocks.example.com`; state-changing requests from any other Origin are
 rejected. Bot notifications sent to Feishu append this HTTPS address as the
 mobile Dashboard link. Loopback and non-HTTPS addresses are never sent as phone
-links.
+links. Mobile browsers that do not show an HTTP Basic Auth prompt are redirected
+to `/login`; successful login creates a signed, twelve-hour, HTTPS-only session
+cookie without putting credentials in the URL.
 
 ## Ubuntu server deployment
 

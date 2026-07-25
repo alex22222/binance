@@ -3,7 +3,8 @@ import test from "node:test";
 import {
   dashboardAllowedOrigins,
   dashboardAuthConfig,
-  dashboardRequestAuthorized
+  dashboardRequestAuthorized,
+  dashboardSessionCookie
 } from "../src/dashboard-auth.mjs";
 
 function request(authorization) {
@@ -37,6 +38,23 @@ test("dashboard authentication accepts only the exact basic credentials", () => 
   assert.equal(dashboardRequestAuthorized(request(valid), config), true);
   assert.equal(dashboardRequestAuthorized(request(invalid), config), false);
   assert.equal(dashboardRequestAuthorized(request(), config), false);
+});
+
+test("dashboard session cookies are signed and expire after twelve hours", () => {
+  const config = dashboardAuthConfig({
+    DASHBOARD_USERNAME: "operator",
+    DASHBOARD_PASSWORD: "correct horse"
+  });
+  const nowMs = Date.parse("2026-07-26T10:00:00.000Z");
+  const cookie = dashboardSessionCookie(config, nowMs).split(";")[0];
+  const sessionRequest = { headers: { cookie } };
+
+  assert.equal(dashboardRequestAuthorized(sessionRequest, config, nowMs + 1_000), true);
+  assert.equal(dashboardRequestAuthorized(sessionRequest, config, nowMs + 12 * 60 * 60 * 1_000 + 1), false);
+  assert.equal(
+    dashboardRequestAuthorized({ headers: { cookie: `${cookie}tampered` } }, config, nowMs + 1_000),
+    false
+  );
 });
 
 test("dashboard allowed origins include loopback and configured HTTPS origins", () => {

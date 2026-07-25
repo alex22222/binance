@@ -1,4 +1,7 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+const sessionCookieName = "dashboard_session";
+const sessionMaxAgeSeconds = 12 * 60 * 60;
 
 function equalString(left, right) {
   const leftBuffer = Buffer.from(String(left));
@@ -15,8 +18,15 @@ export function dashboardAuthConfig(environment = process.env) {
   return username ? { enabled: true, username, password } : { enabled: false };
 }
 
-export function dashboardRequestAuthorized(request, config) {
-  if (!config.enabled) return true;
+export function dashboardCredentialsAuthorized(username, password, config) {
+  return (
+    config.enabled &&
+    equalString(username, config.username) &&
+    equalString(password, config.password)
+  );
+}
+
+function basicRequestAuthorized(request, config) {
   const authorization = request.headers.authorization || "";
   if (!authorization.startsWith("Basic ")) return false;
   let decoded;
@@ -27,9 +37,47 @@ export function dashboardRequestAuthorized(request, config) {
   }
   const separator = decoded.indexOf(":");
   if (separator < 0) return false;
+  return dashboardCredentialsAuthorized(
+    decoded.slice(0, separator),
+    decoded.slice(separator + 1),
+    config
+  );
+}
+
+function sessionSignature(config, expiresAtMs) {
+  return createHmac("sha256", config.password)
+    .update(`dashboard-session:${config.username}:${expiresAtMs}`)
+    .digest("base64url");
+}
+
+export function dashboardSessionCookie(config, nowMs = Date.now()) {
+  const expiresAtMs = nowMs + sessionMaxAgeSeconds * 1000;
+  const value = `${expiresAtMs}.${sessionSignature(config, expiresAtMs)}`;
+  return `${sessionCookieName}=${value}; Path=/; Max-Age=${sessionMaxAgeSeconds}; HttpOnly; Secure; SameSite=Strict`;
+}
+
+function sessionRequestAuthorized(request, config, nowMs) {
+  const cookie = String(request.headers.cookie || "")
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${sessionCookieName}=`));
+  if (!cookie) return false;
+  const value = cookie.slice(sessionCookieName.length + 1);
+  const separator = value.indexOf(".");
+  if (separator < 0) return false;
+  const expiresAtMs = Number(value.slice(0, separator));
+  if (!Number.isFinite(expiresAtMs) || nowMs > expiresAtMs) return false;
+  return equalString(
+    value.slice(separator + 1),
+    sessionSignature(config, expiresAtMs)
+  );
+}
+
+export function dashboardRequestAuthorized(request, config, nowMs = Date.now()) {
+  if (!config.enabled) return true;
   return (
-    equalString(decoded.slice(0, separator), config.username) &&
-    equalString(decoded.slice(separator + 1), config.password)
+    basicRequestAuthorized(request, config) ||
+    sessionRequestAuthorized(request, config, nowMs)
   );
 }
 

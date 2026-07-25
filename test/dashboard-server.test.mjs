@@ -209,9 +209,44 @@ test("dashboard protects public access with basic auth and an exact HTTPS origin
     }
     assert.equal(ready, true);
 
+    const mobileEntry = await fetch(`${origin}/`, { redirect: "manual" });
+    assert.equal(mobileEntry.status, 303);
+    assert.equal(mobileEntry.headers.get("location"), "/login");
+
+    const loginPage = await fetch(`${origin}/login`);
+    assert.equal(loginPage.status, 200);
+    assert.match(await loginPage.text(), /登录手机 Dashboard/);
+
+    const invalidLogin = await fetch(`${origin}/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username: "operator", password: "wrong" })
+    });
+    assert.equal(invalidLogin.status, 401);
+    assert.equal(invalidLogin.headers.get("set-cookie"), null);
+
+    const login = await fetch(`${origin}/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username: "operator", password: "server-secret" }),
+      redirect: "manual"
+    });
+    assert.equal(login.status, 303);
+    assert.equal(login.headers.get("location"), "/");
+    const sessionCookie = login.headers.get("set-cookie");
+    assert.match(sessionCookie, /^dashboard_session=/);
+    assert.match(sessionCookie, /HttpOnly/);
+    assert.match(sessionCookie, /Secure/);
+    assert.match(sessionCookie, /SameSite=Strict/);
+
     const unauthorized = await fetch(`${origin}/api/snapshot`);
     assert.equal(unauthorized.status, 401);
     assert.match(unauthorized.headers.get("www-authenticate"), /Basic/);
+
+    const sessionAuthorized = await fetch(`${origin}/api/snapshot`, {
+      headers: { Cookie: sessionCookie.split(";")[0] }
+    });
+    assert.equal(sessionAuthorized.status, 200);
 
     const authorized = await fetch(`${origin}/api/snapshot`, {
       headers: { Authorization: authorization }
