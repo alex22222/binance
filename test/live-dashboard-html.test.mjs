@@ -33,3 +33,22 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.doesNotMatch(html, /id="strategyComparison"/);
   assert.doesNotMatch(html, /function renderStrategies\(data\)/);
 });
+
+test("live dashboard provides an approval-first iPhone layout and compact signal table", () => {
+  const html = liveDashboardHtml();
+
+  assert.match(html, /env\(safe-area-inset-top\)/);
+  assert.match(html, /env\(safe-area-inset-bottom\)/);
+  assert.match(html, /class="signal-table-head"/);
+  assert.match(html, />代码<\/span>/);
+  assert.match(html, />方向<\/span>/);
+  assert.match(html, />强度 \/ 15分钟<\/span>/);
+  assert.match(html, />变化<\/span>/);
+  assert.match(html, />更新时间<\/span>/);
+  assert.match(html, /signal\?\.timestamp/);
+  assert.match(html, /id="signalToggle"/);
+  assert.match(html, /signals\.classList\.toggle\("expanded"\)/);
+  assert.match(html, /\.approval-button \{[^}]*min-height: 52px;/);
+  assert.match(html, /@media \(max-width: 600px\)/);
+  assert.match(html, /\.signal-table-head, \.signal \{ display: grid; grid-template-columns: 1\.05fr \.65fr 1\.15fr \.9fr \.85fr;/);
+});

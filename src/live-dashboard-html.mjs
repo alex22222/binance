@@ -15,6 +15,7 @@ export function liveDashboardHtml() {
     * { box-sizing: border-box; }
     body {
       margin: 0; min-height: 100vh; color: var(--text);
+      -webkit-text-size-adjust: 100%;
       font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background:
         radial-gradient(circle at 15% -8%, rgba(245,193,79,.13), transparent 31rem),
@@ -56,7 +57,7 @@ export function liveDashboardHtml() {
     .approval-check { display: flex; gap: 11px; align-items: start; margin-top: 18px; padding: 14px; border: 1px solid rgba(245,193,79,.35); border-radius: 12px; color: #d9c998; background: rgba(245,193,79,.055); font-size: 13px; line-height: 1.5; cursor: pointer; }
     .approval-check input { width: 17px; height: 17px; margin: 2px 0 0; accent-color: var(--gold); flex: 0 0 auto; }
     .approval-actions { display: flex; gap: 9px; margin-top: 14px; }
-    .approval-button { padding: 11px 16px; border-radius: 10px; cursor: pointer; font-weight: 760; }
+    .approval-button { min-height: 52px; padding: 11px 16px; border-radius: 10px; cursor: pointer; font-weight: 760; }
     .approval-button.approve { color: #07150f; border: 1px solid var(--green); background: var(--green); }
     .approval-button.reject { color: #ffadb4; border: 1px solid rgba(255,108,120,.4); background: rgba(255,108,120,.08); }
     .approval-button:disabled { cursor: not-allowed; opacity: .45; }
@@ -79,12 +80,16 @@ export function liveDashboardHtml() {
     .contract { margin-top: 7px; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, monospace; word-break: break-all; }
     .position-cell strong { display: block; margin-top: 7px; font-size: 19px; }
     .empty { min-height: 92px; display: grid; place-items: center; padding: 16px; text-align: center; color: var(--muted); }
-    .signals { display: grid; grid-template-columns: repeat(5, 1fr); }
-    .signal { min-height: 94px; padding: 12px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-    .signal:nth-child(5n) { border-right: 0; }
-    .signal-name { display: flex; justify-content: space-between; gap: 8px; font-weight: 750; }
-    .signal-main { margin-top: 12px; font-size: 18px; letter-spacing: -.035em; }
-    .signal-meta { margin-top: 7px; color: var(--muted); font-size: 12px; }
+    .signals { overflow: hidden; }
+    .signal-table-head, .signal { display: grid; grid-template-columns: 1.05fr .65fr 1.15fr .9fr .85fr; gap: 10px; align-items: center; }
+    .signal-table-head { padding: 10px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; letter-spacing: .05em; }
+    .signal { min-height: 58px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+    .signal:last-child { border-bottom: 0; }
+    .signal-code { font-weight: 780; }
+    .signal-direction { font-size: 18px; }
+    .signal-strength, .signal-time { color: var(--muted); font-size: 11px; }
+    .signal-change { font-size: 14px; letter-spacing: -.02em; }
+    .signal-toggle { display: none; width: 100%; min-height: 44px; border: 0; border-top: 1px solid var(--line); color: var(--muted); background: transparent; cursor: pointer; font-weight: 700; }
     .timeline { max-height: 354px; overflow: auto; }
     .event { display: grid; grid-template-columns: 66px 1fr; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); align-items: start; }
     .event:last-child { border-bottom: 0; }
@@ -107,28 +112,47 @@ export function liveDashboardHtml() {
       .insight-grid { grid-template-columns: 1fr; }
       .position { grid-template-columns: 1fr 1fr; }
       .position > :first-child { grid-column: 1 / -1; }
-      .signals { grid-template-columns: 1fr 1fr; }
-      .signal:nth-child(5n) { border-right: 1px solid var(--line); }
-      .signal:nth-child(2n) { border-right: 0; }
     }
     @media (max-width: 600px) {
-      main { padding-top: 18px; }
-      .position, .signals, .dashboard-grid { grid-template-columns: 1fr; }
+      .shell { width: min(100% - 24px, 480px); }
+      header { position: static; padding-top: env(safe-area-inset-top); }
+      main { padding-top: 16px; padding-bottom: calc(36px + env(safe-area-inset-bottom)); }
+      .dashboard-grid { grid-template-columns: 1fr; gap: 18px; }
       .signals-section { grid-column: auto; }
       .actions-section { grid-column: auto; }
       .policy-grid { grid-template-columns: 1fr 1fr; }
       .workflow { grid-template-columns: repeat(3, 1fr); }
-      .signal { border-right: 0 !important; }
-      .section-head { align-items: start; flex-direction: column; }
+      .section-head { align-items: center; }
+      h2 { font-size: 21px; }
       .event { grid-template-columns: 66px 1fr; }
-      .control-actions { width: 100%; }
-      .control-button { flex: 1; }
-      .nav { align-items: flex-start; flex-direction: column; padding: 12px 0; }
-      .nav-info { width: 100%; justify-content: space-between; }
-      .top-stats { gap: 10px; flex-wrap: wrap; }
-      .approval-head { flex-direction: column; }
+      .control-button { min-height: 44px; }
+      .nav { align-items: stretch; flex-direction: column; gap: 12px; padding: 12px 0; }
+      .brand { min-height: 44px; }
+      .nav-link { min-height: 40px; display: inline-flex; align-items: center; }
+      .nav-info { width: 100%; flex-direction: column-reverse; align-items: stretch; gap: 12px; }
+      .top-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; padding: 12px 0; border-top: 1px solid var(--line); }
+      .top-stat { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 0 6px; text-align: center; }
+      .top-stat + .top-stat { border-left: 1px solid var(--line); }
+      .top-stat strong { font-size: 15px; }
+      .badges { justify-content: flex-start; align-items: center; }
+      .control-actions { margin-left: auto; }
+      .approval { padding: 16px; }
+      .approval-title { font-size: 25px; }
       .approval-grid { grid-template-columns: 1fr 1fr; }
-      .approval-actions { flex-direction: column; }
+      .approval-actions { display: grid; grid-template-columns: 1fr 1fr; }
+      .approval-button { min-height: 56px; padding: 10px 8px; }
+      .position { grid-template-columns: 1fr 1fr; }
+      .position-cell strong { font-size: 16px; }
+      .signal-table-head, .signal { grid-template-columns: 1.05fr .65fr 1.15fr .9fr .85fr; gap: 6px; }
+      .signal-table-head { padding: 10px 9px; font-size: 9px; letter-spacing: 0; }
+      .signal { min-height: 58px; padding: 10px 9px; }
+      .signal-code, .signal-change { font-size: 12px; }
+      .signal-direction { font-size: 16px; }
+      .signal-strength, .signal-time { font-size: 10px; }
+      #signals:not(.expanded) .signal:nth-child(n+6) { display: none; }
+      .signal-toggle { display: block; }
+      .timeline { max-height: 300px; }
+      .insight-grid { gap: 18px; margin-top: 18px; }
     }
   </style>
 </head>
@@ -153,7 +177,11 @@ export function liveDashboardHtml() {
 
     <section class="signals-section">
       <div class="section-head"><h2>信号</h2></div>
-      <div class="panel signals" id="signals"></div>
+      <div class="panel signals">
+        <div class="signal-table-head" aria-hidden="true"><span>代码</span><span>方向</span><span>强度 / 15分钟</span><span>变化</span><span>更新时间</span></div>
+        <div id="signals"></div>
+        <button class="signal-toggle" id="signalToggle" type="button" aria-expanded="false">查看全部</button>
+      </div>
     </section>
 
     <section class="actions-section">
@@ -176,6 +204,11 @@ export function liveDashboardHtml() {
     const money = (value) => value == null ? "—" : Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const pct = (value) => value == null ? "—" : (Number(value) >= 0 ? "+" : "") + Number(value).toFixed(3) + "%";
     const time = (value) => value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "等待首次心跳";
+    const shortTime = (value) => value ? new Date(value).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—";
+    const countdown = (value) => {
+      const seconds = Math.max(0, Math.floor((Date.parse(value || "") - Date.now()) / 1000));
+      return String(Math.floor(seconds / 60)).padStart(2, "0") + ":" + String(seconds % 60).padStart(2, "0");
+    };
     const el = (tag, className, text) => {
       const node = document.createElement(tag);
       if (className) node.className = className;
@@ -241,7 +274,8 @@ export function liveDashboardHtml() {
         el("div", "approval-title " + (request.side === "BUY" ? "green" : "gold"), request.side + " · " + request.symbol),
         el("div", "contract", request.address)
       );
-      head.append(identity, el("span", "badge " + (request.canDecide ? "gold" : "red"), request.displayStatus));
+      const statusText = request.canDecide ? "过期倒计时 " + countdown(request.expiresAt) : request.displayStatus;
+      head.append(identity, el("span", "badge " + (request.canDecide ? "gold" : "red"), statusText));
       panel.append(head);
       const grid = el("div", "approval-grid");
       const expected = request.side === "BUY"
@@ -330,23 +364,18 @@ export function liveDashboardHtml() {
       data.strategy.symbols.forEach((symbol) => {
         const signal = data.signals[symbol];
         const costsCovered = signal?.costCoverageAllowed === true;
-        const card = el("article", "signal");
-        const name = el("div", "signal-name");
-        name.append(
-          el("span", "", symbol),
-          el("span", costsCovered ? "green" : signal ? "red" : "muted", costsCovered ? "成本已覆盖" : signal ? "未通过" : "等待")
-        );
-        card.append(name);
         const signalPassed = signal && signal.trend15mPct >= signal.atr15Pct * data.strategy.entryAtrMultiplier && signal.upMinutes >= data.strategy.minDirectionalMinutes;
-        card.append(el("div", "signal-main " + (signalPassed ? "green" : ""), signal ? pct(signal.trend15mPct) : "—"));
-        card.append(el(
-          "div",
-          "signal-meta",
-          signal
-            ? (signal.upMinutes ?? "—") + "/15 ↑ · 成本 " + pct(signal.allInCostPct)
-            : "—"
-        ));
-        root.append(card);
+        const direction = !signal ? "—" : signal.trend15mPct > 0 ? "↑" : signal.trend15mPct < 0 ? "↓" : "—";
+        const row = el("article", "signal");
+        row.title = !signal ? "等待信号" : costsCovered ? "成本已覆盖" : signal.costCoverageReason || "未通过成本门槛";
+        row.append(
+          el("span", "signal-code", symbol),
+          el("span", "signal-direction " + (!signal ? "muted" : signal.trend15mPct >= 0 ? "green" : "red"), direction),
+          el("span", "signal-strength", signal ? (signal.upMinutes ?? "—") + "/15 ↑" : "—"),
+          el("span", "signal-change " + (signalPassed ? "green" : signal ? "red" : "muted"), signal ? pct(signal.trend15mPct) : "—"),
+          el("time", "signal-time", shortTime(signal?.timestamp))
+        );
+        root.append(row);
       });
     }
     function renderTimeline(data) {
@@ -467,6 +496,12 @@ export function liveDashboardHtml() {
         body: JSON.stringify({ confirm: "RESUME" })
       });
       await refresh();
+    });
+    document.getElementById("signalToggle").addEventListener("click", (event) => {
+      const signals = document.getElementById("signals");
+      const expanded = signals.classList.toggle("expanded");
+      event.currentTarget.setAttribute("aria-expanded", String(expanded));
+      event.currentTarget.textContent = expanded ? "收起" : "查看全部";
     });
     refresh();
     setInterval(refresh, 3000);
