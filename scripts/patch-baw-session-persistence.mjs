@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { patchBawSessionPersistence } from "../src/baw-session-patch.mjs";
 
 const checkOnly = process.argv.includes("--check");
-const globalNodeModules = execFileSync("/usr/local/bin/npm", ["root", "-g"], {
+const globalNodeModules = execFileSync(process.env.NPM_CLI_PATH || "npm", ["root", "-g"], {
   encoding: "utf8"
 }).trim();
 const bawExecutable = process.env.BAW_CLI_PATH || join(

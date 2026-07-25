@@ -1,35 +1,32 @@
 #!/usr/bin/env node
 // 飞书信号 → 本地仪表盘确认 监控器
-// 轮询飞书群消息，发现 [Agentic Stock Bot] BUY/SELL SUBMITTED 信号后，
-// 通过 Kimi WebBridge 在 http://127.0.0.1:4173/ 的“待确认订单”卡中
-// （必要时先勾选“审计数据不可用”复选框）点击“确认买入/确认卖出”。
+// macOS 可继续通过 Kimi WebBridge 操作本地页面；Linux 服务器可直接调用
+// 仅监听回环地址的 Dashboard API。自动审批必须由 WATCH_AUTO_APPROVE=1 显式开启。
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { approveSignalThroughDashboard } from "./dashboard-bridge.mjs";
 
 const execFileP = promisify(execFile);
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const STATE_FILE = path.join(DIR, "state.json");
-const LOG_FILE = path.join(DIR, "watch.log");
+const STATE_DIR = process.env.WATCH_STATE_DIR
+  ? path.resolve(process.env.WATCH_STATE_DIR)
+  : DIR;
+const STATE_FILE = path.join(STATE_DIR, "state.json");
+const LOG_FILE = path.join(STATE_DIR, "watch.log");
 
-const CHAT_ID = "oc_30d5acfaae4ea1eb5b66fc767d20399c";
-const DASHBOARD_URL = "http://127.0.0.1:4173/";
-const WEBBRIDGE = "http://127.0.0.1:10086/command";
-const SESSION = "feishu-order-watch";
-const POLL_MS = 15_000;
-const CARD_WAIT_MS = 180_000; // 信号出现后等待卡片出现的最长时间
-const CARD_RETRY_MS = 5_000;
-
-const PROXY_ENV = {
-  ...process.env,
-  HTTP_PROXY: "http://127.0.0.1:7890",
-  HTTPS_PROXY: "http://127.0.0.1:7890",
-  NO_PROXY: "127.0.0.1,localhost",
-};
+const DASHBOARD_URL = process.env.DASHBOARD_URL || "http://127.0.0.1:4173/";
+const WEBBRIDGE = process.env.WEBBRIDGE_URL || "http://127.0.0.1:10086/command";
+const SESSION = process.env.WEBBRIDGE_SESSION || "feishu-order-watch";
+const BRIDGE_MODE = process.env.WATCH_BRIDGE_MODE || "webbridge";
+const AUTO_APPROVE = process.env.WATCH_AUTO_APPROVE === "1";
+const POLL_MS = Number(process.env.WATCH_POLL_MS || 15_000);
+const CARD_WAIT_MS = Number(process.env.WATCH_CARD_WAIT_MS || 180_000);
+const CARD_RETRY_MS = Number(process.env.WATCH_CARD_RETRY_MS || 5_000);
 
 function log(...args) {
   const line = `[${new Date().toISOString()}] ${args.join(" ")}`;
@@ -42,12 +39,34 @@ async function keychain(service) {
   return stdout.trim();
 }
 
+async function credential(environmentName, keychainService) {
+  const value = process.env[environmentName]?.trim();
+  if (value) return value;
+  if (process.platform === "darwin") return keychain(keychainService);
+  throw new Error(`${environmentName} is required on ${process.platform}`);
+}
+
+function directEnvironment() {
+  const environment = { ...process.env, NO_PROXY: "*", no_proxy: "*" };
+  for (const key of [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy"
+  ]) {
+    delete environment[key];
+  }
+  return environment;
+}
+
 async function curlJson(url, { method = "GET", headers = {}, body, proxy = true } = {}) {
   const args = ["-s", "-X", method];
   for (const [k, v] of Object.entries(headers)) args.push("-H", `${k}: ${v}`);
   if (body !== undefined) args.push("-d", typeof body === "string" ? body : JSON.stringify(body));
   args.push(url);
-  const env = proxy ? PROXY_ENV : { ...process.env, NO_PROXY: "*" };
+  const env = proxy ? process.env : directEnvironment();
   let stdout;
   try {
     ({ stdout } = await execFileP("curl", args, { env, maxBuffer: 8 * 1024 * 1024, timeout: 20_000 }));
@@ -75,10 +94,10 @@ async function feishuToken() {
   return feishu.token;
 }
 
-async function fetchRecentMessages() {
+async function fetchRecentMessages(chatId) {
   const token = await feishuToken();
   const res = await curlJson(
-    `https://open.feishu.cn/open-apis/im/v1/messages?container_id_type=chat&container_id=${CHAT_ID}&sort_type=ByCreateTimeDesc&page_size=10`,
+    `https://open.feishu.cn/open-apis/im/v1/messages?container_id_type=chat&container_id=${encodeURIComponent(chatId)}&sort_type=ByCreateTimeDesc&page_size=10`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   if (res.code !== 0) throw new Error("list messages failed: " + JSON.stringify(res));
@@ -93,13 +112,24 @@ function parseSignal(msg) {
   } catch {
     return null;
   }
-  const m = text.match(/\[Agentic Stock Bot\]\s+(BUY|SELL)\s+SUBMITTED/);
+  const m = text.match(/\[Agentic Stock Bot\]\s+(BUY|SELL)\s+(APPROVAL REQUIRED|SUBMITTED(?:\s+\S+)*)/);
   if (!m) return null;
   const line2 = (text.split("\n")[1] || "").trim().split(/\s+/);
   const symbol = line2[0] || null;
   const address = (line2[1] || "").match(/^0x[0-9a-fA-F]{40}$/) ? line2[1].toLowerCase() : null;
   const order = (text.match(/订单[:：]\s*(\S+)/) || [])[1] || null;
-  return { side: m[1], symbol, address, order, text, messageId: msg.message_id, createTime: Number(msg.create_time) };
+  const approvalId = (text.match(/审批编号[:：]\s*([a-f0-9]{24})/i) || [])[1] || null;
+  return {
+    side: m[1],
+    event: m[2].startsWith("APPROVAL") ? "APPROVAL_REQUIRED" : "SUBMITTED",
+    symbol,
+    address,
+    order,
+    approvalId,
+    text,
+    messageId: msg.message_id,
+    createTime: Number(msg.create_time)
+  };
 }
 
 // ---------- WebBridge ----------
@@ -187,6 +217,43 @@ async function evaluate(js) {
 
 async function handleSignal(signal) {
   log(`新信号: ${signal.side} ${signal.symbol || ""} ${signal.address || ""} 订单=${signal.order || "?"} (${signal.messageId})`);
+  if (!AUTO_APPROVE) {
+    log(`自动审批未启用，保留人工确认: ${signal.side} ${signal.symbol || ""}`);
+    return;
+  }
+  if (signal.event !== "APPROVAL_REQUIRED") {
+    log(`忽略非审批信号: ${signal.event} ${signal.side} ${signal.symbol || ""}`);
+    return;
+  }
+  if (BRIDGE_MODE === "dashboard-api") {
+    const deadline = Date.now() + CARD_WAIT_MS;
+    while (Date.now() < deadline) {
+      const result = await approveSignalThroughDashboard({
+        signal,
+        dashboardUrl: DASHBOARD_URL,
+        username: process.env.DASHBOARD_USERNAME,
+        password: process.env.DASHBOARD_PASSWORD
+      });
+      if (result.status === "APPROVED") {
+        log(`Dashboard API 已确认: ${signal.side} ${signal.symbol} approval=${result.approvalId}`);
+        return;
+      }
+      if (result.status === "REJECTED") {
+        log(`Dashboard API 拒绝审批: ${result.reason}`);
+        return;
+      }
+      if (result.reason !== "NO_APPROVAL") {
+        log(`Dashboard API 信号不匹配，停止审批: ${result.reason}`);
+        return;
+      }
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, CARD_RETRY_MS));
+    }
+    log(`超时: Dashboard API 未出现匹配审批: ${signal.side} ${signal.symbol}`);
+    return;
+  }
+  if (BRIDGE_MODE !== "webbridge") {
+    throw new Error(`Unsupported WATCH_BRIDGE_MODE: ${BRIDGE_MODE}`);
+  }
   await ensureTab();
   const deadline = Date.now() + CARD_WAIT_MS;
   const fastUntil = Date.now() + 30_000;
@@ -238,9 +305,11 @@ async function handleSignal(signal) {
 
 // ---------- 主循环 ----------
 async function main() {
-  feishu.appId = await keychain("binance-stock-bot-feishu-app-id");
-  feishu.appSecret = await keychain("binance-stock-bot-feishu-app-secret");
-  log("飞书凭据已加载，开始监控 chat=" + CHAT_ID);
+  fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+  feishu.appId = await credential("FEISHU_APP_ID", "binance-stock-bot-feishu-app-id");
+  feishu.appSecret = await credential("FEISHU_APP_SECRET", "binance-stock-bot-feishu-app-secret");
+  const chatId = await credential("FEISHU_CHAT_ID", "binance-stock-bot-feishu-receive-id");
+  log(`飞书凭据已加载，开始监控 chat=${chatId} bridge=${BRIDGE_MODE} autoApprove=${AUTO_APPROVE}`);
 
   let watermark = 0;
   if (fs.existsSync(STATE_FILE)) {
@@ -248,7 +317,7 @@ async function main() {
   }
   if (!watermark) {
     // 首次运行：以当前最新消息为水位线，不处理历史消息
-    const items = await fetchRecentMessages();
+    const items = await fetchRecentMessages(chatId);
     watermark = items.length ? Math.max(...items.map(i => Number(i.create_time))) : Date.now();
     log(`初始化水位线 watermark=${watermark}（跳过历史消息）`);
   } else {
@@ -258,7 +327,7 @@ async function main() {
 
   for (;;) {
     try {
-      const items = await fetchRecentMessages();
+      const items = await fetchRecentMessages(chatId);
       const fresh = items
         .map(parseSignal)
         .filter(s => s && s.createTime > watermark)

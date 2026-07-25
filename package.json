@@ -3,17 +3,20 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "NODE_OPTIONS=--use-env-proxy node src/bot.mjs",
-    "once": "NODE_OPTIONS=--use-env-proxy node src/bot.mjs --once",
-    "mock": "NODE_OPTIONS=--use-env-proxy node src/bot.mjs --mock-trade",
+    "start": "node src/bot.mjs",
+    "once": "node src/bot.mjs --once",
+    "mock": "node src/bot.mjs --mock-trade",
     "dashboard": "node scripts/generate-strategy-dashboard.mjs",
     "dashboard:open": "npm run dashboard && open artifacts/strategy-mock-dashboard.html",
     "dashboard:live": "node scripts/serve-live-dashboard.mjs",
+    "watch": "node watch/watcher.mjs",
+    "test:watch-webbridge": "node watch/webbridge-smoke.mjs",
+    "preflight:linux": "node scripts/preflight-linux.mjs",
     "emergency-stop": "node scripts/emergency-stop.mjs",
     "emergency-resume": "node scripts/emergency-resume.mjs --confirm",
     "patch:baw-session": "node scripts/patch-baw-session-persistence.mjs",
     "check:baw-session": "node scripts/patch-baw-session-persistence.mjs --check",
-    "test:feishu": "NODE_OPTIONS=--use-env-proxy node src/bot.mjs --test-feishu",
+    "test:feishu": "node src/bot.mjs --test-feishu",
     "test": "node --test"
   }
 }

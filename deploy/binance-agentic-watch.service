@@ -1,0 +1,29 @@
+[Unit]
+Description=Binance Agentic Feishu Approval Watch
+After=network-online.target binance-agentic-dashboard.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=binancebot
+Group=binancebot
+WorkingDirectory=/opt/binance-agentic-stock-bot
+EnvironmentFile=/etc/binance-agentic-stock-bot.env
+Environment=WATCH_BRIDGE_MODE=dashboard-api
+Environment=WATCH_AUTO_APPROVE=0
+Environment=WATCH_STATE_DIR=/var/lib/binance-agentic-stock-bot/watch
+UnsetEnvironment=HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+ExecStart=/usr/bin/node watch/watcher.mjs
+Restart=on-failure
+RestartSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+StateDirectory=binance-agentic-stock-bot
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/binance-agentic-stock-bot/watch
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

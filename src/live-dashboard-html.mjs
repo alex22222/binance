@@ -29,6 +29,9 @@ export function liveDashboardHtml() {
     .brand { display: flex; align-items: center; gap: 11px; font-weight: 750; }
     .nav-info, .top-stats { display: flex; align-items: center; gap: 16px; }
     .mark { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 11px; background: var(--gold); color: #171108; font-weight: 900; }
+    .nav-link { margin-left: 6px; padding: 8px 11px; border: 1px solid rgba(120,169,255,.35); border-radius: 9px; color: #d8e5ff; background: rgba(120,169,255,.08); text-decoration: none; font-size: 12px; transition: background-color .2s, border-color .2s; }
+    .nav-link:hover { border-color: rgba(120,169,255,.65); background: rgba(120,169,255,.16); }
+    .nav-link:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
     .top-stat { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; }
     .top-stat span { color: var(--muted); font-size: 11px; }
     .top-stat strong { font-size: 14px; letter-spacing: -.02em; }
@@ -96,6 +99,7 @@ export function liveDashboardHtml() {
     .workflow-step { min-height: 84px; padding: 10px 8px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); }
     .workflow-step.active { border-color: rgba(81,214,163,.45); color: var(--green); background: rgba(81,214,163,.06); }
     .workflow-step strong { display: block; margin-top: 8px; color: inherit; font-size: 12px; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
     @media (max-width: 900px) {
       .dashboard-grid { grid-template-columns: 1fr 1fr; }
       .signals-section { grid-column: span 2; }
@@ -131,8 +135,8 @@ export function liveDashboardHtml() {
 <body>
   <header>
     <div class="shell nav">
-      <div class="brand"><span class="mark">A</span><span>Agentic Wallet</span></div>
-      <div class="nav-info"><div class="top-stats"><span class="top-stat"><span>盈亏</span><strong class="green" id="realizedPnl">—</strong></span><span class="top-stat"><span>日亏余量</span><strong id="dailyLossRemaining">—</strong></span><span class="top-stat"><span>单笔上限</span><strong id="maxTrade">—</strong></span></div><div class="badges"><span class="badge" id="mode"></span><span class="badge" id="health"><span class="dot"></span><span></span></span><div class="control-actions"><button class="control-button stop" id="stopButton" type="button">停机</button><button class="control-button resume" id="resumeButton" type="button" hidden>恢复</button></div></div></div>
+      <div class="brand"><span class="mark">A</span><span>Agentic Wallet</span><a class="nav-link" href="/strategies">策略</a></div>
+      <div class="nav-info"><div class="top-stats"><span class="top-stat"><span>盈亏</span><strong class="green" id="realizedPnl">—</strong></span><span class="top-stat"><span>日亏余量</span><strong id="dailyLossRemaining">—</strong></span><span class="top-stat"><span>单笔上限</span><strong id="maxTrade">—</strong></span></div><div class="badges"><span class="badge" id="walletStatus" aria-live="polite"><span class="dot"></span><span>钱包 未检测</span></span><span class="badge" id="mode"></span><span class="badge" id="health"><span class="dot"></span><span></span></span><div class="control-actions"><button class="control-button stop" id="stopButton" type="button">停机</button><button class="control-button resume" id="resumeButton" type="button" hidden>恢复</button></div></div></div>
     </div>
   </header>
   <main class="shell">
@@ -333,7 +337,8 @@ export function liveDashboardHtml() {
           el("span", costsCovered ? "green" : signal ? "red" : "muted", costsCovered ? "成本已覆盖" : signal ? "未通过" : "等待")
         );
         card.append(name);
-        card.append(el("div", "signal-main " + ((signal?.trend15mPct || 0) >= data.strategy.minTrend15mPct ? "green" : ""), signal ? pct(signal.trend15mPct) : "—"));
+        const signalPassed = signal && signal.trend15mPct >= signal.atr15Pct * data.strategy.entryAtrMultiplier && signal.upMinutes >= data.strategy.minDirectionalMinutes;
+        card.append(el("div", "signal-main " + (signalPassed ? "green" : ""), signal ? pct(signal.trend15mPct) : "—"));
         card.append(el(
           "div",
           "signal-meta",
@@ -365,9 +370,9 @@ export function liveDashboardHtml() {
       root.replaceChildren();
       const policy = el("div", "policy-grid");
       const items = [
-        ["入场", data.strategy.entryIntervalMinutes + " 分钟 · ≥ " + pct(data.strategy.minTrend15mPct) + " · " + data.strategy.minDirectionalMinutes + "/15 上涨"],
-        ["成本", "报价 ≤ " + pct(data.strategy.maxRoundTripCostPct) + " · 预留 " + pct(data.strategy.slippageReservePct) + " · 净边 ≥ " + pct(data.strategy.minNetEdgePct)],
-        ["初始止损", data.strategy.atrStopMultiplier + "×ATR15 或成本+" + pct(data.strategy.initialStopCostBufferPct) + " · " + pct(data.risk.minInitialStopPct) + "–" + pct(data.risk.maxInitialStopPct)],
+        ["入场", data.strategy.entryIntervalMinutes + " 分钟 · ≥ " + data.strategy.entryAtrMultiplier + "×ATR15 · " + data.strategy.minDirectionalMinutes + "/15 上涨"],
+        ["成本", "报价 ≤ " + pct(data.strategy.maxRoundTripCostPct) + " · Gas+" + pct(data.strategy.executionBufferPct) + " 缓冲 · 净边 ≥ " + pct(data.strategy.minNetEdgePct)],
+        ["初始止损", "clamp(" + data.strategy.atrStopMultiplier + "×ATR15, " + pct(data.risk.minInitialStopPct) + ", " + pct(data.risk.maxInitialStopPct) + ")"],
         ["盈利保护", "+" + data.risk.profitProtectionR + "R 启动 · " + data.strategy.trailingAtrMultiplier + "×ATR15 回撤"],
         ["止盈 / 失效", "+" + data.risk.finalTakeProfitR + "R · " + data.strategy.signalReviewHours + "h 信号失效且 < " + data.strategy.signalReviewMinR + "R"],
         ["硬风控", "单笔 " + money(data.risk.maxTradeUsdt) + " · 日亏 " + money(data.risk.dailyLossLimitUsdt) + " · " + data.risk.maxOpenPositions + " 仓 · 灾难 " + pct(data.risk.disasterStopLossPct)]
@@ -400,12 +405,28 @@ export function liveDashboardHtml() {
       });
       root.append(workflow);
     }
+    function renderWalletStatus(walletSession) {
+      const walletStatus = document.getElementById("walletStatus");
+      const states = {
+        CONNECTED: { label: "钱包 已连接", tone: "green" },
+        EXPIRING: { label: "钱包 即将过期", tone: "gold" },
+        EXPIRED: { label: "钱包 已断开", tone: "red" },
+        UNKNOWN: { label: "钱包 状态未知", tone: "gold" }
+      };
+      const state = states[walletSession?.status] || { label: "钱包 未检测", tone: "gold" };
+      walletStatus.className = "badge " + state.tone;
+      walletStatus.querySelector("span:last-child").textContent = state.label;
+      walletStatus.title = walletSession?.checkedAt
+        ? "最近检查：" + new Date(walletSession.checkedAt).toLocaleString("zh-CN", { hour12: false })
+        : "尚无钱包状态检查记录";
+    }
     async function refresh() {
       try {
         const response = await fetch("/api/snapshot", { cache: "no-store" });
         if (!response.ok) throw new Error("HTTP " + response.status);
         const data = await response.json();
         document.getElementById("mode").textContent = data.mode.toUpperCase();
+        renderWalletStatus(data.health.walletSession);
         const health = document.getElementById("health");
         health.className = "badge " + (data.health.status === "RUNNING" ? "green" : ["STALE", "HALTED", "DEGRADED", "AUTH_REQUIRED"].includes(data.health.status) ? "red" : "gold");
         health.querySelector("span:last-child").textContent = data.health.status;

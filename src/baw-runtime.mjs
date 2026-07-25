@@ -2,16 +2,20 @@ export function buildBawEnvironment({ environment = process.env, instanceId }) {
   if (!instanceId) {
     throw new Error("Binance Agentic Wallet instance ID is missing");
   }
-  const nodeOptions = environment.NODE_OPTIONS?.includes("--use-env-proxy")
-    ? environment.NODE_OPTIONS
-    : [environment.NODE_OPTIONS, "--use-env-proxy"].filter(Boolean).join(" ");
-  return {
+  const result = {
     ...environment,
-    HTTP_PROXY: "http://127.0.0.1:7890",
-    HTTPS_PROXY: "http://127.0.0.1:7890",
-    ALL_PROXY: "socks5://127.0.0.1:7890",
-    NO_PROXY: "127.0.0.1",
-    BINANCE_INSTANCE_ID: instanceId,
-    NODE_OPTIONS: nodeOptions
+    BINANCE_INSTANCE_ID: instanceId
   };
+  const proxyConfigured = [
+    environment.HTTP_PROXY,
+    environment.HTTPS_PROXY,
+    environment.ALL_PROXY,
+    environment.http_proxy,
+    environment.https_proxy,
+    environment.all_proxy
+  ].some((value) => typeof value === "string" && value.trim());
+  if (proxyConfigured && !environment.NODE_OPTIONS?.includes("--use-env-proxy")) {
+    result.NODE_OPTIONS = [environment.NODE_OPTIONS, "--use-env-proxy"].filter(Boolean).join(" ");
+  }
+  return result;
 }

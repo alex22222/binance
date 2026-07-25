@@ -1,0 +1,101 @@
+# Ubuntu deployment
+
+The production layout keeps every application port on loopback:
+
+- bot: no listening port;
+- dashboard: `127.0.0.1:4173`;
+- watch bridge: calls the dashboard through loopback;
+- Caddy: the only public listener, terminating HTTPS before HTTP Basic Auth reaches the dashboard.
+
+The checked-in service files never enable live trading or automatic approval.
+
+## Prepare a new server
+
+Install Node.js, npm, Caddy, and the Binance Agentic Wallet CLI using their
+official installation paths. The runtime expects:
+
+```text
+/usr/bin/node
+/usr/bin/npm
+/usr/local/bin/baw
+```
+
+Sync the repository to `/opt/binance-agentic-stock-bot`, then:
+
+```bash
+sudo /opt/binance-agentic-stock-bot/deploy/install-systemd.sh
+sudoedit /etc/binance-agentic-stock-bot.env
+sudo env BAW_CLI_PATH=/usr/local/bin/baw NPM_CLI_PATH=/usr/bin/npm \
+  /usr/bin/node /opt/binance-agentic-stock-bot/scripts/patch-baw-session-persistence.mjs
+sudo /usr/bin/node /opt/binance-agentic-stock-bot/scripts/preflight-linux.mjs \
+  --environment-file=/etc/binance-agentic-stock-bot.env
+```
+
+Populate `config.json` separately. Do not copy the local macOS Keychain,
+`state/`, wallet session files, or `config.json` blindly.
+Keep application code and `config.json` root-owned; make `config.json`
+group-readable by `binancebot` and keep runtime state owned by `binancebot`.
+
+```bash
+sudo chown root:binancebot /opt/binance-agentic-stock-bot/config.json
+sudo chmod 640 /opt/binance-agentic-stock-bot/config.json
+```
+
+The BAW session is stored under
+`/var/lib/binance-agentic-stock-bot/.baw`. Perform the server QR login as the
+`binancebot` user with the same `BINANCE_INSTANCE_ID`; never copy the local
+macOS Keychain or change the instance ID after login.
+
+## Dashboard
+
+Set a long random `DASHBOARD_PASSWORD`, an operator username, and the exact
+HTTPS origin in `/etc/binance-agentic-stock-bot.env`. Copy `Caddyfile.example`
+to `/etc/caddy/Caddyfile`, replace the domain, validate it, and reload Caddy.
+
+HTTP Basic Auth is accepted only over the TLS reverse proxy. The Node dashboard
+continues to bind to loopback and rejects state-changing requests from origins
+other than loopback or `DASHBOARD_PUBLIC_ORIGIN`.
+
+## Start in safe mode
+
+```bash
+sudo systemctl enable --now binance-agentic-dashboard
+sudo systemctl enable --now binance-agentic-stock-bot
+sudo systemctl enable --now binance-agentic-watch
+```
+
+At this point:
+
+- `BOT_LIVE=0` blocks a live config from starting;
+- `WATCH_AUTO_APPROVE=0` records Feishu signals but preserves manual approval.
+
+Inspect:
+
+```bash
+systemctl status binance-agentic-dashboard binance-agentic-stock-bot binance-agentic-watch
+journalctl -u binance-agentic-stock-bot -u binance-agentic-dashboard -u binance-agentic-watch
+```
+
+## Explicit live cutover
+
+Never run the local Mac and server with `BOT_LIVE=1` at the same time. Before
+cutover, confirm there is no position, pending order, current approval, or
+active emergency stop, preserve a state backup, and stop the local LaunchAgent.
+
+Live trading requires a deliberate systemd drop-in:
+
+```ini
+[Service]
+Environment=BOT_LIVE=1
+```
+
+Automatic watch approval is separate and requires its own deliberate drop-in:
+
+```ini
+[Service]
+Environment=WATCH_AUTO_APPROVE=1
+```
+
+Either capability may be enabled independently. Enabling both turns Feishu
+approval messages into automatic trade confirmations, so it must be treated as
+an explicit real-money authorization.

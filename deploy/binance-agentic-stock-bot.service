@@ -1,0 +1,31 @@
+[Unit]
+Description=Binance Agentic Stock Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=binancebot
+Group=binancebot
+WorkingDirectory=/opt/binance-agentic-stock-bot
+EnvironmentFile=/etc/binance-agentic-stock-bot.env
+Environment=BOT_LIVE=0
+Environment=HOME=/var/lib/binance-agentic-stock-bot
+Environment=BINANCE_BAW_DIR=/var/lib/binance-agentic-stock-bot/.baw
+UnsetEnvironment=HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+ExecStartPre=/usr/bin/node scripts/patch-baw-session-persistence.mjs --check
+ExecStart=/usr/bin/node src/bot.mjs
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+StateDirectory=binance-agentic-stock-bot
+StateDirectoryMode=0700
+ReadWritePaths=/opt/binance-agentic-stock-bot/state /var/lib/binance-agentic-stock-bot
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

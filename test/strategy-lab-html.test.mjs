@@ -1,0 +1,26 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { strategyLabHtml } from "../src/strategy-lab-html.mjs";
+
+test("strategy page keeps only operational comparison and switch controls", () => {
+  const html = strategyLabHtml();
+
+  assert.match(html, /<title>策略 · Agentic Wallet<\/title>/);
+  assert.match(html, /href="\/"/);
+  assert.match(html, /id="activeStrategy"/);
+  assert.match(html, /id="mode"/);
+  assert.match(html, /id="strategyComparison"/);
+  assert.match(html, /id="returnComparison"/);
+  assert.match(html, /function renderStrategies\(data\)/);
+  assert.match(html, /\/api\/strategy/);
+  assert.doesNotMatch(html, /15-minute tokenized equities/i);
+  assert.doesNotMatch(html, /策略实验室/);
+  assert.doesNotMatch(html, /在统一的执行成本/);
+  assert.doesNotMatch(html, /切换边界/);
+  assert.doesNotMatch(html, /热切换只影响下一次入场/);
+  assert.doesNotMatch(html, /收益仅统计已完成且带策略标签的往返交易/);
+  assert.doesNotMatch(html, /研究中策略不可切换/);
+  assert.doesNotMatch(html, /strategy\.thesis/);
+  assert.doesNotMatch(html, /\["证据", strategy\.evidence\]/);
+  assert.doesNotMatch(html, /\["主要风险", strategy\.risk\]/);
+});

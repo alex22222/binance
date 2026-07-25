@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { readEmergencyStop } from "./reliability.mjs";
+import { buildStrategyComparison, DEFAULT_STRATEGY_ID } from "./strategy-lab.mjs";
 
 function finiteNumber(value, fallback = 0) {
   const number = Number(value);
@@ -32,7 +33,7 @@ function latestSignals(traceRecords) {
   return signals;
 }
 
-export function buildDashboardSnapshot({ config, state, traceRecords, nowMs = Date.now() }) {
+export function buildDashboardSnapshot({ config, state, traceRecords, strategyControl = null, nowMs = Date.now() }) {
   const updatedAtMs = Date.parse(state.updatedAt || "");
   const staleAfterMs = Math.max(15_000, finiteNumber(config.pollSeconds, 60) * 3_000);
   const heartbeatAgeMs = Number.isFinite(updatedAtMs) ? Math.max(0, nowMs - updatedAtMs) : null;
@@ -71,6 +72,7 @@ export function buildDashboardSnapshot({ config, state, traceRecords, nowMs = Da
       }
     : null;
 
+  const activeStrategyId = strategyControl?.strategyId || config.defaultStrategyId || DEFAULT_STRATEGY_ID;
   return {
     generatedAt: new Date(nowMs).toISOString(),
     mode: config.mode,
@@ -106,22 +108,25 @@ export function buildDashboardSnapshot({ config, state, traceRecords, nowMs = Da
       finalTakeProfitR: finiteNumber(config.finalTakeProfitR)
     },
     strategy: {
+      activeStrategyId,
+      controlUpdatedAt: strategyControl?.updatedAt || null,
       symbols: config.symbols,
       entryIntervalMinutes: config.entryIntervalMinutes,
-      minTrend15mPct: config.minTrend15mPct,
+      regularOnlyEntries: config.regularOnlyEntries,
+      entryAtrMultiplier: config.entryAtrMultiplier,
       minDirectionalMinutes: config.minDirectionalMinutes,
       maxRoundTripCostPct: config.maxRoundTripCostPct,
       slippagePct: config.slippagePct,
-      slippageReservePct: config.slippageReservePct,
+      executionBufferPct: config.executionBufferPct,
       estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt,
       minNetEdgePct: config.minNetEdgePct,
       atrPeriod: config.atrPeriod,
       atrStopMultiplier: config.atrStopMultiplier,
-      initialStopCostBufferPct: config.initialStopCostBufferPct,
       trailingAtrMultiplier: config.trailingAtrMultiplier,
       signalReviewHours: config.signalReviewHours,
       signalReviewMinR: config.signalReviewMinR
     },
+    strategies: buildStrategyComparison(activeStrategyId, traceRecords),
     position,
     approvalRequest,
     pendingOrder: state.pendingOrder || null,
@@ -130,12 +135,15 @@ export function buildDashboardSnapshot({ config, state, traceRecords, nowMs = Da
   };
 }
 
-export async function loadDashboardSnapshot({ configPath, statePath, tracePath, emergencyStopPath, nowMs = Date.now() }) {
-  const [configText, stateText, traceText, emergencyStop] = await Promise.all([
+export async function loadDashboardSnapshot({ configPath, statePath, tracePath, emergencyStopPath, strategyControlPath, nowMs = Date.now() }) {
+  const [configText, stateText, traceText, emergencyStop, strategyControl] = await Promise.all([
     readFile(configPath, "utf8"),
     readFile(statePath, "utf8").catch((error) => error.code === "ENOENT" ? "{}" : Promise.reject(error)),
     readFile(tracePath, "utf8").catch((error) => error.code === "ENOENT" ? "" : Promise.reject(error)),
-    emergencyStopPath ? readEmergencyStop(emergencyStopPath) : null
+    emergencyStopPath ? readEmergencyStop(emergencyStopPath) : null,
+    strategyControlPath
+      ? readFile(strategyControlPath, "utf8").then(JSON.parse).catch((error) => error.code === "ENOENT" ? null : Promise.reject(error))
+      : null
   ]);
   const traceRecords = traceText
     .split("\n")
@@ -148,6 +156,7 @@ export async function loadDashboardSnapshot({ configPath, statePath, tracePath, 
       emergencyStop
     },
     traceRecords,
+    strategyControl,
     nowMs
   });
 }

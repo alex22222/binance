@@ -2,17 +2,158 @@ export function uniqueSymbols(symbols) {
   return [...new Set(symbols.map((symbol) => symbol.trim().toUpperCase()))];
 }
 
+// Published U.S. cash-equity schedules:
+// https://www.nyse.com/markets/hours-calendars (2026-2028)
+// https://www.nasdaq.com/market-activity/stock-market-holiday-schedule (2026 cross-check)
+const NYSE_HOLIDAYS = new Set([
+  "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
+  "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
+  "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31",
+  "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24",
+  "2028-01-17", "2028-02-21", "2028-04-14", "2028-05-29", "2028-06-19",
+  "2028-07-04", "2028-09-04", "2028-11-23", "2028-12-25"
+]);
+
+const NYSE_EARLY_CLOSES = new Set([
+  "2026-11-27", "2026-12-24",
+  "2027-11-26",
+  "2028-07-03", "2028-11-24"
+]);
+
+function newYorkTimeParts(nowMs) {
+  return Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(new Date(nowMs)).map(({ type, value }) => [type, value])
+  );
+}
+
+export function nyseSessionPlan(nowMs = Date.now()) {
+  const parts = newYorkTimeParts(nowMs);
+  const date = `${parts.year}-${parts.month}-${parts.day}`;
+  const year = Number(parts.year);
+  if (year < 2026 || year > 2028) {
+    return {
+      calendarSupported: false,
+      date,
+      calendarDayType: "unsupported",
+      regularOpen: false,
+      openTime: null,
+      closeTime: null
+    };
+  }
+  if (["Sat", "Sun"].includes(parts.weekday)) {
+    return {
+      calendarSupported: true,
+      date,
+      calendarDayType: "weekend",
+      regularOpen: false,
+      openTime: null,
+      closeTime: null
+    };
+  }
+  if (NYSE_HOLIDAYS.has(date)) {
+    return {
+      calendarSupported: true,
+      date,
+      calendarDayType: "holiday",
+      regularOpen: false,
+      openTime: null,
+      closeTime: null
+    };
+  }
+  const earlyClose = NYSE_EARLY_CLOSES.has(date);
+  const minuteOfDay = Number(parts.hour) * 60 + Number(parts.minute);
+  const closeMinute = earlyClose ? 13 * 60 : 16 * 60;
+  return {
+    calendarSupported: true,
+    date,
+    calendarDayType: earlyClose ? "early-close" : "regular-day",
+    regularOpen: minuteOfDay >= 9 * 60 + 30 && minuteOfDay < closeMinute,
+    openTime: "09:30",
+    closeTime: earlyClose ? "13:00" : "16:00"
+  };
+}
+
+export function entryMarketAllowed(status, regularOnlyEntries = true, nowMs = Date.now()) {
+  const tradable = status?.openState === true && status?.reasonCode === "TRADING";
+  if (!tradable) return false;
+  return !regularOnlyEntries || (
+    status?.marketStatus?.toLowerCase() === "regular" &&
+    nyseSessionPlan(nowMs).regularOpen
+  );
+}
+
+export function entrySessionDecision(entries, regularOnlyEntries = true, nowMs = Date.now()) {
+  const symbols = entries
+    .filter(({ status }) => entryMarketAllowed(status, regularOnlyEntries, nowMs))
+    .map(({ symbol }) => symbol);
+  return {
+    shouldScan: symbols.length > 0,
+    reason: symbols.length > 0 ? "REGULAR_SESSION" : "NON_REGULAR_SESSION",
+    symbols
+  };
+}
+
+export function expectedUsRegularWindow(nowMs = Date.now()) {
+  return nyseSessionPlan(nowMs).regularOpen;
+}
+
+export function entryStatusCheckDecision({
+  nowMs,
+  lastMarketStatusCheckAt = 0,
+  lastEntryDecisionAt = 0,
+  lastMarketSession = null,
+  entryIntervalMinutes,
+  pollSeconds
+}) {
+  const awaitingRegularOpen = expectedUsRegularWindow(nowMs) && lastMarketSession !== "regular";
+  const intervalMs = awaitingRegularOpen
+    ? pollSeconds * 1000
+    : entryIntervalMinutes * 60_000;
+  const referenceMs = awaitingRegularOpen
+    ? Number(lastMarketStatusCheckAt || 0)
+    : lastMarketSession === "regular"
+      ? Number(lastEntryDecisionAt || 0)
+      : Number(lastMarketStatusCheckAt || 0);
+  return {
+    due: referenceMs === 0 || nowMs - referenceMs >= intervalMs,
+    intervalMs,
+    reason: awaitingRegularOpen ? "REGULAR_OPEN_TRANSITION" : "STANDARD_ENTRY_CADENCE"
+  };
+}
+
 export function validateConfig(config) {
   const errors = [];
+  if (!["adaptive-momentum", "executable-basis-reversion"].includes(config.defaultStrategyId)) {
+    errors.push("defaultStrategyId must be a switchable strategy");
+  }
+  if (typeof config.strategyControlFile !== "string" || !config.strategyControlFile.trim()) {
+    errors.push("strategyControlFile must not be empty");
+  }
+  if (!(config.basisExitPct <= 0 && config.basisExitPct >= -1)) {
+    errors.push("basisExitPct must be between -1 and 0");
+  }
   if (!["shadow", "live"].includes(config.mode)) errors.push("mode must be shadow or live");
   if (!Array.isArray(config.symbols) || config.symbols.length === 0) errors.push("symbols must not be empty");
   if (!(config.maxTradeUsdt > 0 && config.maxTradeUsdt <= 50)) errors.push("maxTradeUsdt must be between 0 and 50");
   if (!(config.dailyLossLimitUsdt > 0 && config.dailyLossLimitUsdt <= 10)) errors.push("dailyLossLimitUsdt must be between 0 and 10");
   if (config.maxOpenPositions !== 1) errors.push("maxOpenPositions must be 1");
+  if (!(Number.isInteger(config.pollSeconds) && config.pollSeconds > 0 && config.pollSeconds <= 60)) {
+    errors.push("pollSeconds must be an integer between 1 and 60");
+  }
   if (!(Number.isInteger(config.atrPeriod) && config.atrPeriod >= 2 && config.atrPeriod <= 100)) {
     errors.push("atrPeriod must be an integer between 2 and 100");
   }
   if (!(config.atrStopMultiplier > 0)) errors.push("atrStopMultiplier must be positive");
+  if (!(config.entryAtrMultiplier > 0)) errors.push("entryAtrMultiplier must be positive");
   if (!(
     config.minInitialStopPct > 0 &&
     config.maxInitialStopPct >= config.minInitialStopPct &&
@@ -20,7 +161,6 @@ export function validateConfig(config) {
   )) {
     errors.push("initial stop range must be positive, ordered, and below disasterStopLossPct");
   }
-  if (!(config.initialStopCostBufferPct >= 0)) errors.push("initialStopCostBufferPct must not be negative");
   if (!(config.profitProtectionR > 0)) errors.push("profitProtectionR must be positive");
   if (!(config.trailingAtrMultiplier > 0)) errors.push("trailingAtrMultiplier must be positive");
   if (!(config.finalTakeProfitR > config.profitProtectionR)) {
@@ -36,20 +176,26 @@ export function validateConfig(config) {
   if (typeof config.traceFile !== "string" || !config.traceFile.trim()) {
     errors.push("traceFile must not be empty");
   }
+  if (typeof config.marketDataDirectory !== "string" || !config.marketDataDirectory.trim()) {
+    errors.push("marketDataDirectory must not be empty");
+  }
   if (!(config.quoteMaxAgeSeconds > 0 && config.quoteMaxAgeSeconds <= 30)) {
     errors.push("quoteMaxAgeSeconds must be between 0 and 30");
   }
   if (!(config.maxQuoteDriftPct > 0 && config.maxQuoteDriftPct <= config.slippagePct)) {
     errors.push("maxQuoteDriftPct must be positive and no greater than slippagePct");
   }
-  if (!(config.slippageReservePct >= config.slippagePct * 2 && config.slippageReservePct <= 5)) {
-    errors.push("slippageReservePct must cover both swap legs and be no greater than 5");
+  if (!(config.executionBufferPct >= 0 && config.executionBufferPct <= config.slippagePct)) {
+    errors.push("executionBufferPct must be between 0 and slippagePct");
   }
   if (!(config.estimatedRoundTripGasUsdt >= 0 && config.estimatedRoundTripGasUsdt <= config.maxTradeUsdt)) {
     errors.push("estimatedRoundTripGasUsdt must be between 0 and maxTradeUsdt");
   }
   if (!(config.minNetEdgePct > 0)) {
     errors.push("minNetEdgePct must be positive");
+  }
+  if (config.regularOnlyEntries !== true) {
+    errors.push("regularOnlyEntries must be true");
   }
   if (typeof config.emergencyStopFile !== "string" || !config.emergencyStopFile.trim()) {
     errors.push("emergencyStopFile must not be empty");
@@ -167,54 +313,41 @@ export function roundTripCostPct(spendUsdt, quotedProceedsUsdt) {
 export function executionCostEstimate({
   tradeUsdt,
   quotedRoundTripCostPct,
-  slippageReservePct,
+  executionBufferPct,
   estimatedRoundTripGasUsdt
 }) {
-  const inputs = [tradeUsdt, quotedRoundTripCostPct, slippageReservePct, estimatedRoundTripGasUsdt];
+  const inputs = [tradeUsdt, quotedRoundTripCostPct, executionBufferPct, estimatedRoundTripGasUsdt];
   if (!(tradeUsdt > 0) || inputs.some((value) => !Number.isFinite(value))) return null;
   const gasCostPct = (Math.max(0, estimatedRoundTripGasUsdt) / tradeUsdt) * 100;
   const quoteCostPct = Math.max(0, quotedRoundTripCostPct);
   return {
     quoteCostPct,
-    slippageReservePct: Math.max(0, slippageReservePct),
+    executionBufferPct: Math.max(0, executionBufferPct),
     gasCostPct,
-    allInCostPct: quoteCostPct + Math.max(0, slippageReservePct) + gasCostPct
+    allInCostPct: quoteCostPct + Math.max(0, executionBufferPct) + gasCostPct
   };
 }
 
 export function initialRiskDecision({
   atr15Pct,
-  allInCostPct,
   atrStopMultiplier,
-  costBufferPct,
   minStopPct,
   maxStopPct
 }) {
-  const inputs = [atr15Pct, allInCostPct, atrStopMultiplier, costBufferPct, minStopPct, maxStopPct];
+  const inputs = [atr15Pct, atrStopMultiplier, minStopPct, maxStopPct];
   if (inputs.some((value) => !Number.isFinite(value))) {
     return { allowed: false, reason: "INVALID_INITIAL_RISK_INPUT" };
   }
 
   const atrRiskPct = Math.max(0, atr15Pct) * atrStopMultiplier;
-  const costRiskPct = Math.max(0, allInCostPct) + Math.max(0, costBufferPct);
-  const requiredRiskPct = Math.max(minStopPct, atrRiskPct, costRiskPct);
-  if (requiredRiskPct > maxStopPct + 1e-9) {
-    return {
-      allowed: false,
-      reason: "INITIAL_RISK_EXCEEDS_MAX",
-      atrRiskPct,
-      costRiskPct,
-      requiredRiskPct,
-      initialRiskPct: null
-    };
-  }
+  const requiredRiskPct = atrRiskPct;
+  const initialRiskPct = Math.min(maxStopPct, Math.max(minStopPct, requiredRiskPct));
   return {
     allowed: true,
     reason: "INITIAL_RISK_ALLOWED",
     atrRiskPct,
-    costRiskPct,
     requiredRiskPct,
-    initialRiskPct: requiredRiskPct
+    initialRiskPct
   };
 }
 
@@ -288,7 +421,7 @@ export function costCoverageDecision({
   grossEdgeProxyPct,
   takeProfitPct,
   quotedRoundTripCostPct,
-  slippageReservePct,
+  executionBufferPct,
   estimatedRoundTripGasUsdt,
   minNetEdgePct
 }) {
@@ -297,7 +430,7 @@ export function costCoverageDecision({
     grossEdgeProxyPct,
     takeProfitPct,
     quotedRoundTripCostPct,
-    slippageReservePct,
+    executionBufferPct,
     estimatedRoundTripGasUsdt,
     minNetEdgePct
   ];
@@ -308,7 +441,7 @@ export function costCoverageDecision({
   const estimate = executionCostEstimate({
     tradeUsdt,
     quotedRoundTripCostPct,
-    slippageReservePct,
+    executionBufferPct,
     estimatedRoundTripGasUsdt
   });
   const { quoteCostPct, gasCostPct, allInCostPct } = estimate;
@@ -316,7 +449,7 @@ export function costCoverageDecision({
   const netTargetProfitPct = takeProfitPct - allInCostPct;
   const details = {
     quoteCostPct,
-    slippageReservePct: Math.max(0, slippageReservePct),
+    executionBufferPct: Math.max(0, executionBufferPct),
     gasCostPct,
     allInCostPct,
     netEdgeProxyPct,
@@ -355,7 +488,7 @@ export function pendingOrderAction(status) {
 export function rankCandidates(candidates, config) {
   return candidates
     .filter((candidate) => candidate.openState && candidate.reasonCode === "TRADING")
-    .filter((candidate) => candidate.trend15mPct >= config.minTrend15mPct)
+    .filter((candidate) => candidate.trend15mPct + 1e-9 >= candidate.atr15Pct * config.entryAtrMultiplier)
     .filter((candidate) => candidate.upMinutes >= config.minDirectionalMinutes)
     .filter((candidate) => candidate.roundTripCostPct <= config.maxRoundTripCostPct)
     .filter((candidate) => candidate.initialRisk?.allowed !== false)
@@ -366,7 +499,7 @@ export function rankCandidates(candidates, config) {
         grossEdgeProxyPct: candidate.trend15mPct,
         takeProfitPct: (candidate.initialRiskPct || config.maxInitialStopPct) * config.finalTakeProfitR,
         quotedRoundTripCostPct: candidate.roundTripCostPct,
-        slippageReservePct: config.slippageReservePct,
+        executionBufferPct: config.executionBufferPct,
         estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt,
         minNetEdgePct: config.minNetEdgePct
       })

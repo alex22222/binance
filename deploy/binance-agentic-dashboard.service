@@ -1,0 +1,23 @@
+[Unit]
+Description=Binance Agentic Stock Bot Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=binancebot
+Group=binancebot
+WorkingDirectory=/opt/binance-agentic-stock-bot
+EnvironmentFile=/etc/binance-agentic-stock-bot.env
+Environment=DASHBOARD_PORT=4173
+ExecStart=/usr/bin/node scripts/serve-live-dashboard.mjs
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/binance-agentic-stock-bot/state
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

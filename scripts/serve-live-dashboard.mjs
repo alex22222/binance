@@ -5,14 +5,23 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadDashboardSnapshot } from "../src/dashboard.mjs";
 import { liveDashboardHtml } from "../src/live-dashboard-html.mjs";
+import { strategyLabHtml } from "../src/strategy-lab-html.mjs";
 import { activateEmergencyStop, clearEmergencyStop } from "../src/reliability.mjs";
 import { createTracer } from "../src/trace.mjs";
 import { approvalDecisionStatus, recordApprovalDecision } from "../src/approvals.mjs";
+import { assertSwitchableStrategy, writeStrategyControl } from "../src/strategy-lab.mjs";
+import {
+  dashboardAllowedOrigins,
+  dashboardAuthConfig,
+  dashboardRequestAuthorized
+} from "../src/dashboard-auth.mjs";
 
 const projectRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const configPath = resolve(projectRoot, process.env.BOT_CONFIG || "config.json");
 const host = "127.0.0.1";
 const port = Number(process.env.DASHBOARD_PORT || 4173);
+const authConfig = dashboardAuthConfig();
+const allowedOrigins = dashboardAllowedOrigins({ host, port });
 
 async function loadConfig() {
   return JSON.parse(await readFile(configPath, "utf8"));
@@ -45,13 +54,39 @@ async function readJsonBody(request) {
   return body ? JSON.parse(body) : {};
 }
 
-function requireLocalOrigin(request) {
+function requireAllowedOrigin(request) {
   const origin = request.headers.origin;
-  if (origin && origin !== `http://${host}:${port}`) throw new Error("Cross-origin request rejected");
+  if (origin && !allowedOrigins.has(origin.replace(/\/$/, ""))) {
+    const error = new Error("Cross-origin request rejected");
+    error.statusCode = 403;
+    throw error;
+  }
+}
+
+function requireAuthentication(request, response) {
+  if (dashboardRequestAuthorized(request, authConfig)) return true;
+  response.writeHead(401, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    "WWW-Authenticate": 'Basic realm="Agentic Wallet Dashboard", charset="UTF-8"',
+    "X-Content-Type-Options": "nosniff"
+  });
+  response.end(JSON.stringify({ error: "Authentication required" }));
+  return false;
 }
 
 const server = createServer(async (request, response) => {
+  if (!requireAuthentication(request, response)) return;
   try {
+    if (request.method === "GET" && request.url === "/health") {
+      response.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
     if (request.method === "GET" && request.url === "/") {
       response.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
@@ -61,13 +96,23 @@ const server = createServer(async (request, response) => {
       response.end(liveDashboardHtml());
       return;
     }
+    if (request.method === "GET" && request.url === "/strategies") {
+      response.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.end(strategyLabHtml());
+      return;
+    }
     if (request.method === "GET" && request.url === "/api/snapshot") {
       const config = await loadConfig();
       const snapshot = await loadDashboardSnapshot({
         configPath,
         statePath: resolve(projectRoot, config.stateFile),
         tracePath: resolve(projectRoot, config.traceFile),
-        emergencyStopPath: resolve(projectRoot, config.emergencyStopFile)
+        emergencyStopPath: resolve(projectRoot, config.emergencyStopFile),
+        strategyControlPath: resolve(projectRoot, config.strategyControlFile)
       });
       response.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
@@ -77,8 +122,31 @@ const server = createServer(async (request, response) => {
       response.end(JSON.stringify(snapshot));
       return;
     }
+    if (request.method === "POST" && request.url === "/api/strategy") {
+      requireAllowedOrigin(request);
+      if (!String(request.headers["content-type"] || "").startsWith("application/json")) {
+        response.writeHead(415, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        response.end(JSON.stringify({ success: false, error: "JSON request required" }));
+        return;
+      }
+      const body = await readJsonBody(request);
+      const config = await loadConfig();
+      const strategy = assertSwitchableStrategy(body.strategyId);
+      const control = await writeStrategyControl(
+        resolve(projectRoot, config.strategyControlFile),
+        strategy.id
+      );
+      await traceOperatorAction(config, "strategy_switch", "succeeded", {
+        strategyId: strategy.id,
+        requestedBy: "dashboard",
+        appliesTo: "next_entry"
+      });
+      response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      response.end(JSON.stringify({ success: true, strategy: control, appliesTo: "next_entry" }));
+      return;
+    }
     if (request.method === "POST" && request.url === "/api/emergency-stop") {
-      requireLocalOrigin(request);
+      requireAllowedOrigin(request);
       const config = await loadConfig();
       await stopBot(config, "dashboard_operator");
       await traceOperatorAction(config, "emergency_stop", "activated", {
@@ -90,7 +158,7 @@ const server = createServer(async (request, response) => {
       return;
     }
     if (request.method === "POST" && request.url === "/api/emergency-resume") {
-      requireLocalOrigin(request);
+      requireAllowedOrigin(request);
       const body = await readJsonBody(request);
       if (body.confirm !== "RESUME") {
         response.writeHead(400, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
@@ -111,7 +179,7 @@ const server = createServer(async (request, response) => {
       return;
     }
     if (request.method === "POST" && request.url === "/api/approval-decision") {
-      requireLocalOrigin(request);
+      requireAllowedOrigin(request);
       if (!String(request.headers["content-type"] || "").startsWith("application/json")) {
         response.writeHead(415, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
         response.end(JSON.stringify({ success: false, error: "JSON request required" }));
@@ -177,7 +245,7 @@ const server = createServer(async (request, response) => {
     response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
     response.end("Not found");
   } catch (error) {
-    response.writeHead(500, {
+    response.writeHead(error.statusCode || 500, {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store"
     });

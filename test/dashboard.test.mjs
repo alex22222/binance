@@ -10,22 +10,22 @@ const config = {
   maxOpenPositions: 1,
   pollSeconds: 60,
   entryIntervalMinutes: 15,
+  regularOnlyEntries: true,
   disasterStopLossPct: 8,
   atrPeriod: 14,
   atrStopMultiplier: 1.5,
+  entryAtrMultiplier: 0.75,
   minInitialStopPct: 1,
   maxInitialStopPct: 3.5,
-  initialStopCostBufferPct: 0.5,
   profitProtectionR: 1,
   trailingAtrMultiplier: 1,
   finalTakeProfitR: 2,
   signalReviewHours: 4,
   signalReviewMinR: 0.5,
-  minTrend15mPct: 0.8,
-  minDirectionalMinutes: 10,
+  minDirectionalMinutes: 9,
   maxRoundTripCostPct: 0.7,
   slippagePct: 0.5,
-  slippageReservePct: 1,
+  executionBufferPct: 0.1,
   estimatedRoundTripGasUsdt: 0.1,
   minNetEdgePct: 0.3
 };
@@ -71,6 +71,7 @@ test("builds a live position snapshot from the latest executable sell quote", ()
   assert.equal(snapshot.position.profitFloorPct, 1.7);
   assert.equal(snapshot.position.trailingStopPct, 7.6);
   assert.equal(snapshot.position.address, "0xabc");
+  assert.equal(snapshot.strategy.regularOnlyEntries, true);
 });
 
 test("shows pending orders and the latest signal for each symbol", () => {

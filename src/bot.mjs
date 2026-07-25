@@ -10,8 +10,12 @@ import {
   costCoverageDecision,
   dailyLossReached,
   dynamicExitDecision,
+  entryMarketAllowed,
+  entrySessionDecision,
+  entryStatusCheckDecision,
   executionCostEstimate,
   initialRiskDecision,
+  nyseSessionPlan,
   pendingOrderAction,
   rankCandidates,
   roundTripCostPct,
@@ -20,6 +24,10 @@ import {
   validateConfig
 } from "./strategy.mjs";
 import { createTracer } from "./trace.mjs";
+import {
+  createMarketDataRecorder,
+  normalizeCandles
+} from "./market-data-recorder.mjs";
 import { retry } from "./retry.mjs";
 import { buildBawEnvironment } from "./baw-runtime.mjs";
 import {
@@ -41,6 +49,12 @@ import {
   runtimeFailureUpdate,
   walletSessionStatusFromSettings
 } from "./reliability.mjs";
+import {
+  basisExitReached,
+  DEFAULT_STRATEGY_ID,
+  executableBasisDecision,
+  readStrategyControl
+} from "./strategy-lab.mjs";
 
 const execFileAsync = promisify(execFile);
 const BSC_CHAIN_ID = "56";
@@ -54,6 +68,7 @@ const projectRoot = resolve(import.meta.dirname, "..");
 const configPath = resolve(projectRoot, process.env.BOT_CONFIG || "config.json");
 let feishuTokenCache = null;
 let traceAction = async () => {};
+let recordMarketData = async () => {};
 let currentCycleId = null;
 let shutdownRequested = false;
 let wakeLoop = null;
@@ -91,6 +106,8 @@ function freshState() {
     approvalRequest: null,
     cooldownUntil: {},
     lastEntryDecisionAt: 0,
+    lastMarketStatusCheckAt: 0,
+    lastMarketSession: null,
     pendingNotifications: [],
     updatedAt: null,
     lastError: null,
@@ -173,7 +190,7 @@ function bawResultFromOutput(output, operation) {
 
 async function executeBaw(args, operation) {
   try {
-    const { stdout } = await execFileAsync("baw", [...args, "--json"], {
+    const { stdout } = await execFileAsync(process.env.BAW_CLI_PATH || "baw", [...args, "--json"], {
       env: buildBawEnvironment({
         environment: process.env,
         instanceId: process.env.BINANCE_INSTANCE_ID
@@ -391,6 +408,10 @@ async function resolveAssets(symbols) {
 
 async function assetStatus(address) {
   return fetchJson(`${API_BASE}/v1/public/wallet-direct/buw/wallet/market/token/rwa/asset/market/status/ai?chainId=${BSC_CHAIN_ID}&contractAddress=${address}`);
+}
+
+async function rwaDynamic(address) {
+  return fetchJson(`${API_BASE}/v2/public/wallet-direct/buw/wallet/market/token/rwa/dynamic/ai?chainId=${BSC_CHAIN_ID}&contractAddress=${address}`);
 }
 
 async function candles(address, interval = "1m", limit = 31) {
@@ -751,6 +772,7 @@ async function finalizePendingOrder(config, state, statePath) {
     if (!(quantity > 0)) throw new Error(`Finished BUY has no token balance for ${submitted.symbol}`);
     state.position = {
       symbol: submitted.symbol,
+      strategyId: submitted.strategyId || DEFAULT_STRATEGY_ID,
       address: submitted.address,
       quantity,
       costBasisUsdt: submitted.costBasisUsdt,
@@ -797,6 +819,7 @@ async function finalizePendingOrder(config, state, statePath) {
     orderId: submitted.orderId,
     side: submitted.side,
     symbol: submitted.symbol,
+    strategyId: submitted.strategyId || DEFAULT_STRATEGY_ID,
     proceedsUsdt,
     realizedPnlUsdt
   }, currentCycleId);
@@ -814,36 +837,82 @@ async function finalizePendingOrder(config, state, statePath) {
   return true;
 }
 
-async function buildCandidate(symbol, asset, config) {
-  const [status, minuteKline, atrKline] = await Promise.all([
-    assetStatus(asset.contractAddress),
+async function buildCandidate(symbol, asset, config, knownStatus = null) {
+  const strategyId = config.activeStrategyId || DEFAULT_STRATEGY_ID;
+  const scanId = randomUUID();
+  const status = knownStatus || await assetStatus(asset.contractAddress);
+  const marketOpen = entryMarketAllowed(status, config.regularOnlyEntries, Date.now());
+  if (!marketOpen) {
+    await recordMarketData("market_scan", {
+      cycleId: currentCycleId,
+      scanId,
+      symbol,
+      contractAddress: asset.contractAddress,
+      marketStatus: status,
+      gates: {
+        marketOpen: false,
+        trendPassed: false,
+        quoteEvaluated: false
+      }
+    });
+    await traceAction("candidate_rejected", "skipped", {
+      symbol,
+      reason: status.marketStatus === "offhours" ? "non_regular_session" : "market_status_gate",
+      openState: status.openState,
+      reasonCode: status.reasonCode,
+      marketStatus: status.marketStatus
+    }, currentCycleId);
+    return null;
+  }
+  const [minuteKline, atrKline] = await Promise.all([
     candles(asset.contractAddress, "1m", 31),
     candles(asset.contractAddress, "15m", config.atrPeriod + 2)
   ]);
   const signal = analyzeCandles(minuteKline);
+  const atr = calculateAtrPct(atrKline, config.atrPeriod);
+  const requiredTrend15mPct = atr ? atr.atrPct * config.entryAtrMultiplier : null;
+  const trendPassed = signal && atr
+    ? signal.trend15mPct + 1e-9 >= requiredTrend15mPct && signal.upMinutes >= config.minDirectionalMinutes
+    : false;
+  await recordMarketData("market_scan", {
+    cycleId: currentCycleId,
+    scanId,
+    symbol,
+    contractAddress: asset.contractAddress,
+    marketStatus: status,
+    minuteCandles: normalizeCandles(minuteKline),
+    atrCandles: normalizeCandles(atrKline),
+    signal,
+    atr,
+    thresholds: {
+      entryAtrMultiplier: config.entryAtrMultiplier,
+      requiredTrend15mPct,
+      minDirectionalMinutes: config.minDirectionalMinutes
+    },
+    gates: {
+      marketOpen,
+      trendPassed,
+      quoteEvaluated: false
+    }
+  });
   if (!signal) {
     await traceAction("candidate_rejected", "skipped", { symbol, reason: "insufficient_closed_candles" }, currentCycleId);
     return null;
   }
-  const atr = calculateAtrPct(atrKline, config.atrPeriod);
   if (!atr) {
     await traceAction("candidate_rejected", "skipped", { symbol, reason: "insufficient_closed_atr_candles" }, currentCycleId);
     return null;
   }
 
   const candidate = { symbol, address: asset.contractAddress, asset, ...status, ...signal, atr15Pct: atr.atrPct };
-  if (
-    !candidate.openState ||
-    candidate.reasonCode !== "TRADING" ||
-    candidate.trend15mPct < config.minTrend15mPct ||
-    candidate.upMinutes < config.minDirectionalMinutes
-  ) {
+  if (!marketOpen || (strategyId === DEFAULT_STRATEGY_ID && !trendPassed)) {
     await traceAction("candidate_rejected", "skipped", {
       symbol,
       reason: "market_or_trend_gate",
       openState: candidate.openState,
       reasonCode: candidate.reasonCode,
       trend15mPct: candidate.trend15mPct,
+      requiredTrend15mPct,
       upMinutes: candidate.upMinutes,
       atr15Pct: candidate.atr15Pct
     }, currentCycleId);
@@ -856,14 +925,25 @@ async function buildCandidate(symbol, asset, config) {
   const executionCost = executionCostEstimate({
     tradeUsdt: config.maxTradeUsdt,
     quotedRoundTripCostPct,
-    slippageReservePct: config.slippageReservePct,
+    executionBufferPct: config.executionBufferPct,
     estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt
   });
+  let basis = null;
+  let grossEdgeProxyPct = candidate.trend15mPct;
+  if (strategyId === "executable-basis-reversion") {
+    const dynamic = await rwaDynamic(candidate.address);
+    basis = executableBasisDecision({
+      executableBuyPrice: config.maxTradeUsdt / Number(buyQuote.toCoinAmount),
+      underlyingPrice: Number(dynamic.stockInfo?.price),
+      sharesMultiplier: Number(dynamic.tokenInfo?.sharesMultiplier || asset.multiplier),
+      allInCostPct: executionCost.allInCostPct,
+      minNetEdgePct: config.minNetEdgePct
+    });
+    grossEdgeProxyPct = basis.grossEdgePct;
+  }
   const initialRisk = initialRiskDecision({
     atr15Pct: atr.atrPct,
-    allInCostPct: executionCost.allInCostPct,
     atrStopMultiplier: config.atrStopMultiplier,
-    costBufferPct: config.initialStopCostBufferPct,
     minStopPct: config.minInitialStopPct,
     maxStopPct: config.maxInitialStopPct
   });
@@ -873,10 +953,10 @@ async function buildCandidate(symbol, asset, config) {
   const costCoverage = initialRisk.allowed
     ? costCoverageDecision({
         tradeUsdt: config.maxTradeUsdt,
-        grossEdgeProxyPct: candidate.trend15mPct,
+        grossEdgeProxyPct,
         takeProfitPct: finalTakeProfitPct,
         quotedRoundTripCostPct,
-        slippageReservePct: config.slippageReservePct,
+        executionBufferPct: config.executionBufferPct,
         estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt,
         minNetEdgePct: config.minNetEdgePct
       })
@@ -895,6 +975,32 @@ async function buildCandidate(symbol, asset, config) {
     initialRiskPct: initialRisk.initialRiskPct,
     finalTakeProfitPct
   };
+  completed.strategyId = strategyId;
+  completed.grossEdgeProxyPct = grossEdgeProxyPct;
+  completed.basis = basis;
+  if (strategyId === "executable-basis-reversion" && !basis?.allowed) {
+    completed.costCoverage = { ...costCoverage, allowed: false, reason: basis?.reason || "INVALID_BASIS_INPUT" };
+  }
+  await recordMarketData("quote_evaluation", {
+    cycleId: currentCycleId,
+    scanId,
+    symbol,
+    strategyId,
+    contractAddress: asset.contractAddress,
+    buyQuote: {
+      toCoinAmount: buyQuote.toCoinAmount,
+      quotedAt: buyQuote.quotedAt
+    },
+    sellQuote: {
+      toCoinAmount: sellQuote.toCoinAmount,
+      quotedAt: sellQuote.quotedAt
+    },
+    quotedRoundTripCostPct,
+    executionCost,
+    initialRisk,
+    costCoverage,
+    finalTakeProfitPct
+  });
   await traceAction("candidate_evaluated", "succeeded", {
     symbol,
     trend15mPct: completed.trend15mPct,
@@ -910,33 +1016,129 @@ async function buildCandidate(symbol, asset, config) {
     initialRiskPct: completed.initialRiskPct,
     finalTakeProfitPct,
     gasCostPct: costCoverage.gasCostPct,
-    slippageReservePct: costCoverage.slippageReservePct
+    executionBufferPct: costCoverage.executionBufferPct
   }, currentCycleId);
   return completed;
 }
 
-async function evaluateEntry(config, state, assets, statePath, emergencyStopPath, approvedRequest = null) {
+async function evaluateEntry(config, state, statePath, emergencyStopPath, approvedRequest = null) {
   if (dailyLossReached(state.realizedPnlUsdt, config.dailyLossLimitUsdt)) {
     await traceAction("entry_decision", "skipped", { reason: "daily_loss_limit" }, currentCycleId);
     return;
   }
   const now = Date.now();
-  if (!approvedRequest && now - state.lastEntryDecisionAt < config.entryIntervalMinutes * 60_000) {
-    await traceAction("entry_decision", "skipped", { reason: "entry_interval" }, currentCycleId);
+  let schedule = null;
+  if (!approvedRequest) {
+    schedule = entryStatusCheckDecision({
+      nowMs: now,
+      lastMarketStatusCheckAt: state.lastMarketStatusCheckAt,
+      lastEntryDecisionAt: state.lastEntryDecisionAt,
+      lastMarketSession: state.lastMarketSession,
+      entryIntervalMinutes: config.entryIntervalMinutes,
+      pollSeconds: config.pollSeconds
+    });
+    if (!schedule.due) {
+      await traceAction("entry_decision", "skipped", {
+        reason: "market_status_interval",
+        scheduleReason: schedule.reason,
+        intervalMs: schedule.intervalMs
+      }, currentCycleId);
+      return;
+    }
+    state.lastMarketStatusCheckAt = now;
+  }
+
+  const symbols = approvedRequest ? [approvedRequest.symbol] : config.symbols;
+  const eligibleSymbols = [];
+  for (const symbol of symbols) {
+    if ((state.cooldownUntil[symbol] || 0) > now) {
+      await traceAction("candidate_rejected", "skipped", { symbol, reason: "cooldown" }, currentCycleId);
+    } else {
+      eligibleSymbols.push(symbol);
+    }
+  }
+  if (eligibleSymbols.length === 0) {
+    await traceAction("entry_decision", "skipped", { reason: "no_eligible_symbol" }, currentCycleId);
+    return;
+  }
+
+  const assets = await resolveAssets(eligibleSymbols);
+  const statusEntries = (await Promise.all(
+    eligibleSymbols.map(async (symbol) => {
+      try {
+        return {
+          symbol,
+          status: await assetStatus(assets.get(symbol).contractAddress)
+        };
+      } catch (error) {
+        await recordMarketData("candidate_error", {
+          cycleId: currentCycleId,
+          symbol,
+          contractAddress: assets.get(symbol)?.contractAddress || null,
+          phase: "market_status",
+          error: error.message
+        });
+        await traceAction("candidate_evaluation", "failed", {
+          symbol,
+          phase: "market_status",
+          error: error.message
+        }, currentCycleId);
+        log("Market status check failed", { symbol, error: error.message });
+        return null;
+      }
+    })
+  )).filter(Boolean);
+  const nysePlan = nyseSessionPlan(now);
+  const sessionDecision = entrySessionDecision(statusEntries, config.regularOnlyEntries, now);
+  const observedMarketSession = sessionDecision.shouldScan
+    ? "regular"
+    : statusEntries.some(({ status }) => status.marketStatus === "offhours")
+      ? "offhours"
+      : statusEntries.length > 0
+        ? "closed"
+        : state.lastMarketSession || null;
+  state.lastMarketSession = observedMarketSession;
+  await recordMarketData("market_session_check", {
+    cycleId: currentCycleId,
+    regularOnlyEntries: config.regularOnlyEntries,
+    statuses: statusEntries.map(({ symbol, status }) => ({
+      symbol,
+      openState: status.openState,
+      reasonCode: status.reasonCode,
+      marketStatus: status.marketStatus
+    })),
+    schedule,
+    nysePlan,
+    observedMarketSession,
+    decision: sessionDecision
+  });
+  if (!sessionDecision.shouldScan) {
+    const reason = statusEntries.length === 0 && eligibleSymbols.length > 0
+      ? "market_status_unavailable"
+      : "non_regular_session";
+    await traceAction("entry_decision", "skipped", {
+      reason,
+      regularOnlyEntries: config.regularOnlyEntries,
+      statusCount: statusEntries.length,
+      nysePlan
+    }, currentCycleId);
+    log("Heavy entry scan skipped", { reason });
     return;
   }
   if (!approvedRequest) state.lastEntryDecisionAt = now;
 
-  const symbols = approvedRequest ? [approvedRequest.symbol] : config.symbols;
+  const statusBySymbol = new Map(statusEntries.map(({ symbol, status }) => [symbol, status]));
   const candidates = (await Promise.all(
-    symbols.map(async (symbol) => {
-      if ((state.cooldownUntil[symbol] || 0) > now) {
-        await traceAction("candidate_rejected", "skipped", { symbol, reason: "cooldown" }, currentCycleId);
-        return null;
-      }
+    sessionDecision.symbols.map(async (symbol) => {
       try {
-        return await buildCandidate(symbol, assets.get(symbol), config);
+        return await buildCandidate(symbol, assets.get(symbol), config, statusBySymbol.get(symbol));
       } catch (error) {
+        await recordMarketData("candidate_error", {
+          cycleId: currentCycleId,
+          symbol,
+          contractAddress: assets.get(symbol)?.contractAddress || null,
+          error: error.message
+        });
         await traceAction("candidate_evaluation", "failed", { symbol, error: error.message }, currentCycleId);
         log("Candidate evaluation failed", { symbol, error: error.message });
         return null;
@@ -944,7 +1146,10 @@ async function evaluateEntry(config, state, assets, statePath, emergencyStopPath
     })
   )).filter(Boolean);
 
-  const selected = rankCandidates(candidates, config)[0];
+  const selected = config.activeStrategyId === "executable-basis-reversion"
+    ? candidates.filter((candidate) => candidate.costCoverage?.allowed)
+      .sort((left, right) => right.costCoverage.netEdgeProxyPct - left.costCoverage.netEdgeProxyPct)[0]
+    : rankCandidates(candidates, config)[0];
   if (!selected) {
     await traceAction("entry_decision", "skipped", { reason: "no_candidate_passed" }, currentCycleId);
     log("No entry candidate passed all gates");
@@ -999,14 +1204,12 @@ async function evaluateEntry(config, state, assets, statePath, emergencyStopPath
   const freshExecutionCost = executionCostEstimate({
     tradeUsdt: config.maxTradeUsdt,
     quotedRoundTripCostPct: freshRoundTripCostPct,
-    slippageReservePct: config.slippageReservePct,
+    executionBufferPct: config.executionBufferPct,
     estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt
   });
   const freshInitialRisk = initialRiskDecision({
     atr15Pct: selected.atr15Pct,
-    allInCostPct: freshExecutionCost.allInCostPct,
     atrStopMultiplier: config.atrStopMultiplier,
-    costBufferPct: config.initialStopCostBufferPct,
     minStopPct: config.minInitialStopPct,
     maxStopPct: config.maxInitialStopPct
   });
@@ -1025,10 +1228,10 @@ async function evaluateEntry(config, state, assets, statePath, emergencyStopPath
   const freshProfitFloorPct = freshExecutionCost.allInCostPct + config.minNetEdgePct;
   const freshCostCoverage = costCoverageDecision({
     tradeUsdt: config.maxTradeUsdt,
-    grossEdgeProxyPct: selected.trend15mPct,
+    grossEdgeProxyPct: selected.grossEdgeProxyPct ?? selected.trend15mPct,
     takeProfitPct: freshFinalTakeProfitPct,
     quotedRoundTripCostPct: freshRoundTripCostPct,
-    slippageReservePct: config.slippageReservePct,
+    executionBufferPct: config.executionBufferPct,
     estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt,
     minNetEdgePct: config.minNetEdgePct
   });
@@ -1052,6 +1255,7 @@ async function evaluateEntry(config, state, assets, statePath, emergencyStopPath
   const createdAt = new Date().toISOString();
   const orderDetails = {
     side: "BUY",
+    strategyId: selected.strategyId || DEFAULT_STRATEGY_ID,
     symbol: selected.symbol,
     address: selected.address,
     fromToken: USDT_ADDRESS,
@@ -1106,6 +1310,7 @@ async function evaluateEntry(config, state, assets, statePath, emergencyStopPath
   if (result.shadow) {
     state.position = {
       symbol: selected.symbol,
+      strategyId: selected.strategyId || DEFAULT_STRATEGY_ID,
       address: selected.address,
       quantity: freshBuyQuote.toCoinAmount,
       costBasisUsdt: config.maxTradeUsdt,
@@ -1124,6 +1329,7 @@ async function evaluateEntry(config, state, assets, statePath, emergencyStopPath
   }
   await traceAction("buy_submission", result.shadow ? "simulated" : "submitted", {
     symbol: selected.symbol,
+    strategyId: selected.strategyId || DEFAULT_STRATEGY_ID,
     address: selected.address,
     amountUsdt: config.maxTradeUsdt,
     allInCostPct: freshCostCoverage.allInCostPct,
@@ -1163,16 +1369,17 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
   if (!(Number(position.initialRiskPct) > 0)) {
     throw new Error(`Position risk metadata missing for ${position.symbol}`);
   }
-  const [sellQuote, minuteKline, atrKline] = await Promise.all([
+  const [sellQuote, minuteKline, atrKline, dynamic] = await Promise.all([
     quote(quantity, position.address, USDT_ADDRESS, config.slippagePct),
     candles(position.address, "1m", 31),
-    candles(position.address, "15m", config.atrPeriod + 2)
+    candles(position.address, "15m", config.atrPeriod + 2),
+    position.strategyId === "executable-basis-reversion" ? rwaDynamic(position.address) : null
   ]);
   const signal = analyzeCandles(minuteKline);
   const atr = calculateAtrPct(atrKline, config.atrPeriod);
   if (!atr) throw new Error(`ATR data missing for ${position.symbol}`);
   const signalValid = signal
-    ? signal.trend15mPct >= config.minTrend15mPct && signal.upMinutes >= config.minDirectionalMinutes
+    ? signal.trend15mPct + 1e-9 >= atr.atrPct * config.entryAtrMultiplier && signal.upMinutes >= config.minDirectionalMinutes
     : null;
   const proceedsUsdt = Number(sellQuote.toCoinAmount);
   const returnPct = ((proceedsUsdt / position.costBasisUsdt) - 1) * 100;
@@ -1187,7 +1394,7 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
   position.lastSignalValid = signalValid;
   position.lastSignalTrend15mPct = signal?.trend15mPct ?? null;
   position.profitFloorPct = profitFloorPct;
-  const reason = dynamicExitDecision({
+  let reason = dynamicExitDecision({
     returnPct,
     initialRiskPct: Number(position.initialRiskPct),
     atr15Pct: atr.atrPct,
@@ -1203,6 +1410,16 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
     signalReviewMinR: config.signalReviewMinR,
     profitFloorPct
   });
+  const fairTokenPrice = dynamic
+    ? Number(dynamic.stockInfo?.price) * Number(dynamic.tokenInfo?.sharesMultiplier)
+    : null;
+  if (!reason.type && basisExitReached({
+    executableSellPrice: proceedsUsdt / quantity,
+    fairTokenPrice,
+    exitBasisPct: config.basisExitPct
+  })) {
+    reason = { ...reason, type: "BASIS_NORMALIZED" };
+  }
   position.peakReturnPct = reason.peakReturnPct;
   position.profitProtectionActive = reason.profitProtectionActive;
   position.trailingStopPct = reason.trailingStopPct;
@@ -1238,7 +1455,7 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
   });
   const confirmedProceedsUsdt = Number(confirmationQuote.toCoinAmount);
   const confirmedReturnPct = ((confirmedProceedsUsdt / position.costBasisUsdt) - 1) * 100;
-  const confirmedReason = dynamicExitDecision({
+  let confirmedReason = dynamicExitDecision({
     returnPct: confirmedReturnPct,
     initialRiskPct: Number(position.initialRiskPct),
     atr15Pct: atr.atrPct,
@@ -1254,6 +1471,13 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
     signalReviewMinR: config.signalReviewMinR,
     profitFloorPct
   });
+  if (!confirmedReason.type && basisExitReached({
+    executableSellPrice: confirmedProceedsUsdt / quantity,
+    fairTokenPrice,
+    exitBasisPct: config.basisExitPct
+  })) {
+    confirmedReason = { ...confirmedReason, type: "BASIS_NORMALIZED" };
+  }
   position.peakReturnPct = confirmedReason.peakReturnPct;
   position.profitProtectionActive = confirmedReason.profitProtectionActive;
   position.trailingStopPct = confirmedReason.trailingStopPct;
@@ -1273,6 +1497,7 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
   const createdAt = new Date().toISOString();
   const orderDetails = {
     side: "SELL",
+    strategyId: position.strategyId || DEFAULT_STRATEGY_ID,
     symbol: position.symbol,
     address: position.address,
     fromToken: position.address,
@@ -1331,9 +1556,11 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
   }
   await traceAction("sell_submission", result.shadow ? "simulated" : "submitted", {
     symbol: position.symbol,
+    strategyId: position.strategyId || DEFAULT_STRATEGY_ID,
     address: position.address,
     reason: confirmedReason.type,
     expectedProceedsUsdt: confirmedProceedsUsdt,
+    realizedPnlUsdt: result.shadow ? confirmedProceedsUsdt - position.costBasisUsdt : null,
     returnPct: confirmedReason.returnPct,
     initialRiskPct: position.initialRiskPct,
     atr15Pct: atr.atrPct,
@@ -1400,8 +1627,7 @@ async function processTradeApproval(config, state, statePath, emergencyStopPath)
   await ensureNotEmergencyStopped(emergencyStopPath, state);
   if (request.side === "BUY") {
     if (state.position) throw new Error("Approved BUY blocked because a position already exists");
-    const assets = await resolveAssets([request.symbol]);
-    await evaluateEntry(config, state, assets, statePath, emergencyStopPath, request);
+    await evaluateEntry(config, state, statePath, emergencyStopPath, request);
     return true;
   }
   if (!state.position) throw new Error("Approved SELL blocked because the position no longer exists");
@@ -1452,8 +1678,12 @@ async function cycle(config, state, statePath, emergencyStopPath) {
     } else if (state.position) {
       await evaluateExit(config, state, statePath, emergencyStopPath);
     } else {
-      const assets = await resolveAssets(config.symbols);
-      await evaluateEntry(config, state, assets, statePath, emergencyStopPath);
+      const strategyControl = await readStrategyControl(
+        resolve(projectRoot, config.strategyControlFile),
+        config.defaultStrategyId
+      );
+      config.activeStrategyId = strategyControl.strategyId;
+      await evaluateEntry(config, state, statePath, emergencyStopPath);
     }
     state.updatedAt = new Date().toISOString();
     state.lastError = null;
@@ -1614,10 +1844,12 @@ async function main() {
   validateConfig(config);
   const statePath = resolve(projectRoot, config.stateFile);
   const tracePath = resolve(projectRoot, config.traceFile);
+  const marketDataDirectory = resolve(projectRoot, config.marketDataDirectory);
   const emergencyStopPath = resolve(projectRoot, config.emergencyStopFile);
   const processLockPath = resolve(projectRoot, config.processLockFile);
   const runId = randomUUID();
   traceAction = createTracer(tracePath, { runId });
+  recordMarketData = createMarketDataRecorder(marketDataDirectory, { runId });
   const state = await loadState(statePath);
 
   if (config.mode === "live" && process.env.BOT_LIVE !== "1") {
@@ -1664,14 +1896,16 @@ async function main() {
       maxTradeUsdt: config.maxTradeUsdt,
       dailyLossLimitUsdt: config.dailyLossLimitUsdt,
       maxRoundTripCostPct: config.maxRoundTripCostPct,
-      slippageReservePct: config.slippageReservePct,
+      executionBufferPct: config.executionBufferPct,
       estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt,
       minNetEdgePct: config.minNetEdgePct,
+      regularOnlyEntries: config.regularOnlyEntries,
+      nysePlan: nyseSessionPlan(Date.now()),
       atrPeriod: config.atrPeriod,
+      entryAtrMultiplier: config.entryAtrMultiplier,
       atrStopMultiplier: config.atrStopMultiplier,
       minInitialStopPct: config.minInitialStopPct,
       maxInitialStopPct: config.maxInitialStopPct,
-      initialStopCostBufferPct: config.initialStopCostBufferPct,
       profitProtectionR: config.profitProtectionR,
       trailingAtrMultiplier: config.trailingAtrMultiplier,
       finalTakeProfitR: config.finalTakeProfitR,

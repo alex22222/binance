@@ -1,4 +1,5 @@
 config.json
+.env
 state/
 *.log
 SESSION_CONTEXT.md

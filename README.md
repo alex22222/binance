@@ -4,7 +4,9 @@ Automated BSC tokenized-stock monitor and trader for Binance Agentic Wallet.
 
 The bot:
 
-- scans the configured universe every 15 minutes for entries;
+- checks market status every 15 minutes while flat, and only runs the full entry scan during the regular session;
+- from the expected 09:30 New York open, checks every 60 seconds until Binance reports `marketStatus: regular`, then starts the full scan in that same cycle;
+- applies the published 2026-2028 U.S. cash-equity holiday and 13:00 early-close calendar before trusting Binance's live status;
 - checks an open position every minute using executable sell quotes;
 - holds at most one position;
 - caps each order at 50 USDT;
@@ -25,22 +27,35 @@ The X post used 15 minutes as a monitoring interval for an existing multi-positi
 
 Entry gates:
 
-- market and asset status are `TRADING`;
-- 15-minute return is at least 0.8%;
-- at least 10 of the last 15 one-minute moves are positive;
+- market and asset status are `TRADING`, and `marketStatus` is exactly `regular`;
+- 15-minute return is at least `0.75 × ATR15`;
+- at least 9 of the last 15 one-minute moves are positive;
 - quoted round-trip cost is at most 0.7%;
-- quoted fees/spread/price impact, a 1.0% reserve covering both 0.5% slippage-tolerance legs, and 0.10 USDT estimated round-trip BSC gas leave at least 0.3% net signal edge and net target profit;
+- quoted fees/spread/price impact, 0.10 USDT estimated round-trip BSC gas, and a 0.1% execution buffer leave at least 0.3% net signal edge and net target profit;
 - Binance token audit is supported, low-risk, has no hit risk items, and taxes are at most 5%; or
 - Binance explicitly reports the audit unsupported, the contract came from the current official BSC RWA list, and `allowUnsupportedAuditForOfficialRwa` is enabled.
 
 Network, HTTP, and API errors always fail closed. The RWA exception never applies to a contract supplied outside the official list.
 
+The planned regular-session calendar uses `America/New_York`, so UTC and
+Asia/Shanghai times follow U.S. daylight-saving changes automatically. Published
+NYSE holidays and early closes are embedded through 2028 and cross-checked
+against Nasdaq's 2026 U.S. equity calendar. Outside that published horizon,
+new entries fail closed until the table is updated; open-position exit monitoring
+continues. Binance `marketStatus: regular` remains a second mandatory gate for
+unexpected closures, delayed opens, and trading halts.
+
+Official sources:
+
+- https://www.nyse.com/markets/hours-calendars
+- https://www.nasdaq.com/market-activity/stock-market-holiday-schedule
+
 The all-in entry estimate is:
 
 ```text
 quoted round-trip cost
-+ slippageReservePct
 + (estimatedRoundTripGasUsdt / maxTradeUsdt × 100%)
++ executionBufferPct
 ```
 
 The bot rejects the candidate unless both the 15-minute gross edge proxy and
@@ -52,15 +67,13 @@ before submitting an order.
 risk unit `R` is:
 
 ```text
-max(
-  1.5 × ATR15,
-  all-in round-trip cost + 0.5%,
-  1.0%
-)
+clamp(1.5 × ATR15, 1.0%, 3.5%)
 ```
 
-An entry is rejected when the required `R` exceeds 3.5%; it is not silently
-clamped to a tighter stop. Exit checks run every 60 seconds using an executable
+Execution costs do not widen the price stop; they are used for entry admission
+and the profit floor. While flat outside regular hours, the bot skips all
+K-line, ATR, and two-way quote work. Exit checks remain active every 60 seconds
+for an existing position, regardless of the market session, using an executable
 sell quote:
 
 - the initial stop is `-1R`;
@@ -127,7 +140,8 @@ scripts/baw-from-keychain.mjs wallet status --json
 The local installation also links this wrapper as
 `/Users/henry/.local/bin/baw`. Do not invoke the raw
 `/Users/henry/.npm-global/bin/baw` executable directly: it bypasses the stable
-instance ID and Node's environment-proxy flag.
+instance ID. The macOS launcher configures the local proxy; the shared Node
+runtime no longer injects a proxy so an Ubuntu server connects directly.
 
 BAW CLI 1.7.0 does not persist a rotated session cookie after an established
 wallet request. It also clears the existing session when the encrypted client
@@ -191,6 +205,43 @@ Open `http://127.0.0.1:4173`. It refreshes every three seconds and shows the bot
 
 Approving or rejecting from the dashboard writes a new immutable decision under `state/approval-decisions/`; it never edits `state/bot-state.json`. The bot consumes that exact decision on its next cycle. Before an approved swap is submitted it rechecks the wallet, emergency stop, position state, trend/exit trigger, executable quote, quote drift, cost coverage, and token audit. An expired, mismatched, reused, or materially changed approval fails closed without broadcasting.
 
+For authenticated access, configure both values before starting the dashboard:
+
+```bash
+export DASHBOARD_USERNAME='operator'
+export DASHBOARD_PASSWORD='use-a-long-random-password'
+```
+
+An HTTPS reverse proxy must be used for public access. Set
+`DASHBOARD_PUBLIC_ORIGIN` to the exact public origin, such as
+`https://stocks.example.com`; state-changing requests from any other Origin are
+rejected.
+
+## Ubuntu server deployment
+
+Ubuntu uses systemd instead of the macOS Keychain/launchd launcher. The checked-in
+deployment templates provide separate services for the bot, Dashboard, and
+Feishu watch bridge. They explicitly remove inherited proxy variables, keep the
+Dashboard on `127.0.0.1:4173`, and expose it through Caddy HTTPS.
+
+See [`deploy/README.md`](deploy/README.md) for the server layout and cutover
+procedure. The service templates default to:
+
+- `BOT_LIVE=0`;
+- `WATCH_AUTO_APPROVE=0`;
+- Dashboard HTTP Basic Auth from `/etc/binance-agentic-stock-bot.env`;
+- BAW session storage under `/var/lib/binance-agentic-stock-bot/.baw`.
+
+The watch bridge has two modes:
+
+- `webbridge`: existing macOS browser automation through local port `10086`;
+- `dashboard-api`: Linux loopback API access with exact approval ID, side,
+  symbol, and contract matching.
+
+Automatic approval is never enabled by merely installing the service. It
+requires the separate `WATCH_AUTO_APPROVE=1` gate. Enabling it together with
+`BOT_LIVE=1` authorizes automatic real-money confirmations.
+
 ## Reliability controls
 
 Wallet session expiry fails closed. The bot records `EXPIRED`, suppresses repeated alerts for the same outage, preserves positions and pending orders, and resumes monitoring automatically after the operator signs in again. It never attempts to automate QR login.
@@ -251,6 +302,22 @@ npm start
 ```
 
 Every run receives a unique run ID and every cycle receives a unique cycle ID. The append-only trace is written to `state/action-trace.jsonl` by default. Credentials, tokens, authorization headers, API keys, and webhook URLs are redacted.
+
+Each 15-minute universe scan also appends replayable market records to
+`state/market-data/YYYY-MM-DD.jsonl` using the Asia/Shanghai date. A
+`market_scan` record contains the full fetched 1-minute and 15-minute OHLCV
+windows, market status, derived trend/ATR features, configured thresholds, and
+gate results for one symbol. Symbols that clear the market/trend gate receive a
+second `quote_evaluation` record with the executable round-trip quote, cost
+estimate, initial risk, and cost-coverage decision. `runId`, `cycleId`, and
+`scanId` join the records without relying on line order.
+
+Inspect one day or select a single scan:
+
+```bash
+jq -c 'select(.recordType=="market_scan")' state/market-data/YYYY-MM-DD.jsonl
+jq -c 'select(.scanId=="<scan-id>")' state/market-data/YYYY-MM-DD.jsonl
+```
 
 ## Live gate
 
