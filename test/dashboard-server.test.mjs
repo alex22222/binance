@@ -253,6 +253,13 @@ test("dashboard protects public access with basic auth and an exact HTTPS origin
     });
     assert.equal(authorized.status, 200);
 
+    const connectedLoginAttempt = await fetch(`${origin}/api/wallet-login/start`, {
+      method: "POST",
+      headers: { Authorization: authorization, Origin: publicOrigin }
+    });
+    assert.equal(connectedLoginAttempt.status, 409);
+    assert.match((await connectedLoginAttempt.json()).error, /confirmed disconnect/);
+
     const publicOriginRequest = await fetch(`${origin}/api/strategy`, {
       method: "POST",
       headers: {

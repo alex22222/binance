@@ -221,6 +221,11 @@ links. Mobile browsers that do not show an HTTP Basic Auth prompt are redirected
 to `/login`; successful login creates a signed, twelve-hour, HTTPS-only session
 cookie without putting credentials in the URL.
 
+When the bot has confirmed that the wallet session is `EXPIRED`, the mobile
+Dashboard exposes a one-time Binance sign-in flow. It returns only the official
+Binance HTTPS authorization page and pairing code to the browser, verifies the
+QR session on the server, and remains unavailable while the wallet is connected.
+
 ## Ubuntu server deployment
 
 Ubuntu uses systemd instead of the macOS Keychain/launchd launcher. The checked-in

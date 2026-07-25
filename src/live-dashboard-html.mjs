@@ -62,6 +62,12 @@ export function liveDashboardHtml() {
     .approval-button.reject { color: #ffadb4; border: 1px solid rgba(255,108,120,.4); background: rgba(255,108,120,.08); }
     .approval-button:disabled { cursor: not-allowed; opacity: .45; }
     .approval-result { margin-top: 12px; color: var(--gold); font-size: 13px; }
+    .wallet-login { margin-bottom: 14px; padding: 16px; border-color: rgba(255,108,120,.45); }
+    .wallet-login[hidden] { display: none; }
+    .wallet-login-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+    .wallet-login a, .wallet-login button { min-height: 46px; padding: 11px 14px; border-radius: 10px; font-weight: 750; }
+    .wallet-login a { color: #07150f; background: var(--gold); text-decoration: none; }
+    .wallet-login button { color: var(--text); border: 1px solid var(--line); background: var(--panel-2); }
     .panel { border: 1px solid var(--line); background: rgba(17,21,28,.88); border-radius: 17px; }
     .label { color: var(--muted); font-size: 11px; letter-spacing: .11em; text-transform: uppercase; }
     .value { display: block; margin-top: 12px; font-size: 25px; letter-spacing: -.04em; }
@@ -167,6 +173,15 @@ export function liveDashboardHtml() {
     </div>
   </header>
   <main class="shell">
+    <section class="panel wallet-login" id="walletLogin" hidden>
+      <h2>钱包已断开</h2>
+      <p class="muted">生成一次性 Binance 授权页面。同一台手机可直接打开；使用另一台设备时可在官方页面扫码。</p>
+      <div class="wallet-login-actions">
+        <button id="walletLoginStart" type="button">生成扫码授权</button>
+        <a id="walletLoginLink" target="_blank" rel="noopener noreferrer" hidden>打开 Binance 授权页面</a>
+      </div>
+      <div class="approval-result" id="walletLoginStatus"></div>
+    </section>
     <div class="dashboard-grid">
     <section>
       <div class="section-head"><h2>待确认订单</h2></div>
@@ -219,6 +234,42 @@ export function liveDashboardHtml() {
       return node;
     };
     let submittedApprovalId = null;
+    let walletLoginPoll = null;
+    async function pollWalletLogin() {
+      const response = await fetch("/api/wallet-login/status", { cache: "no-store" });
+      const login = await response.json();
+      const status = document.getElementById("walletLoginStatus");
+      if (login.status === "CONNECTED") {
+        status.textContent = "钱包授权成功，等待 Bot 复核连接状态…";
+        clearInterval(walletLoginPoll);
+        walletLoginPoll = null;
+        await refresh();
+      } else if (["FAILED", "EXPIRED"].includes(login.status)) {
+        status.textContent = login.error || "授权失败，请重新生成";
+        clearInterval(walletLoginPoll);
+        walletLoginPoll = null;
+      }
+    }
+    async function startWalletLogin() {
+      const status = document.getElementById("walletLoginStatus");
+      status.textContent = "正在生成一次性授权…";
+      const response = await fetch("/api/wallet-login/start", { method: "POST" });
+      const login = await response.json();
+      if (!response.ok) {
+        status.textContent = login.error || "无法启动钱包登录";
+        return;
+      }
+      if (login.status === "CONNECTED") {
+        status.textContent = "钱包已经连接";
+        return;
+      }
+      const link = document.getElementById("walletLoginLink");
+      link.href = login.urlForWeb;
+      link.hidden = false;
+      status.textContent = "配对码：" + login.pairingCode + " · 请核对后在 Binance App 确认";
+      clearInterval(walletLoginPoll);
+      walletLoginPoll = setInterval(pollWalletLogin, 2000);
+    }
     function renderPosition(data) {
       const root = document.getElementById("position");
       root.replaceChildren();
@@ -475,6 +526,7 @@ export function liveDashboardHtml() {
       walletStatus.title = walletSession?.checkedAt
         ? "最近检查：" + new Date(walletSession.checkedAt).toLocaleString("zh-CN", { hour12: false })
         : "尚无钱包状态检查记录";
+      document.getElementById("walletLogin").hidden = walletSession?.status !== "EXPIRED";
     }
     async function refresh() {
       try {
@@ -515,6 +567,7 @@ export function liveDashboardHtml() {
       await fetch("/api/emergency-stop", { method: "POST" });
       await refresh();
     });
+    document.getElementById("walletLoginStart").addEventListener("click", startWalletLogin);
     document.getElementById("resumeButton").addEventListener("click", async () => {
       if (!window.confirm("确认解除紧急停机？此操作不会自动启动交易进程。")) return;
       await fetch("/api/emergency-resume", {

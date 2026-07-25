@@ -21,6 +21,11 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.match(html, /function renderWalletStatus\(walletSession\)/);
   assert.match(html, /钱包 已连接/);
   assert.match(html, /钱包 已断开/);
+  assert.match(html, /id="walletLogin"/);
+  assert.match(html, /id="walletLoginStart"/);
+  assert.match(html, /打开 Binance 授权页面/);
+  assert.match(html, /\/api\/wallet-login\/start/);
+  assert.match(html, /\/api\/wallet-login\/status/);
   assert.doesNotMatch(html, /id="metrics"/);
   assert.match(html, /class="dashboard-grid"/);
   assert.match(html, /\.dashboard-grid \{ display: grid; grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);

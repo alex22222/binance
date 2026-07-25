@@ -9,6 +9,8 @@ Group=binancebot
 WorkingDirectory=/opt/binance-agentic-stock-bot
 EnvironmentFile=/etc/binance-agentic-stock-bot.env
 Environment=DASHBOARD_PORT=4173
+Environment=HOME=/var/lib/binance-agentic-stock-bot
+Environment=BINANCE_BAW_DIR=/var/lib/binance-agentic-stock-bot/.baw
 ExecStart=/usr/bin/node scripts/serve-live-dashboard.mjs
 Restart=on-failure
 RestartSec=5
@@ -16,7 +18,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/opt/binance-agentic-stock-bot/state
+ReadWritePaths=/opt/binance-agentic-stock-bot/state /var/lib/binance-agentic-stock-bot
 UMask=0077
 
 [Install]

@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { buildBawEnvironment } from "../src/baw-runtime.mjs";
 import { loadDashboardSnapshot } from "../src/dashboard.mjs";
 import { liveDashboardHtml } from "../src/live-dashboard-html.mjs";
 import { dashboardLoginHtml } from "../src/dashboard-login-html.mjs";
@@ -11,6 +14,7 @@ import { activateEmergencyStop, clearEmergencyStop } from "../src/reliability.mj
 import { createTracer } from "../src/trace.mjs";
 import { approvalDecisionStatus, recordApprovalDecision } from "../src/approvals.mjs";
 import { assertSwitchableStrategy, writeStrategyControl } from "../src/strategy-lab.mjs";
+import { createWalletLoginManager } from "../src/wallet-login.mjs";
 import {
   dashboardAllowedOrigins,
   dashboardAuthConfig,
@@ -25,6 +29,33 @@ const host = "127.0.0.1";
 const port = Number(process.env.DASHBOARD_PORT || 4173);
 const authConfig = dashboardAuthConfig();
 const allowedOrigins = dashboardAllowedOrigins({ host, port });
+const execFileAsync = promisify(execFile);
+
+async function executeBaw(args) {
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync(
+      process.env.BAW_CLI_PATH || "baw",
+      [...args, "--json"],
+      {
+        env: buildBawEnvironment({
+          environment: process.env,
+          instanceId: process.env.BINANCE_INSTANCE_ID
+        }),
+        maxBuffer: 1024 * 1024,
+        timeout: args[1] === "verify" ? 310_000 : 30_000
+      }
+    ));
+  } catch (error) {
+    stdout = error.stdout;
+    if (!stdout) throw error;
+  }
+  const result = JSON.parse(stdout);
+  if (!result.success) throw new Error(result.error?.message || "Wallet login failed");
+  return result.data;
+}
+
+const walletLogin = createWalletLoginManager({ executeBaw });
 
 async function loadConfig() {
   return JSON.parse(await readFile(configPath, "utf8"));
@@ -178,6 +209,25 @@ const server = createServer(async (request, response) => {
         "X-Content-Type-Options": "nosniff"
       });
       response.end(JSON.stringify(snapshot));
+      return;
+    }
+    if (request.method === "POST" && request.url === "/api/wallet-login/start") {
+      requireAllowedOrigin(request);
+      const config = await loadConfig();
+      const state = JSON.parse(await readFile(resolve(projectRoot, config.stateFile), "utf8"));
+      if (state.walletSession?.status !== "EXPIRED") {
+        response.writeHead(409, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        response.end(JSON.stringify({ error: "Wallet login is available only after a confirmed disconnect" }));
+        return;
+      }
+      const login = await walletLogin.start();
+      response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      response.end(JSON.stringify(login));
+      return;
+    }
+    if (request.method === "GET" && request.url === "/api/wallet-login/status") {
+      response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      response.end(JSON.stringify(walletLogin.status()));
       return;
     }
     if (request.method === "POST" && request.url === "/api/strategy") {

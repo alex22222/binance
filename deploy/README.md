@@ -54,6 +54,9 @@ to `/etc/caddy/Caddyfile`, replace the domain, validate it, and reload Caddy.
 Bot notifications append `DASHBOARD_PUBLIC_ORIGIN` as a mobile Dashboard link.
 The same credentials work in the `/login` form used by Feishu and other mobile
 webviews that do not display an HTTP Basic Auth prompt.
+If the bot confirms a wallet disconnect, the Dashboard service may start the
+official BAW QR sign-in flow and therefore shares the protected BAW session
+directory with the bot.
 
 HTTP Basic Auth is accepted only over the TLS reverse proxy. The Node dashboard
 continues to bind to loopback and rejects state-changing requests from origins
