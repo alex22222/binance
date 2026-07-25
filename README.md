@@ -220,27 +220,22 @@ rejected.
 ## Ubuntu server deployment
 
 Ubuntu uses systemd instead of the macOS Keychain/launchd launcher. The checked-in
-deployment templates provide separate services for the bot, Dashboard, and
-Feishu watch bridge. They explicitly remove inherited proxy variables, keep the
-Dashboard on `127.0.0.1:4173`, and expose it through Caddy HTTPS.
+deployment templates provide separate services for the bot and Dashboard. They
+explicitly remove inherited proxy variables, keep the Dashboard on
+`127.0.0.1:4173`, and expose it through Caddy HTTPS. Feishu remains an outbound
+notification channel; the Dashboard reads pending approvals directly from bot
+state.
 
 See [`deploy/README.md`](deploy/README.md) for the server layout and cutover
 procedure. The service templates default to:
 
 - `BOT_LIVE=0`;
-- `WATCH_AUTO_APPROVE=0`;
 - Dashboard HTTP Basic Auth from `/etc/binance-agentic-stock-bot.env`;
 - BAW session storage under `/var/lib/binance-agentic-stock-bot/.baw`.
 
-The watch bridge has two modes:
-
-- `webbridge`: existing macOS browser automation through local port `10086`;
-- `dashboard-api`: Linux loopback API access with exact approval ID, side,
-  symbol, and contract matching.
-
-Automatic approval is never enabled by merely installing the service. It
-requires the separate `WATCH_AUTO_APPROVE=1` gate. Enabling it together with
-`BOT_LIVE=1` authorizes automatic real-money confirmations.
+The installer disables and removes the legacy `binance-agentic-watch` service.
+The parser remains in `watch/` for local diagnostics, but is not part of the
+production approval path.
 
 ## Reliability controls
 

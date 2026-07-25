@@ -4,10 +4,10 @@ The production layout keeps every application port on loopback:
 
 - bot: no listening port;
 - dashboard: `127.0.0.1:4173`;
-- watch bridge: calls the dashboard through loopback;
 - Caddy: the only public listener, terminating HTTPS before HTTP Basic Auth reaches the dashboard.
 
-The checked-in service files never enable live trading or automatic approval.
+The checked-in service files never enable live trading. Feishu is an outbound
+notification channel; Dashboard approval state comes directly from the bot.
 
 ## Prepare a new server
 
@@ -61,19 +61,19 @@ other than loopback or `DASHBOARD_PUBLIC_ORIGIN`.
 ```bash
 sudo systemctl enable --now binance-agentic-dashboard
 sudo systemctl enable --now binance-agentic-stock-bot
-sudo systemctl enable --now binance-agentic-watch
 ```
 
 At this point:
 
-- `BOT_LIVE=0` blocks a live config from starting;
-- `WATCH_AUTO_APPROVE=0` records Feishu signals but preserves manual approval.
+- `BOT_LIVE=0` blocks a live config from starting.
+- The bot sends Feishu notifications without polling them back into the
+  Dashboard.
 
 Inspect:
 
 ```bash
-systemctl status binance-agentic-dashboard binance-agentic-stock-bot binance-agentic-watch
-journalctl -u binance-agentic-stock-bot -u binance-agentic-dashboard -u binance-agentic-watch
+systemctl status binance-agentic-dashboard binance-agentic-stock-bot
+journalctl -u binance-agentic-stock-bot -u binance-agentic-dashboard
 ```
 
 ## Explicit live cutover
@@ -89,13 +89,5 @@ Live trading requires a deliberate systemd drop-in:
 Environment=BOT_LIVE=1
 ```
 
-Automatic watch approval is separate and requires its own deliberate drop-in:
-
-```ini
-[Service]
-Environment=WATCH_AUTO_APPROVE=1
-```
-
-Either capability may be enabled independently. Enabling both turns Feishu
-approval messages into automatic trade confirmations, so it must be treated as
-an explicit real-money authorization.
+The installer disables and removes the legacy `binance-agentic-watch` service.
+Its state directory is intentionally preserved for audit and rollback.
