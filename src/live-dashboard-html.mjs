@@ -169,7 +169,7 @@ export function liveDashboardHtml() {
   <header>
     <div class="shell nav">
       <div class="brand"><span class="mark">A</span><span>Agentic Wallet</span><a class="nav-link" href="/strategies">策略</a></div>
-      <div class="nav-info"><div class="top-stats"><span class="top-stat"><span>盈亏</span><strong class="green" id="realizedPnl">—</strong></span><span class="top-stat"><span>日亏余量</span><strong id="dailyLossRemaining">—</strong></span><span class="top-stat"><span>单笔上限</span><strong id="maxTrade">—</strong></span></div><div class="badges"><span class="badge" id="walletStatus" aria-live="polite"><span class="dot"></span><span>钱包 未检测</span></span><span class="badge" id="mode"></span><span class="badge" id="health"><span class="dot"></span><span></span></span><div class="control-actions"><button class="control-button" id="autoApprovalToggle" type="button" role="switch" aria-checked="false">自动审批：关</button><button class="control-button stop" id="stopButton" type="button">停机</button><button class="control-button resume" id="resumeButton" type="button" hidden>恢复</button></div></div></div>
+      <div class="nav-info"><div class="top-stats"><span class="top-stat"><span>盈亏</span><strong class="green" id="realizedPnl">—</strong></span><span class="top-stat"><span>日亏余量</span><strong id="dailyLossRemaining">—</strong></span><span class="top-stat"><span>单笔上限</span><strong id="maxTrade">—</strong></span></div><div class="badges"><span class="badge" id="walletStatus" aria-live="polite"><span class="dot"></span><span>钱包 未检测</span></span><span class="badge" id="mode"><span class="dot"></span><span></span></span><span class="badge" id="health"><span class="dot"></span><span></span></span><div class="control-actions"><button class="control-button" id="autoApprovalToggle" type="button" role="switch" aria-checked="false">自动审批：关</button><button class="control-button stop" id="stopButton" type="button">停机</button><button class="control-button resume" id="resumeButton" type="button" hidden>恢复</button></div></div></div>
     </div>
   </header>
   <main class="shell">
@@ -529,6 +529,12 @@ export function liveDashboardHtml() {
         : "尚无钱包状态检查记录";
       document.getElementById("walletLogin").hidden = walletSession?.status !== "EXPIRED";
     }
+    function renderMode(value) {
+      const mode = document.getElementById("mode");
+      const normalized = String(value || "shadow").toLowerCase();
+      mode.className = "badge" + (normalized === "live" ? " green" : "");
+      mode.querySelector("span:last-child").textContent = normalized.toUpperCase();
+    }
     async function refresh() {
       try {
         const response = await fetch("/api/snapshot", { cache: "no-store" });
@@ -539,7 +545,7 @@ export function liveDashboardHtml() {
         autoToggle.setAttribute("aria-checked", String(autoApprovalEnabled));
         autoToggle.textContent = "自动审批：" + (autoApprovalEnabled ? "开" : "关");
         autoToggle.classList.toggle("auto-on", autoApprovalEnabled);
-        document.getElementById("mode").textContent = data.mode.toUpperCase();
+        renderMode(data.mode);
         renderWalletStatus(data.health.walletSession);
         const health = document.getElementById("health");
         health.className = "badge " + (data.health.status === "RUNNING" ? "green" : ["STALE", "HALTED", "DEGRADED", "AUTH_REQUIRED"].includes(data.health.status) ? "red" : "gold");

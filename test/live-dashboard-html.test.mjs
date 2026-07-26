@@ -18,6 +18,10 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.match(html, /id="dailyLossRemaining"/);
   assert.match(html, /id="maxTrade"/);
   assert.match(html, /id="walletStatus"/);
+  assert.match(html, /id="mode"><span class="dot"><\/span><span><\/span>/);
+  assert.match(html, /function renderMode\(value\)/);
+  assert.match(html, /normalized === "live" \? " green" : ""/);
+  assert.match(html, /renderMode\(data\.mode\)/);
   assert.match(html, /function renderWalletStatus\(walletSession\)/);
   assert.match(html, /钱包 已连接/);
   assert.match(html, /钱包 已断开/);
