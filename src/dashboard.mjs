@@ -114,6 +114,16 @@ export function buildDashboardSnapshot({
       walletSession: state.walletSession || null,
       emergencyStop: state.emergencyStop || null
     },
+    walletBalance: state.walletBalance
+      ? {
+          totalUsd: state.walletBalance.totalUsd == null
+            ? null
+            : finiteNumber(state.walletBalance.totalUsd, null),
+          assetCount: finiteNumber(state.walletBalance.assetCount),
+          checkedAt: state.walletBalance.checkedAt || null,
+          lastCheckFailedAt: state.walletBalance.lastCheckFailedAt || null
+        }
+      : null,
     risk: {
       maxTradeUsdt: finiteNumber(config.maxTradeUsdt),
       dailyLossLimitUsdt: finiteNumber(config.dailyLossLimitUsdt),

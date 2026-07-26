@@ -39,6 +39,11 @@ test("builds a live position snapshot from the latest executable sell quote", ()
       realizedPnlUsdt: -1,
       updatedAt: "2026-07-24T12:59:30.000Z",
       lastError: null,
+      walletBalance: {
+        totalUsd: 449.67578352,
+        assetCount: 2,
+        checkedAt: "2026-07-24T12:59:00.000Z"
+      },
       pendingOrder: null,
       position: {
         symbol: "NVDA",
@@ -72,6 +77,8 @@ test("builds a live position snapshot from the latest executable sell quote", ()
   assert.equal(snapshot.position.trailingStopPct, 7.6);
   assert.equal(snapshot.position.address, "0xabc");
   assert.equal(snapshot.strategy.regularOnlyEntries, true);
+  assert.equal(snapshot.walletBalance.totalUsd, 449.67578352);
+  assert.equal(snapshot.walletBalance.assetCount, 2);
 });
 
 test("shows pending orders and the latest signal for each symbol", () => {
@@ -122,6 +129,27 @@ test("shows pending orders and the latest signal for each symbol", () => {
   assert.equal(snapshot.signals.TSLA.initialRiskPct, 1.55);
   assert.equal(snapshot.signals.TSLA.costCoverageAllowed, false);
   assert.equal(snapshot.signals.NVDA.upMinutes, 6);
+});
+
+test("keeps an unavailable wallet balance distinct from a zero balance", () => {
+  const snapshot = buildDashboardSnapshot({
+    config,
+    state: {
+      date: "2026-07-24",
+      realizedPnlUsdt: 0,
+      updatedAt: "2026-07-24T12:59:30.000Z",
+      walletBalance: {
+        totalUsd: null,
+        assetCount: 0,
+        checkedAt: null,
+        lastCheckFailedAt: "2026-07-24T12:59:00.000Z"
+      }
+    },
+    traceRecords: [],
+    nowMs: Date.parse("2026-07-24T13:00:00.000Z")
+  });
+
+  assert.equal(snapshot.walletBalance.totalUsd, null);
 });
 
 test("uses read-only local signal history until a newer server signal replaces it", () => {

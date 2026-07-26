@@ -14,6 +14,9 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.doesNotMatch(html, /实时持仓，一眼看清/);
   assert.doesNotMatch(html, /Local only · Safety control dashboard/);
   assert.match(html, /class="top-stats"/);
+  assert.match(html, /id="walletBalance"/);
+  assert.match(html, /data\.walletBalance\?\.totalUsd/);
+  assert.match(html, /data\.walletBalance\.assetCount \+ " 项资产/);
   assert.match(html, /id="realizedPnl"/);
   assert.match(html, /id="dailyLossRemaining"/);
   assert.match(html, /id="maxTrade"/);

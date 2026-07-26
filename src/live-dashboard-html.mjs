@@ -31,21 +31,22 @@ export function liveDashboardHtml() {
       background: linear-gradient(var(--bg) 0%, rgba(7,9,13,.92) 72%, transparent);
     }
     .nav {
-      min-height: 70px; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 18px;
+      min-height: 70px; padding: 10px 12px; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px 18px;
       border: 1px solid rgba(255,255,255,.08); border-radius: 17px;
       background: rgba(14,18,24,.88); box-shadow: 0 12px 38px rgba(0,0,0,.22);
       backdrop-filter: blur(18px);
     }
-    .brand { display: flex; align-items: center; gap: 11px; font-weight: 750; }
-    .nav-info, .top-stats { display: flex; align-items: center; gap: 16px; }
+    .brand { grid-column: 1; grid-row: 1; display: flex; align-items: center; gap: 11px; font-weight: 750; white-space: nowrap; }
+    .nav-info { display: contents; }
+    .top-stats { grid-column: 1 / -1; grid-row: 2; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; padding-top: 10px; border-top: 1px solid var(--line); background: var(--line); }
     .mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 12px; background: var(--gold); color: #171108; font-weight: 900; box-shadow: 0 0 24px rgba(245,193,79,.18); }
     .nav-link { margin-left: 6px; padding: 8px 11px; border: 1px solid rgba(120,169,255,.35); border-radius: 9px; color: #d8e5ff; background: rgba(120,169,255,.08); text-decoration: none; font-size: 12px; transition: background-color .2s, border-color .2s; }
     .nav-link:hover { border-color: rgba(120,169,255,.65); background: rgba(120,169,255,.16); }
     .nav-link:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
-    .top-stat { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; padding: 7px 9px; border-radius: 9px; background: rgba(255,255,255,.025); }
+    .top-stat { display: inline-flex; align-items: baseline; justify-content: center; gap: 6px; min-width: 0; white-space: nowrap; padding: 7px 9px; background: #0f1319; }
     .top-stat span { color: var(--muted); font-size: 11px; }
     .top-stat strong { font-size: 14px; letter-spacing: -.02em; }
-    .badges { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .badges { grid-column: 2; grid-row: 1; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
     .badge { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: rgba(255,255,255,.018); font: 700 11px ui-monospace, SFMono-Regular, monospace; }
     .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 10px currentColor; }
     main { padding: 22px 0 56px; }
@@ -133,6 +134,9 @@ export function liveDashboardHtml() {
     .workflow-step strong { display: block; margin-top: 8px; color: inherit; font-size: 12px; }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
     @media (max-width: 900px) {
+      .nav { display: flex; align-items: stretch; flex-direction: column; }
+      .nav-info { display: flex; justify-content: space-between; }
+      .top-stats { width: 100%; }
       .dashboard-grid { grid-template-columns: 1fr 1fr; }
       .signals-section { grid-column: 1 / -1; }
       .insight-grid { grid-template-columns: 1fr; }
@@ -155,9 +159,11 @@ export function liveDashboardHtml() {
       .brand { min-height: 44px; }
       .nav-link { min-height: 40px; display: inline-flex; align-items: center; }
       .nav-info { width: 100%; flex-direction: column-reverse; align-items: stretch; gap: 12px; }
-      .top-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; padding: 12px 0 0; border-top: 1px solid var(--line); }
-      .top-stat { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 0 6px; text-align: center; }
+      .top-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0; padding: 12px 0 0; border-top: 1px solid var(--line); }
+      .top-stat { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 8px 6px; text-align: center; }
       .top-stat + .top-stat { border-left: 1px solid var(--line); }
+      .top-stat:nth-child(odd) { border-left: 0; }
+      .top-stat:nth-child(n+3) { border-top: 1px solid var(--line); }
       .top-stat strong { font-size: 15px; }
       .badges { justify-content: flex-start; align-items: center; }
       .control-actions { width: 100%; margin-left: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
@@ -187,7 +193,7 @@ export function liveDashboardHtml() {
   <header>
     <div class="shell nav">
       <div class="brand"><span class="mark">A</span><span>Agentic Wallet</span><a class="nav-link" href="/strategies">策略</a></div>
-      <div class="nav-info"><div class="top-stats"><span class="top-stat"><span>盈亏</span><strong class="green" id="realizedPnl">—</strong></span><span class="top-stat"><span>日亏余量</span><strong id="dailyLossRemaining">—</strong></span><span class="top-stat"><span>单笔上限</span><strong id="maxTrade">—</strong></span></div><div class="badges"><span class="badge" id="walletStatus" aria-live="polite"><span class="dot"></span><span>钱包 未检测</span></span><span class="badge" id="mode"><span class="dot"></span><span></span></span><span class="badge" id="health"><span class="dot"></span><span></span></span><div class="control-actions"><button class="control-button" id="autoApprovalToggle" type="button" role="switch" aria-checked="false">自动审批：关</button><button class="control-button stop" id="stopButton" type="button">停机</button><button class="control-button resume" id="resumeButton" type="button" hidden>恢复</button></div></div></div>
+      <div class="nav-info"><div class="top-stats"><span class="top-stat"><span>钱包余额</span><strong id="walletBalance">—</strong></span><span class="top-stat"><span>盈亏</span><strong class="green" id="realizedPnl">—</strong></span><span class="top-stat"><span>日亏余量</span><strong id="dailyLossRemaining">—</strong></span><span class="top-stat"><span>单笔上限</span><strong id="maxTrade">—</strong></span></div><div class="badges"><span class="badge" id="walletStatus" aria-live="polite"><span class="dot"></span><span>钱包 未检测</span></span><span class="badge" id="mode"><span class="dot"></span><span></span></span><span class="badge" id="health"><span class="dot"></span><span></span></span><div class="control-actions"><button class="control-button" id="autoApprovalToggle" type="button" role="switch" aria-checked="false">自动审批：关</button><button class="control-button stop" id="stopButton" type="button">停机</button><button class="control-button resume" id="resumeButton" type="button" hidden>恢复</button></div></div></div>
     </div>
   </header>
   <main class="shell">
@@ -574,6 +580,11 @@ export function liveDashboardHtml() {
         document.getElementById("stopButton").hidden = halted;
         document.getElementById("resumeButton").hidden = !halted;
         document.getElementById("lastError").textContent = data.health.lastError || (halted ? "已停机" : authRequired ? "需登录" : sessionExpiring ? "会话即将到期" : "");
+        const walletBalance = document.getElementById("walletBalance");
+        walletBalance.textContent = data.walletBalance?.totalUsd == null ? "—" : "$" + money(data.walletBalance.totalUsd);
+        walletBalance.title = data.walletBalance?.checkedAt
+          ? data.walletBalance.assetCount + " 项资产 · 更新于 " + new Date(data.walletBalance.checkedAt).toLocaleString("zh-CN", { hour12: false })
+          : "等待 Bot 获取钱包余额";
         const realizedPnl = document.getElementById("realizedPnl");
         realizedPnl.textContent = (data.risk.realizedPnlUsdt >= 0 ? "+" : "") + money(data.risk.realizedPnlUsdt) + " USDT";
         realizedPnl.className = data.risk.realizedPnlUsdt >= 0 ? "green" : "red";

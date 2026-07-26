@@ -58,12 +58,14 @@ import {
   executableBasisDecision,
   readStrategyControl
 } from "./strategy-lab.mjs";
+import { summarizeWalletBalances } from "./wallet-balance.mjs";
 
 const execFileAsync = promisify(execFile);
 const BSC_CHAIN_ID = "56";
 const USDT_ADDRESS = "0x55d398326f99059fF775485246999027B3197955";
 const API_BASE = "https://www.binance.com/bapi/defi";
 const AUDIT_URL = "https://web3.binance.com/bapi/defi/v1/public/wallet-direct/security/token/audit";
+const WALLET_BALANCE_REFRESH_MS = 5 * 60 * 1000;
 const once = process.argv.includes("--once");
 const testFeishu = process.argv.includes("--test-feishu");
 const mockTrade = process.argv.includes("--mock-trade");
@@ -115,7 +117,8 @@ function freshState() {
     updatedAt: null,
     lastError: null,
     lastSettingsCheckAt: 0,
-    sessionWarningFor: null
+    sessionWarningFor: null,
+    walletBalance: null
   };
 }
 
@@ -127,7 +130,8 @@ async function loadState(path) {
       ...freshState(),
       position: state.position,
       pendingOrder: state.pendingOrder,
-      approvalRequest: state.approvalRequest
+      approvalRequest: state.approvalRequest,
+      walletBalance: state.walletBalance || null
     };
   } catch (error) {
     if (error.code === "ENOENT") return freshState();
@@ -454,6 +458,24 @@ async function tokenBalance(address) {
     BSC_CHAIN_ID
   ]);
   return Number(balances[0]?.balance || 0);
+}
+
+async function refreshWalletBalance(state) {
+  const now = Date.now();
+  const checkedAtMs = Date.parse(state.walletBalance?.checkedAt || "");
+  if (Number.isFinite(checkedAtMs) && now - checkedAtMs < WALLET_BALANCE_REFRESH_MS) return;
+  try {
+    state.walletBalance = summarizeWalletBalances(
+      await baw(["wallet", "balance"]),
+      new Date(now).toISOString()
+    );
+  } catch (error) {
+    state.walletBalance = {
+      ...(state.walletBalance || { totalUsd: null, assetCount: 0, checkedAt: null }),
+      lastCheckFailedAt: new Date(now).toISOString()
+    };
+    await traceAction("wallet_balance", "failed", { error: error.message }, currentCycleId);
+  }
 }
 
 async function checkSessionExpiry(config, state) {
@@ -1699,6 +1721,7 @@ async function cycle(config, state, statePath, emergencyStopPath) {
       checkedAt: new Date().toISOString()
     };
     await checkSessionExpiry(config, state);
+    await refreshWalletBalance(state);
 
     if (state.pendingOrder) {
       await finalizePendingOrder(config, state, statePath);
