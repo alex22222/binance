@@ -74,6 +74,11 @@ test("dashboard records one exact approval without writing the bot state", async
     }
     assert.equal(ready, true);
 
+    const favicon = await fetch(`${origin}/favicon.svg`);
+    assert.equal(favicon.status, 200);
+    assert.match(favicon.headers.get("content-type"), /image\/svg\+xml/);
+    assert.match(await favicon.text(), /#f3ba2f/);
+
     const strategyPage = await fetch(`${origin}/strategies`);
     assert.equal(strategyPage.status, 200);
     assert.match(await strategyPage.text(), /id="strategyComparison"/);

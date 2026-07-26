@@ -5,6 +5,7 @@ export function strategyLabHtml() {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <title>策略 · Agentic Wallet</title>
   <style>
     :root {

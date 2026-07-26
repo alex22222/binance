@@ -5,6 +5,7 @@ export function liveDashboardHtml() {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <title>Agentic Wallet · 实时持仓</title>
   <style>
     :root {

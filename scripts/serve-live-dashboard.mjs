@@ -25,6 +25,7 @@ import {
 } from "../src/dashboard-auth.mjs";
 
 const projectRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const faviconPath = resolve(projectRoot, "assets/binance-favicon.svg");
 const configPath = resolve(projectRoot, process.env.BOT_CONFIG || "config.json");
 const host = "127.0.0.1";
 const port = Number(process.env.DASHBOARD_PORT || 4173);
@@ -134,11 +135,20 @@ function requireAuthentication(request, response) {
 
 const server = createServer(async (request, response) => {
   try {
+    if (request.method === "GET" && request.url === "/favicon.svg") {
+      response.writeHead(200, {
+        "Content-Type": "image/svg+xml; charset=utf-8",
+        "Cache-Control": "public, max-age=86400",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.end(await readFile(faviconPath));
+      return;
+    }
     if (request.method === "GET" && request.url === "/login") {
       response.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-store",
-        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+        "Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
         "X-Content-Type-Options": "nosniff"
       });
       response.end(dashboardLoginHtml());
@@ -155,7 +165,7 @@ const server = createServer(async (request, response) => {
         response.writeHead(401, {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store",
-          "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+          "Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
           "X-Content-Type-Options": "nosniff"
         });
         response.end(dashboardLoginHtml({ invalid: true }));

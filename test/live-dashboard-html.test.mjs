@@ -47,6 +47,7 @@ test("live dashboard provides an approval-first iPhone layout and compact signal
   const html = liveDashboardHtml();
 
   assert.match(html, /env\(safe-area-inset-top\)/);
+  assert.match(html, /href="\/favicon\.svg"/);
   assert.match(html, /env\(safe-area-inset-bottom\)/);
   assert.match(html, /class="signal-table-head"/);
   assert.match(html, />代码<\/span>/);

@@ -6,6 +6,7 @@ test("strategy page keeps only operational comparison and switch controls", () =
   const html = strategyLabHtml();
 
   assert.match(html, /<title>策略 · Agentic Wallet<\/title>/);
+  assert.match(html, /href="\/favicon\.svg"/);
   assert.match(html, /href="\/"/);
   assert.match(html, /id="activeStrategy"/);
   assert.match(html, /id="mode"/);
