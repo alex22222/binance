@@ -145,6 +145,30 @@ test("dashboard records one exact approval without writing the bot state", async
     assert.equal((await switched.json()).appliesTo, "next_entry");
     const snapshot = await fetch(`${origin}/api/snapshot`).then((response) => response.json());
     assert.equal(snapshot.strategy.activeStrategyId, "executable-basis-reversion");
+
+    const invalidAutoApproval = await fetch(`${origin}/api/auto-approval`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: origin },
+      body: JSON.stringify({ enabled: true, confirmation: "wrong" })
+    });
+    assert.equal(invalidAutoApproval.status, 400);
+
+    const enabledAutoApproval = await fetch(`${origin}/api/auto-approval`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: origin },
+      body: JSON.stringify({ enabled: true, confirmation: "ENABLE_AUTO_APPROVAL" })
+    });
+    assert.equal(enabledAutoApproval.status, 200);
+    assert.equal((await enabledAutoApproval.json()).enabled, true);
+    const autoSnapshot = await fetch(`${origin}/api/snapshot`).then((response) => response.json());
+    assert.equal(autoSnapshot.autoApproval.enabled, true);
+
+    const disabledAutoApproval = await fetch(`${origin}/api/auto-approval`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: origin },
+      body: JSON.stringify({ enabled: false, confirmation: "DISABLE_AUTO_APPROVAL" })
+    });
+    assert.equal(disabledAutoApproval.status, 200);
   } finally {
     child.kill("SIGTERM");
     await new Promise((resolvePromise) => child.once("exit", resolvePromise));

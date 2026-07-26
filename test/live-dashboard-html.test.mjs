@@ -23,6 +23,8 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.match(html, /钱包 已断开/);
   assert.match(html, /id="walletLogin"/);
   assert.match(html, /id="walletLoginStart"/);
+  assert.match(html, /id="autoApprovalToggle"/);
+  assert.match(html, /ENABLE_AUTO_APPROVAL/);
   assert.match(html, /打开 Binance 授权页面/);
   assert.match(html, /\/api\/wallet-login\/start/);
   assert.match(html, /\/api\/wallet-login\/status/);

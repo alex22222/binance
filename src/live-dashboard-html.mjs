@@ -47,6 +47,7 @@ export function liveDashboardHtml() {
     .control-button { padding: 9px 13px; border: 1px solid var(--line); border-radius: 10px; color: var(--text); background: var(--panel-2); cursor: pointer; font-weight: 720; }
     .control-button.stop { border-color: rgba(255,108,120,.4); color: #ffadb4; background: rgba(255,108,120,.08); }
     .control-button.resume { border-color: rgba(81,214,163,.35); color: var(--green); background: rgba(81,214,163,.07); }
+    .control-button.auto-on { border-color: rgba(255,108,120,.55); color: #ffadb4; background: rgba(255,108,120,.12); }
     .control-button[hidden] { display: none; }
     .approval { padding: 16px; }
     .approval-head { display: flex; justify-content: space-between; gap: 18px; align-items: start; }
@@ -169,7 +170,7 @@ export function liveDashboardHtml() {
   <header>
     <div class="shell nav">
       <div class="brand"><span class="mark">A</span><span>Agentic Wallet</span><a class="nav-link" href="/strategies">策略</a></div>
-      <div class="nav-info"><div class="top-stats"><span class="top-stat"><span>盈亏</span><strong class="green" id="realizedPnl">—</strong></span><span class="top-stat"><span>日亏余量</span><strong id="dailyLossRemaining">—</strong></span><span class="top-stat"><span>单笔上限</span><strong id="maxTrade">—</strong></span></div><div class="badges"><span class="badge" id="walletStatus" aria-live="polite"><span class="dot"></span><span>钱包 未检测</span></span><span class="badge" id="mode"></span><span class="badge" id="health"><span class="dot"></span><span></span></span><div class="control-actions"><button class="control-button stop" id="stopButton" type="button">停机</button><button class="control-button resume" id="resumeButton" type="button" hidden>恢复</button></div></div></div>
+      <div class="nav-info"><div class="top-stats"><span class="top-stat"><span>盈亏</span><strong class="green" id="realizedPnl">—</strong></span><span class="top-stat"><span>日亏余量</span><strong id="dailyLossRemaining">—</strong></span><span class="top-stat"><span>单笔上限</span><strong id="maxTrade">—</strong></span></div><div class="badges"><span class="badge" id="walletStatus" aria-live="polite"><span class="dot"></span><span>钱包 未检测</span></span><span class="badge" id="mode"></span><span class="badge" id="health"><span class="dot"></span><span></span></span><div class="control-actions"><button class="control-button" id="autoApprovalToggle" type="button" role="switch" aria-checked="false">自动审批：关</button><button class="control-button stop" id="stopButton" type="button">停机</button><button class="control-button resume" id="resumeButton" type="button" hidden>恢复</button></div></div></div>
     </div>
   </header>
   <main class="shell">
@@ -234,6 +235,7 @@ export function liveDashboardHtml() {
       return node;
     };
     let submittedApprovalId = null;
+    let autoApprovalEnabled = false;
     let walletLoginPoll = null;
     async function pollWalletLogin() {
       const response = await fetch("/api/wallet-login/status", { cache: "no-store" });
@@ -533,6 +535,11 @@ export function liveDashboardHtml() {
         const response = await fetch("/api/snapshot", { cache: "no-store" });
         if (!response.ok) throw new Error("HTTP " + response.status);
         const data = await response.json();
+        autoApprovalEnabled = data.autoApproval?.enabled === true;
+        const autoToggle = document.getElementById("autoApprovalToggle");
+        autoToggle.setAttribute("aria-checked", String(autoApprovalEnabled));
+        autoToggle.textContent = "自动审批：" + (autoApprovalEnabled ? "开" : "关");
+        autoToggle.classList.toggle("auto-on", autoApprovalEnabled);
         document.getElementById("mode").textContent = data.mode.toUpperCase();
         renderWalletStatus(data.health.walletSession);
         const health = document.getElementById("health");
@@ -568,6 +575,23 @@ export function liveDashboardHtml() {
       await refresh();
     });
     document.getElementById("walletLoginStart").addEventListener("click", startWalletLogin);
+    document.getElementById("autoApprovalToggle").addEventListener("click", async () => {
+      const enabled = !autoApprovalEnabled;
+      if (enabled && !window.confirm("开启后，未来合格订单可在复核后自动执行真实交易。确认开启自动审批？")) return;
+      const response = await fetch("/api/auto-approval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled,
+          confirmation: enabled ? "ENABLE_AUTO_APPROVAL" : "DISABLE_AUTO_APPROVAL"
+        })
+      });
+      if (!response.ok) {
+        const result = await response.json();
+        window.alert(result.error || "自动审批设置失败");
+      }
+      await refresh();
+    });
     document.getElementById("resumeButton").addEventListener("click", async () => {
       if (!window.confirm("确认解除紧急停机？此操作不会自动启动交易进程。")) return;
       await fetch("/api/emergency-resume", {

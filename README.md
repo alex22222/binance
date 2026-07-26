@@ -226,6 +226,12 @@ Dashboard exposes a one-time Binance sign-in flow. It returns only the official
 Binance HTTPS authorization page and pairing code to the browser, verifies the
 QR session on the server, and remains unavailable while the wallet is connected.
 
+The Dashboard header also exposes a persistent automatic-approval switch. It
+defaults off and requires the exact enable confirmation. When enabled, only
+future approval requests receive an immutable automatic decision; the bot still
+waits until its next cycle and repeats quote, audit, position, session, and risk
+checks before any live submission.
+
 ## Ubuntu server deployment
 
 Ubuntu uses systemd instead of the macOS Keychain/launchd launcher. The checked-in

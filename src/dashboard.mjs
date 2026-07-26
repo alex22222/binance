@@ -45,6 +45,7 @@ export function buildDashboardSnapshot({
   state,
   traceRecords,
   signalHistoryRecords = [],
+  approvalControl = null,
   strategyControl = null,
   nowMs = Date.now()
 }) {
@@ -90,7 +91,10 @@ export function buildDashboardSnapshot({
   return {
     generatedAt: new Date(nowMs).toISOString(),
     mode: config.mode,
-    executionPolicy: "PER_TRADE_CONFIRMATION_REQUIRED",
+    executionPolicy: approvalControl?.enabled
+      ? "AUTOMATIC_APPROVAL_WITH_REVALIDATION"
+      : "PER_TRADE_CONFIRMATION_REQUIRED",
+    autoApproval: approvalControl || { enabled: false, updatedAt: null, updatedBy: "default" },
     marketSession: state.lastMarketSession || null,
     health: {
       status: state.emergencyStop?.active
@@ -155,17 +159,21 @@ export async function loadDashboardSnapshot({
   statePath,
   tracePath,
   signalHistoryPath = null,
+  approvalControlPath = null,
   emergencyStopPath,
   strategyControlPath,
   nowMs = Date.now()
 }) {
-  const [configText, stateText, traceText, signalHistoryText, emergencyStop, strategyControl] = await Promise.all([
+  const [configText, stateText, traceText, signalHistoryText, approvalControl, emergencyStop, strategyControl] = await Promise.all([
     readFile(configPath, "utf8"),
     readFile(statePath, "utf8").catch((error) => error.code === "ENOENT" ? "{}" : Promise.reject(error)),
     readFile(tracePath, "utf8").catch((error) => error.code === "ENOENT" ? "" : Promise.reject(error)),
     signalHistoryPath
       ? readFile(signalHistoryPath, "utf8").catch((error) => error.code === "ENOENT" ? "" : Promise.reject(error))
       : "",
+    approvalControlPath
+      ? readFile(approvalControlPath, "utf8").then(JSON.parse).catch((error) => error.code === "ENOENT" ? null : Promise.reject(error))
+      : null,
     emergencyStopPath ? readEmergencyStop(emergencyStopPath) : null,
     strategyControlPath
       ? readFile(strategyControlPath, "utf8").then(JSON.parse).catch((error) => error.code === "ENOENT" ? null : Promise.reject(error))
@@ -187,6 +195,7 @@ export async function loadDashboardSnapshot({
     },
     traceRecords,
     signalHistoryRecords,
+    approvalControl,
     strategyControl,
     nowMs
   });

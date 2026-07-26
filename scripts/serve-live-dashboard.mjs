@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { buildBawEnvironment } from "../src/baw-runtime.mjs";
@@ -13,6 +13,7 @@ import { strategyLabHtml } from "../src/strategy-lab-html.mjs";
 import { activateEmergencyStop, clearEmergencyStop } from "../src/reliability.mjs";
 import { createTracer } from "../src/trace.mjs";
 import { approvalDecisionStatus, recordApprovalDecision } from "../src/approvals.mjs";
+import { writeApprovalControl } from "../src/approval-control.mjs";
 import { assertSwitchableStrategy, writeStrategyControl } from "../src/strategy-lab.mjs";
 import { createWalletLoginManager } from "../src/wallet-login.mjs";
 import {
@@ -59,6 +60,10 @@ const walletLogin = createWalletLoginManager({ executeBaw });
 
 async function loadConfig() {
   return JSON.parse(await readFile(configPath, "utf8"));
+}
+
+function approvalControlPath(config) {
+  return resolve(dirname(resolve(projectRoot, config.stateFile)), "approval-control.json");
 }
 
 async function stopBot(config, reason) {
@@ -200,6 +205,7 @@ const server = createServer(async (request, response) => {
         statePath: resolve(projectRoot, config.stateFile),
         tracePath: resolve(projectRoot, config.traceFile),
         signalHistoryPath: resolve(projectRoot, "state/dashboard-signal-history.jsonl"),
+        approvalControlPath: approvalControlPath(config),
         emergencyStopPath: resolve(projectRoot, config.emergencyStopFile),
         strategyControlPath: resolve(projectRoot, config.strategyControlFile)
       });
@@ -209,6 +215,33 @@ const server = createServer(async (request, response) => {
         "X-Content-Type-Options": "nosniff"
       });
       response.end(JSON.stringify(snapshot));
+      return;
+    }
+    if (request.method === "POST" && request.url === "/api/auto-approval") {
+      requireAllowedOrigin(request);
+      if (!String(request.headers["content-type"] || "").startsWith("application/json")) {
+        response.writeHead(415, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        response.end(JSON.stringify({ error: "JSON request required" }));
+        return;
+      }
+      const body = await readJsonBody(request);
+      const expected = body.enabled === true ? "ENABLE_AUTO_APPROVAL" : "DISABLE_AUTO_APPROVAL";
+      if (typeof body.enabled !== "boolean" || body.confirmation !== expected) {
+        response.writeHead(400, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        response.end(JSON.stringify({ error: "Exact automatic approval confirmation required" }));
+        return;
+      }
+      const control = await writeApprovalControl(
+        approvalControlPath(await loadConfig()),
+        body.enabled
+      );
+      const config = await loadConfig();
+      await traceOperatorAction(config, "auto_approval", body.enabled ? "enabled" : "disabled", {
+        requestedBy: "dashboard",
+        appliesTo: "future_approvals"
+      });
+      response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      response.end(JSON.stringify(control));
       return;
     }
     if (request.method === "POST" && request.url === "/api/wallet-login/start") {

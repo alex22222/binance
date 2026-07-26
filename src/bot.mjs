@@ -33,8 +33,10 @@ import { buildBawEnvironment } from "./baw-runtime.mjs";
 import {
   approvalDecisionStatus,
   createApprovalRequest,
-  loadApprovalDecision
+  loadApprovalDecision,
+  recordApprovalDecision
 } from "./approvals.mjs";
+import { readApprovalControl } from "./approval-control.mjs";
 import { feishuMessageWithDashboardLink } from "./feishu-message.mjs";
 import {
   BawError,
@@ -560,13 +562,36 @@ async function requestTradeApproval(config, state, statePath, details) {
     address: request.address,
     expiresAt: request.expiresAt
   }, currentCycleId);
+  const approvalControl = await readApprovalControl(
+    resolve(dirname(statePath), "approval-control.json")
+  );
+  if (approvalControl.enabled) {
+    const decision = {
+      approvalId: request.approvalId,
+      decision: "APPROVE",
+      dyorAcknowledged: true,
+      auditUnavailableAcknowledged: request.audit?.status === "OFFICIAL_RWA_UNSUPPORTED_ACKNOWLEDGED",
+      decidedAt: new Date().toISOString()
+    };
+    await recordApprovalDecision(
+      resolve(projectRoot, config.approvalDecisionDirectory),
+      request,
+      decision
+    );
+    await traceAction("trade_approval", "auto_approved", {
+      approvalId: request.approvalId,
+      side: request.side,
+      symbol: request.symbol,
+      appliesAfterRevalidation: true
+    }, currentCycleId);
+  }
   const valueLine = request.side === "BUY"
     ? `投入: ${Number(request.fromTokenQty).toFixed(2)} USDT`
     : `预计回收: ${Number(request.expectedOutputQty).toFixed(4)} USDT`;
   await notify(
     state,
     [
-      `[Agentic Stock Bot] ${request.side} APPROVAL REQUIRED`,
+      `[Agentic Stock Bot] ${request.side} ${approvalControl.enabled ? "AUTO APPROVAL QUEUED" : "APPROVAL REQUIRED"}`,
       `${request.symbol} ${request.address}`,
       valueLine,
       `来源合约: ${request.fromToken}`,
@@ -575,7 +600,9 @@ async function requestTradeApproval(config, state, statePath, details) {
       `审计: ${request.audit?.riskLevel || request.audit?.status || "TRUSTED_TARGET"}`,
       `确认截止: ${request.expiresAt}`,
       `审批编号: ${request.approvalId}`,
-      "请打开手机 Dashboard 查看完整数据并逐笔确认。真实链上交易不可撤销，请先自行研究（DYOR）。"
+      approvalControl.enabled
+        ? "自动审批已记录；Bot 将在下一周期重新验证全部条件后决定是否执行。"
+        : "请打开手机 Dashboard 查看完整数据并逐笔确认。真实链上交易不可撤销，请先自行研究（DYOR）。"
     ].join("\n")
   );
   return request;
