@@ -32,9 +32,10 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.match(html, /class="dashboard-grid"/);
   assert.match(html, /\.dashboard-grid \{ display: grid; grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
   assert.match(html, /class="actions-section"/);
-  assert.match(html, /\.actions-section \{ grid-column: 3; grid-row: 1 \/ span 2; \}/);
+  assert.match(html, /\.actions-section \{ margin-top: 12px; \}/);
   assert.match(html, /id="strategyRisk"/);
   assert.match(html, /id="workflow"/);
+  assert.ok(html.indexOf('class="actions-section"') > html.indexOf('id="workflow"'));
   assert.match(html, /function renderStrategyRisk\(data\)/);
   assert.match(html, /function renderWorkflow\(data\)/);
   assert.match(html, /href="\/strategies"/);

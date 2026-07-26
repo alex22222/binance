@@ -78,7 +78,7 @@ export function liveDashboardHtml() {
     .insight-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 12px; margin-top: 12px; }
     section { margin: 0; min-width: 0; }
     .signals-section { grid-column: span 2; }
-    .actions-section { grid-column: 3; grid-row: 1 / span 2; }
+    .actions-section { margin-top: 12px; }
     .section-head { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
     h2 { margin: 0; font-size: 18px; letter-spacing: -.03em; }
     .muted { color: var(--muted); }
@@ -119,7 +119,6 @@ export function liveDashboardHtml() {
     @media (max-width: 900px) {
       .dashboard-grid { grid-template-columns: 1fr 1fr; }
       .signals-section { grid-column: span 2; }
-      .actions-section { grid-column: span 2; grid-row: auto; }
       .insight-grid { grid-template-columns: 1fr; }
       .position { grid-template-columns: 1fr 1fr; }
       .position > :first-child { grid-column: 1 / -1; }
@@ -130,7 +129,6 @@ export function liveDashboardHtml() {
       main { padding-top: 16px; padding-bottom: calc(36px + env(safe-area-inset-bottom)); }
       .dashboard-grid { grid-template-columns: 1fr; gap: 18px; }
       .signals-section { grid-column: auto; }
-      .actions-section { grid-column: auto; }
       .policy-grid { grid-template-columns: 1fr 1fr; }
       .workflow { grid-template-columns: repeat(3, 1fr); }
       .section-head { align-items: center; }
@@ -204,10 +202,6 @@ export function liveDashboardHtml() {
       </div>
     </section>
 
-    <section class="actions-section">
-      <div class="section-head"><h2>动作</h2><span class="muted" id="lastError"></span></div>
-      <div class="panel timeline" id="timeline"></div>
-    </section>
     </div>
     <div class="insight-grid">
       <section>
@@ -219,6 +213,10 @@ export function liveDashboardHtml() {
         <div class="panel" id="workflow"></div>
       </section>
     </div>
+    <section class="actions-section">
+      <div class="section-head"><h2>动作</h2><span class="muted" id="lastError"></span></div>
+      <div class="panel timeline" id="timeline"></div>
+    </section>
   </main>
   <script>
     const money = (value) => value == null ? "—" : Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
