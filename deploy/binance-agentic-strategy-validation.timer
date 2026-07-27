@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Binance strategy validation after the U.S. regular session
+
+[Timer]
+OnCalendar=*-*-* 22:30:00 UTC
+RandomizedDelaySec=300
+Persistent=true
+Unit=binance-agentic-strategy-validation.service
+
+[Install]
+WantedBy=timers.target

@@ -82,6 +82,25 @@ systemctl status binance-agentic-dashboard binance-agentic-stock-bot
 journalctl -u binance-agentic-stock-bot -u binance-agentic-dashboard
 ```
 
+## Strategy validation
+
+The validation job is research-only. It downloads public one-minute token and
+underlying-stock candles, runs all four library strategies with the same 50
+USDT notional and conservative cost assumption, and writes only under
+`state/strategy-validation/`. It does not use the wallet, change the active
+strategy, approve an order, or submit a transaction.
+
+Run the initial history load manually, then enable the daily post-close timer:
+
+```bash
+sudo systemctl start binance-agentic-strategy-validation
+sudo systemctl enable --now binance-agentic-strategy-validation.timer
+systemctl list-timers binance-agentic-strategy-validation.timer
+```
+
+The latest report is `state/strategy-validation/latest.json`. The timer runs
+after the U.S. regular session and incrementally keeps already downloaded days.
+
 ## Explicit live cutover
 
 Never run the local Mac and server with `BOT_LIVE=1` at the same time. Before

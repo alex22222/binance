@@ -12,7 +12,10 @@ test("strategy page keeps only operational comparison and switch controls", () =
   assert.match(html, /id="mode"/);
   assert.match(html, /id="strategyComparison"/);
   assert.match(html, /id="returnComparison"/);
+  assert.match(html, /id="validationComparison"/);
   assert.match(html, /function renderStrategies\(data\)/);
+  assert.match(html, /function renderValidation\(report\)/);
+  assert.match(html, /\/api\/strategy-validation/);
   assert.match(html, /\/api\/strategy/);
   assert.doesNotMatch(html, /15-minute tokenized equities/i);
   assert.doesNotMatch(html, /策略实验室/);

@@ -52,6 +52,13 @@ export function strategyLabHtml() {
     .return-bar { position: absolute; top: 0; bottom: 0; min-width: 0; }
     .return-bar.positive { left: 50%; background: var(--green); }
     .return-bar.negative { right: 50%; background: var(--red); }
+    .validation-meta { margin: 0 0 10px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .validation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .validation-card { padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(8,10,14,.45); }
+    .validation-card h3 { margin: 0 0 10px; font-size: 14px; }
+    .validation-values { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .validation-values span { color: var(--muted); font-size: 10px; }
+    .validation-values strong { display: block; margin-top: 4px; color: var(--text); font: 700 13px ui-monospace, SFMono-Regular, monospace; }
     .strategy-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
     .strategy-card { display: flex; flex-direction: column; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: rgba(17,21,28,.9); }
     .strategy-card.active { border-color: rgba(81,214,163,.55); box-shadow: inset 0 0 0 1px rgba(81,214,163,.1); }
@@ -75,7 +82,7 @@ export function strategyLabHtml() {
     .error { color: var(--red); }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
     @media (max-width: 820px) {
-      .strategy-grid { grid-template-columns: 1fr; }
+      .strategy-grid, .validation-grid { grid-template-columns: 1fr; }
       .metrics { grid-template-columns: repeat(2, 1fr); }
     }
     @media (max-width: 560px) {
@@ -101,6 +108,13 @@ export function strategyLabHtml() {
   </header>
   <main class="shell">
     <section>
+      <div class="section-head"><h2>30天策略验证</h2></div>
+      <div class="panel return-panel" id="validationComparison">
+        <p class="validation-meta">正在读取历史基线与前向验证结果…</p>
+      </div>
+    </section>
+
+    <section>
       <div class="section-head"><h2>收益</h2></div>
       <div class="panel return-panel" id="returnComparison"></div>
     </section>
@@ -122,6 +136,46 @@ export function strategyLabHtml() {
     };
     let latestSnapshot = null;
     let switchingStrategyId = null;
+
+    function validationCards(title, strategies) {
+      const block = el("div", "");
+      block.append(el("p", "validation-meta", title));
+      const grid = el("div", "validation-grid");
+      strategies.forEach((strategy) => {
+        const performance = strategy.performance;
+        const card = el("article", "validation-card");
+        card.append(el("h3", "", strategy.name));
+        const values = el("div", "validation-values");
+        [
+          ["收益率", (performance.returnPct >= 0 ? "+" : "") + performance.returnPct.toFixed(2) + "%"],
+          ["交易", String(performance.trades)],
+          ["最大回撤", performance.maxDrawdownPct.toFixed(2) + "%"]
+        ].forEach(([label, value]) => {
+          const cell = el("div", "");
+          cell.append(el("span", "", label), el("strong", value.startsWith("-") ? "error" : "", value));
+          values.append(cell);
+        });
+        card.append(values);
+        grid.append(card);
+      });
+      block.append(grid);
+      return block;
+    }
+
+    function renderValidation(report) {
+      const root = document.getElementById("validationComparison");
+      root.replaceChildren();
+      if (!report?.available || !report.historical || !report.forward) {
+        root.append(el("p", "validation-meta", "验证任务尚未生成结果。"));
+        return;
+      }
+      const target = new Date(report.validation.targetAt).toLocaleDateString("zh-CN");
+      root.append(
+        el("p", "validation-meta", "历史结果为成本后基线；前向窗口截止 " + target + "。折价回归历史结果使用参考价格代理。"),
+        validationCards("历史基线", report.historical.strategies),
+        validationCards("30天前向", report.forward.strategies)
+      );
+    }
 
     function renderReturns(strategies) {
       const root = document.getElementById("returnComparison");
@@ -218,10 +272,14 @@ export function strategyLabHtml() {
 
     async function refresh() {
       try {
-        const response = await fetch("/api/snapshot", { cache: "no-store" });
-        if (!response.ok) throw new Error("HTTP " + response.status);
-        latestSnapshot = await response.json();
+        const [snapshotResponse, validationResponse] = await Promise.all([
+          fetch("/api/snapshot", { cache: "no-store" }),
+          fetch("/api/strategy-validation", { cache: "no-store" })
+        ]);
+        if (!snapshotResponse.ok) throw new Error("HTTP " + snapshotResponse.status);
+        latestSnapshot = await snapshotResponse.json();
         renderStrategies(latestSnapshot);
+        renderValidation(validationResponse.ok ? await validationResponse.json() : null);
       } catch (error) {
         const status = document.getElementById("status");
         status.className = "status error";

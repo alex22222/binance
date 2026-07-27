@@ -313,6 +313,23 @@ npm start
 
 Every run receives a unique run ID and every cycle receives a unique cycle ID. The append-only trace is written to `state/action-trace.jsonl` by default. Credentials, tokens, authorization headers, API keys, and webhook URLs are redacted.
 
+## Strategy validation
+
+Run the research-only strategy comparison with:
+
+```bash
+npm run strategy:validate
+```
+
+It stores public Binance token K-lines, Yahoo Finance underlying-stock candles,
+the latest comparison, dated reports, and loop progress under
+`state/strategy-validation/`. The job evaluates every strategy in the library
+with a fixed 50 USDT notional, one position at a time, a one-minute
+signal-to-fill delay, and a conservative fixed round-trip cost. Historical
+折价回归 results are explicitly marked as a proxy because archived
+amount-specific executable quotes and historical multipliers are unavailable.
+The research job never changes the production strategy or accesses the wallet.
+
 Each 15-minute universe scan also appends replayable market records to
 `state/market-data/YYYY-MM-DD.jsonl` using the Asia/Shanghai date. A
 `market_scan` record contains the full fetched 1-minute and 15-minute OHLCV

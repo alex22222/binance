@@ -227,6 +227,18 @@ const server = createServer(async (request, response) => {
       response.end(JSON.stringify(snapshot));
       return;
     }
+    if (request.method === "GET" && request.url === "/api/strategy-validation") {
+      const report = await readFile(resolve(projectRoot, "state/strategy-validation/latest.json"), "utf8")
+        .then(JSON.parse)
+        .catch((error) => error.code === "ENOENT" ? null : Promise.reject(error));
+      response.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.end(JSON.stringify(report ? { available: true, ...report } : { available: false }));
+      return;
+    }
     if (request.method === "POST" && request.url === "/api/auto-approval") {
       requireAllowedOrigin(request);
       if (!String(request.headers["content-type"] || "").startsWith("application/json")) {
