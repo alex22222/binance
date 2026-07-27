@@ -58,7 +58,10 @@ import {
   executableBasisDecision,
   readStrategyControl
 } from "./strategy-lab.mjs";
-import { summarizeWalletBalances } from "./wallet-balance.mjs";
+import {
+  summarizeWalletBalances,
+  upsertWalletBalanceSnapshot
+} from "./wallet-balance.mjs";
 
 const execFileAsync = promisify(execFile);
 const BSC_CHAIN_ID = "56";
@@ -460,7 +463,7 @@ async function tokenBalance(address) {
   return Number(balances[0]?.balance || 0);
 }
 
-async function refreshWalletBalance(state) {
+async function refreshWalletBalance(state, statePath) {
   const now = Date.now();
   const checkedAtMs = Date.parse(state.walletBalance?.checkedAt || "");
   if (Number.isFinite(checkedAtMs) && now - checkedAtMs < WALLET_BALANCE_REFRESH_MS) return;
@@ -468,6 +471,10 @@ async function refreshWalletBalance(state) {
     state.walletBalance = summarizeWalletBalances(
       await baw(["wallet", "balance"]),
       new Date(now).toISOString()
+    );
+    await upsertWalletBalanceSnapshot(
+      resolve(dirname(statePath), "wallet-balance-history.json"),
+      state.walletBalance
     );
   } catch (error) {
     state.walletBalance = {
@@ -1721,7 +1728,7 @@ async function cycle(config, state, statePath, emergencyStopPath) {
       checkedAt: new Date().toISOString()
     };
     await checkSessionExpiry(config, state);
-    await refreshWalletBalance(state);
+    await refreshWalletBalance(state, statePath);
 
     if (state.pendingOrder) {
       await finalizePendingOrder(config, state, statePath);

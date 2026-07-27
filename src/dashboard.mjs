@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { readEmergencyStop } from "./reliability.mjs";
 import { buildStrategyComparison, DEFAULT_STRATEGY_ID } from "./strategy-lab.mjs";
+import { buildAssetTrend } from "./wallet-balance.mjs";
 
 function finiteNumber(value, fallback = 0) {
   const number = Number(value);
@@ -45,6 +47,7 @@ export function buildDashboardSnapshot({
   state,
   traceRecords,
   signalHistoryRecords = [],
+  walletBalanceHistory = [],
   approvalControl = null,
   strategyControl = null,
   nowMs = Date.now()
@@ -124,6 +127,7 @@ export function buildDashboardSnapshot({
           lastCheckFailedAt: state.walletBalance.lastCheckFailedAt || null
         }
       : null,
+    assetTrend: buildAssetTrend(walletBalanceHistory, state.walletBalance, 30),
     risk: {
       maxTradeUsdt: finiteNumber(config.maxTradeUsdt),
       dailyLossLimitUsdt: finiteNumber(config.dailyLossLimitUsdt),
@@ -174,13 +178,15 @@ export async function loadDashboardSnapshot({
   strategyControlPath,
   nowMs = Date.now()
 }) {
-  const [configText, stateText, traceText, signalHistoryText, approvalControl, emergencyStop, strategyControl] = await Promise.all([
+  const [configText, stateText, traceText, signalHistoryText, walletBalanceHistoryText, approvalControl, emergencyStop, strategyControl] = await Promise.all([
     readFile(configPath, "utf8"),
     readFile(statePath, "utf8").catch((error) => error.code === "ENOENT" ? "{}" : Promise.reject(error)),
     readFile(tracePath, "utf8").catch((error) => error.code === "ENOENT" ? "" : Promise.reject(error)),
     signalHistoryPath
       ? readFile(signalHistoryPath, "utf8").catch((error) => error.code === "ENOENT" ? "" : Promise.reject(error))
       : "",
+    readFile(resolve(dirname(statePath), "wallet-balance-history.json"), "utf8")
+      .catch((error) => error.code === "ENOENT" ? "[]" : Promise.reject(error)),
     approvalControlPath
       ? readFile(approvalControlPath, "utf8").then(JSON.parse).catch((error) => error.code === "ENOENT" ? null : Promise.reject(error))
       : null,
@@ -197,6 +203,7 @@ export async function loadDashboardSnapshot({
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line));
+  const walletBalanceHistory = JSON.parse(walletBalanceHistoryText);
   return buildDashboardSnapshot({
     config: JSON.parse(configText),
     state: {
@@ -205,6 +212,7 @@ export async function loadDashboardSnapshot({
     },
     traceRecords,
     signalHistoryRecords,
+    walletBalanceHistory,
     approvalControl,
     strategyControl,
     nowMs

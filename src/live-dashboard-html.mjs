@@ -88,8 +88,18 @@ export function liveDashboardHtml() {
     .label { color: var(--muted); font-size: 11px; letter-spacing: .11em; text-transform: uppercase; }
     .value { display: block; margin-top: 12px; font-size: 25px; letter-spacing: -.04em; }
     .green { color: var(--green); } .red { color: var(--red); } .gold { color: var(--gold); }
-    .dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
-    .insight-grid { display: grid; grid-template-columns: 1.25fr 1fr; gap: 20px; margin-top: 24px; }
+    .asset-trend-section { margin-bottom: 20px; }
+    .asset-trend-head::after { display: none; }
+    .asset-trend-summary { margin-left: auto; color: var(--muted); font-size: 12px; text-align: right; }
+    .asset-trend-card { position: relative; min-height: 276px; padding: 12px 14px 8px; overflow: hidden; }
+    .asset-trend-chart { display: block; width: 100%; height: 252px; touch-action: pan-y; }
+    .asset-trend-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; pointer-events: none; }
+    .asset-trend-empty[hidden] { display: none; }
+    .asset-trend-tooltip { position: absolute; z-index: 2; min-width: 104px; padding: 8px 10px; border: 1px solid rgba(120,169,255,.32); border-radius: 9px; color: var(--text); background: rgba(7,9,13,.94); box-shadow: 0 10px 30px rgba(0,0,0,.3); pointer-events: none; transform: translateY(-50%); font-size: 11px; }
+    .asset-trend-tooltip[hidden] { display: none; }
+    .asset-trend-tooltip strong { display: block; margin-top: 4px; color: var(--blue); font-size: 13px; }
+    .dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: start; }
+    .insight-grid { display: grid; grid-template-columns: 1.25fr 1fr; gap: 18px; margin-top: 20px; }
     section { margin: 0; min-width: 0; }
     .signals-section { grid-column: 1 / -1; }
     .actions-section { margin-top: 24px; }
@@ -146,8 +156,13 @@ export function liveDashboardHtml() {
     @media (max-width: 600px) {
       .shell { width: min(100% - 24px, 480px); }
       header { position: static; padding-top: calc(8px + env(safe-area-inset-top)); }
-      main { padding-top: 20px; padding-bottom: calc(36px + env(safe-area-inset-bottom)); }
-      .dashboard-grid { grid-template-columns: 1fr; gap: 22px; }
+      main { padding-top: 16px; padding-bottom: calc(36px + env(safe-area-inset-bottom)); }
+      .asset-trend-section { margin-bottom: 18px; }
+      .asset-trend-head { align-items: flex-end; }
+      .asset-trend-summary { max-width: 62%; font-size: 10px; line-height: 1.35; }
+      .asset-trend-card { min-height: 218px; padding: 8px 8px 4px; }
+      .asset-trend-chart { height: 204px; }
+      .dashboard-grid { grid-template-columns: 1fr; gap: 18px; }
       .signals-section { grid-column: auto; }
       .policy-grid { grid-template-columns: 1fr 1fr; }
       .workflow { grid-template-columns: repeat(3, 1fr); }
@@ -184,8 +199,8 @@ export function liveDashboardHtml() {
       #signals:not(.expanded) .signal:nth-child(n+6) { display: none; }
       .signal-toggle { display: block; }
       .timeline { max-height: 300px; }
-      .insight-grid { gap: 22px; margin-top: 22px; }
-      .actions-section { margin-top: 22px; }
+      .insight-grid { gap: 18px; margin-top: 18px; }
+      .actions-section { margin-top: 18px; }
     }
   </style>
 </head>
@@ -205,6 +220,14 @@ export function liveDashboardHtml() {
         <a id="walletLoginLink" target="_blank" rel="noopener noreferrer" hidden>打开 Binance 授权页面</a>
       </div>
       <div class="approval-result" id="walletLoginStatus"></div>
+    </section>
+    <section class="asset-trend-section">
+      <div class="section-head asset-trend-head"><h2>资产趋势</h2><span class="asset-trend-summary" id="assetTrendSummary">读取资产快照…</span></div>
+      <div class="panel asset-trend-card" id="assetTrendCard">
+        <canvas class="asset-trend-chart" id="assetTrendChart" role="img" aria-label="每日钱包总资产趋势"></canvas>
+        <div class="asset-trend-empty" id="assetTrendEmpty">等待首次资产快照</div>
+        <div class="asset-trend-tooltip" id="assetTrendTooltip" hidden></div>
+      </div>
     </section>
     <div class="dashboard-grid">
     <section>
@@ -260,6 +283,136 @@ export function liveDashboardHtml() {
     let submittedApprovalId = null;
     let autoApprovalEnabled = false;
     let walletLoginPoll = null;
+    let assetTrendPoints = [];
+    let assetTrendHoverIndex = null;
+    let assetTrendGeometry = [];
+    function assetTrendDateLabel(value) {
+      const parts = String(value || "").split("-");
+      return parts.length === 3 ? parts[1] + "/" + parts[2] : value;
+    }
+    function traceAssetTrendPath(context, points) {
+      if (!points.length) return;
+      context.moveTo(points[0].x, points[0].y);
+      for (let index = 1; index < points.length; index += 1) {
+        const previous = points[index - 1];
+        const current = points[index];
+        const middleX = (previous.x + current.x) / 2;
+        context.bezierCurveTo(middleX, previous.y, middleX, current.y, current.x, current.y);
+      }
+    }
+    function drawAssetTrend() {
+      const canvas = document.getElementById("assetTrendChart");
+      const context = canvas.getContext("2d");
+      const width = Math.max(280, canvas.clientWidth);
+      const height = Math.max(180, canvas.clientHeight);
+      const ratio = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width = Math.round(width * ratio);
+      canvas.height = Math.round(height * ratio);
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      context.clearRect(0, 0, width, height);
+      assetTrendGeometry = [];
+      if (!assetTrendPoints.length) return;
+
+      const compact = width < 520;
+      const padding = { top: 18, right: compact ? 12 : 20, bottom: 30, left: compact ? 42 : 54 };
+      const plotWidth = width - padding.left - padding.right;
+      const plotHeight = height - padding.top - padding.bottom;
+      const values = assetTrendPoints.map((point) => Number(point.totalUsd));
+      const low = Math.min(...values);
+      const high = Math.max(...values);
+      const spread = Math.max(high - low, Math.max(1, high * 0.04));
+      const minimum = Math.max(0, low - spread * 0.22);
+      const maximum = high + spread * 0.22;
+      const range = Math.max(1, maximum - minimum);
+      assetTrendGeometry = assetTrendPoints.map((point, index) => ({
+        x: assetTrendPoints.length === 1
+          ? padding.left + plotWidth / 2
+          : padding.left + (index / (assetTrendPoints.length - 1)) * plotWidth,
+        y: padding.top + ((maximum - Number(point.totalUsd)) / range) * plotHeight
+      }));
+
+      context.lineWidth = 1;
+      context.font = (compact ? "10px" : "11px") + " ui-monospace, SFMono-Regular, monospace";
+      context.fillStyle = "#7f8b9a";
+      context.strokeStyle = "rgba(143,155,170,.18)";
+      context.textAlign = "right";
+      context.textBaseline = "middle";
+      for (let index = 0; index < 4; index += 1) {
+        const y = padding.top + (index / 3) * plotHeight;
+        const value = maximum - (index / 3) * range;
+        context.beginPath();
+        context.moveTo(padding.left, y);
+        context.lineTo(width - padding.right, y);
+        context.stroke();
+        context.fillText("$" + money(value), padding.left - 8, y);
+      }
+
+      const labelEvery = Math.max(1, Math.ceil(assetTrendPoints.length / (compact ? 4 : 8)));
+      context.textAlign = "center";
+      context.textBaseline = "top";
+      assetTrendPoints.forEach((point, index) => {
+        if (index % labelEvery !== 0 && index !== assetTrendPoints.length - 1) return;
+        context.fillText(assetTrendDateLabel(point.date), assetTrendGeometry[index].x, height - padding.bottom + 10);
+      });
+
+      const fill = context.createLinearGradient(0, padding.top, 0, height - padding.bottom);
+      fill.addColorStop(0, "rgba(120,169,255,.24)");
+      fill.addColorStop(1, "rgba(120,169,255,.015)");
+      context.beginPath();
+      traceAssetTrendPath(context, assetTrendGeometry);
+      context.lineTo(assetTrendGeometry.at(-1).x, height - padding.bottom);
+      context.lineTo(assetTrendGeometry[0].x, height - padding.bottom);
+      context.closePath();
+      context.fillStyle = fill;
+      context.fill();
+
+      context.beginPath();
+      traceAssetTrendPath(context, assetTrendGeometry);
+      context.strokeStyle = "#78a9ff";
+      context.lineWidth = 3;
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      context.stroke();
+
+      assetTrendGeometry.forEach((point, index) => {
+        if (assetTrendPoints.length > 16 && index !== assetTrendHoverIndex && index !== assetTrendPoints.length - 1) return;
+        context.beginPath();
+        context.arc(point.x, point.y, index === assetTrendHoverIndex ? 5 : 3.5, 0, Math.PI * 2);
+        context.fillStyle = "#11151c";
+        context.fill();
+        context.strokeStyle = index === assetTrendHoverIndex ? "#f5c14f" : "#78a9ff";
+        context.lineWidth = 2;
+        context.stroke();
+      });
+    }
+    function renderAssetTrend(points) {
+      assetTrendPoints = Array.isArray(points)
+        ? points.filter((point) => Number.isFinite(Number(point.totalUsd)))
+        : [];
+      const empty = document.getElementById("assetTrendEmpty");
+      empty.hidden = assetTrendPoints.length > 0;
+      const summary = document.getElementById("assetTrendSummary");
+      if (!assetTrendPoints.length) {
+        summary.textContent = "每日最后一次成功快照";
+      } else {
+        const first = assetTrendPoints[0];
+        const latest = assetTrendPoints.at(-1);
+        const change = Number(latest.totalUsd) - Number(first.totalUsd);
+        const changePct = Number(first.totalUsd) > 0 ? change / Number(first.totalUsd) * 100 : null;
+        summary.className = "asset-trend-summary " + (change < 0 ? "red" : change > 0 ? "green" : "");
+        summary.textContent = assetTrendPoints.length === 1
+          ? "当前 $" + money(latest.totalUsd) + " · 开始记录"
+          : assetTrendPoints.length + " 日 · " + (change >= 0 ? "+" : "") + "$" + money(change) +
+            (changePct == null ? "" : " (" + (changePct >= 0 ? "+" : "") + changePct.toFixed(2) + "%)");
+      }
+      const canvas = document.getElementById("assetTrendChart");
+      canvas.setAttribute("aria-label", assetTrendPoints.length
+        ? "每日钱包总资产趋势，共 " + assetTrendPoints.length + " 个快照"
+        : "每日钱包总资产趋势，等待首次快照");
+      assetTrendHoverIndex = null;
+      document.getElementById("assetTrendTooltip").hidden = true;
+      drawAssetTrend();
+    }
     async function pollWalletLogin() {
       const response = await fetch("/api/wallet-login/status", { cache: "no-store" });
       const login = await response.json();
@@ -590,6 +743,7 @@ export function liveDashboardHtml() {
         realizedPnl.className = data.risk.realizedPnlUsdt >= 0 ? "green" : "red";
         document.getElementById("dailyLossRemaining").textContent = money(data.risk.dailyLossRemainingUsdt) + " USDT";
         document.getElementById("maxTrade").textContent = money(data.risk.maxTradeUsdt) + " USDT";
+        renderAssetTrend(data.assetTrend);
         renderApproval(data);
         renderPosition(data);
         renderSignals(data);
@@ -641,6 +795,32 @@ export function liveDashboardHtml() {
       event.currentTarget.setAttribute("aria-expanded", String(expanded));
       event.currentTarget.textContent = expanded ? "收起" : "查看全部";
     });
+    const assetTrendCanvas = document.getElementById("assetTrendChart");
+    assetTrendCanvas.addEventListener("pointermove", (event) => {
+      if (!assetTrendGeometry.length) return;
+      const rect = assetTrendCanvas.getBoundingClientRect();
+      const pointerX = event.clientX - rect.left;
+      assetTrendHoverIndex = assetTrendGeometry.reduce((closest, point, index) => (
+        Math.abs(point.x - pointerX) < Math.abs(assetTrendGeometry[closest].x - pointerX) ? index : closest
+      ), 0);
+      drawAssetTrend();
+      const point = assetTrendPoints[assetTrendHoverIndex];
+      const geometry = assetTrendGeometry[assetTrendHoverIndex];
+      const tooltip = document.getElementById("assetTrendTooltip");
+      tooltip.replaceChildren(
+        el("span", "", point.date),
+        el("strong", "", "$" + money(point.totalUsd))
+      );
+      tooltip.style.left = Math.min(rect.width - 118, Math.max(8, geometry.x + 10)) + "px";
+      tooltip.style.top = Math.max(28, geometry.y) + "px";
+      tooltip.hidden = false;
+    });
+    assetTrendCanvas.addEventListener("pointerleave", () => {
+      assetTrendHoverIndex = null;
+      document.getElementById("assetTrendTooltip").hidden = true;
+      drawAssetTrend();
+    });
+    new ResizeObserver(drawAssetTrend).observe(assetTrendCanvas);
     refresh();
     setInterval(refresh, 3000);
   </script>

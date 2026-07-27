@@ -152,6 +152,34 @@ test("keeps an unavailable wallet balance distinct from a zero balance", () => {
   assert.equal(snapshot.walletBalance.totalUsd, null);
 });
 
+test("exposes daily wallet values as an asset trend without inventing missing days", () => {
+  const snapshot = buildDashboardSnapshot({
+    config,
+    state: {
+      date: "2026-07-27",
+      realizedPnlUsdt: 0,
+      updatedAt: "2026-07-27T15:01:00.000Z",
+      walletBalance: {
+        totalUsd: 455.5,
+        assetCount: 2,
+        checkedAt: "2026-07-27T15:00:00.000Z"
+      }
+    },
+    walletBalanceHistory: [
+      { date: "2026-07-25", totalUsd: 448, assetCount: 2, checkedAt: "2026-07-25T15:00:00.000Z" },
+      { date: "2026-07-26", totalUsd: 452, assetCount: 2, checkedAt: "2026-07-26T15:00:00.000Z" }
+    ],
+    traceRecords: [],
+    nowMs: Date.parse("2026-07-27T15:01:00.000Z")
+  });
+
+  assert.deepEqual(snapshot.assetTrend, [
+    { date: "2026-07-25", totalUsd: 448, assetCount: 2, checkedAt: "2026-07-25T15:00:00.000Z" },
+    { date: "2026-07-26", totalUsd: 452, assetCount: 2, checkedAt: "2026-07-26T15:00:00.000Z" },
+    { date: "2026-07-27", totalUsd: 455.5, assetCount: 2, checkedAt: "2026-07-27T15:00:00.000Z" }
+  ]);
+});
+
 test("uses read-only local signal history until a newer server signal replaces it", () => {
   const snapshot = buildDashboardSnapshot({
     config,

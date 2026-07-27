@@ -1,5 +1,59 @@
 # Design QA
 
+## Asset trend dashboard
+
+- Source: `/var/folders/xx/1h1hmbcn1xvgs5_sft5jmpgc0000gp/T/codex-clipboard-3297066c-fd2f-4bbb-af6d-f33a5efa0e41.png`
+- Implementation full view: `/Users/henry/projects/binance/artifacts/asset-trend-dashboard-desktop.png`
+- Implementation focused view: `/Users/henry/projects/binance/artifacts/asset-trend-chart-desktop.png`
+- Mobile focused view: `/Users/henry/projects/binance/artifacts/asset-trend-chart-mobile.png`
+- Focused comparison: `/Users/henry/projects/binance/artifacts/asset-trend-reference-implementation.png`
+- Source dimensions: 2360 × 962
+- Desktop viewport and screenshot: 1440 × 1000 viewport, 1440 × 1863 full-page image, DPR 1
+- Focused desktop chart: 1220 × 276
+- Mobile viewport: 390 × 844; focused chart: 366 × 218
+
+### Comparison evidence
+
+The complete Dashboard was reviewed for hierarchy and spacing, then the source
+chart and implemented chart were normalized to 1220 px wide and reviewed
+together. The focused comparison verifies the requested smooth blue line,
+point markers, USD grid, date axis, and translucent area fill while preserving
+the existing dark operational visual language.
+
+### Findings
+
+- Asset trend is the first content block below the compact wallet/risk header.
+- The remaining Dashboard grid is tightened to 18–20 px gaps without changing
+  order controls, position state, signals, strategy rules, or the action log.
+- The chart renders 16 daily snapshots in the QA fixture, exposes a matching
+  accessible label, and shows the exact date and USD value on pointer hover.
+- The desktop document width equals its scroll width at 1440 px.
+- At 390 px, the document width equals its scroll width and the chart uses a
+  366 px card with compact axes. The full-page mobile capture exhibited the
+  known in-app viewport compositor mismatch, so the chart was also captured
+  directly from its measured bounds for visual inspection.
+- Desktop and mobile checks completed with no console warnings or errors.
+
+### Comparison history
+
+1. First desktop pass confirmed the layout and surfaced that a full-page image
+   made the chart detail difficult to judge.
+2. Added a focused chart capture and a normalized source/implementation
+   comparison; the axis, curve, fill, point density, and final date all match
+   the reference hierarchy.
+3. Verified the mobile chart separately at its measured 366 × 218 bounds and
+   confirmed no horizontal overflow.
+
+### Primary interactions
+
+- Pointer hover selects the nearest daily point and displays its date and USD
+  total. Verified with `2026-07-20` and `$55.00`.
+- Resizing redraws the canvas at the current element dimensions.
+
+final result: passed
+
+---
+
 - Source: `/var/folders/xx/1h1hmbcn1xvgs5_sft5jmpgc0000gp/T/codex-clipboard-025fd4c0-5a7e-497a-9206-bd67052ab82c.png`
 - Implementation: `/Users/henry/projects/binance/artifacts/strategy-compact-default.jpg`
 - Comparison: `/Users/henry/projects/binance/artifacts/strategy-before-after.jpg`
