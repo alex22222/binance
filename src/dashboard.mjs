@@ -36,6 +36,12 @@ function latestSignals(traceRecords) {
       atr15Pct: finiteNumber(record.details.atr15Pct, null),
       initialRiskPct: finiteNumber(record.details.initialRiskPct, null),
       finalTakeProfitPct: finiteNumber(record.details.finalTakeProfitPct, null),
+      shadowConcentrationDecision: record.details.shadowConcentrationDecision || null,
+      shadowCompletedEntriesToday: finiteNumber(record.details.shadowCompletedEntriesToday, null),
+      shadowTrendQualityDecision: record.details.shadowTrendQualityDecision || null,
+      shadowTrendEfficiency: finiteNumber(record.details.shadowTrendEfficiency, null),
+      shadowPositionSizeDecision: record.details.shadowPositionSizeDecision || null,
+      shadowSuggestedTradeUsdt: finiteNumber(record.details.shadowSuggestedTradeUsdt, null),
       reason: record.details.reason || null
     };
   }

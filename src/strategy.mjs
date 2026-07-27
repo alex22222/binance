@@ -375,6 +375,111 @@ export function shadowDowntrendVetoDecision(candles, atr15Pct, nowMs = Date.now(
   };
 }
 
+export function shadowTrendQualityDecision(candles, atr15Pct, nowMs = Date.now()) {
+  const base = {
+    id: "shadow-trend-quality",
+    mode: "SHADOW",
+    enforced: false,
+    source: "TOKEN_15M_CLOSED_CANDLES",
+    thresholds: {
+      highVolatilityAtrPct: 1.5,
+      efficiencyLookbackBars: 8,
+      minTrendEfficiency: 0.35
+    }
+  };
+  if (!(Number.isFinite(atr15Pct) && atr15Pct > 0)) {
+    return { ...base, decision: "INSUFFICIENT_DATA", reason: "INVALID_ATR" };
+  }
+
+  const recent = candles
+    .filter((candle) => Number(candle[6]) < nowMs)
+    .slice(-(base.thresholds.efficiencyLookbackBars + 1))
+    .map((candle) => Number(candle[4]));
+  if (
+    recent.length < base.thresholds.efficiencyLookbackBars + 1 ||
+    recent.some((close) => !Number.isFinite(close) || close <= 0)
+  ) {
+    return {
+      ...base,
+      decision: "INSUFFICIENT_DATA",
+      reason: "INSUFFICIENT_CLOSED_CANDLES",
+      closedCandles: recent.length
+    };
+  }
+
+  const pathLength = recent.slice(1).reduce(
+    (sum, close, index) => sum + Math.abs(close - recent[index]),
+    0
+  );
+  const netMove = Math.abs(recent.at(-1) - recent[0]);
+  const trendEfficiency = pathLength > 0 ? netMove / pathLength : 0;
+  const highVolatility = atr15Pct >= base.thresholds.highVolatilityAtrPct;
+  const lowEfficiency = trendEfficiency < base.thresholds.minTrendEfficiency;
+  const wouldBlock = highVolatility && lowEfficiency;
+  return {
+    ...base,
+    decision: wouldBlock ? "WOULD_BLOCK" : "WOULD_ALLOW",
+    reason: wouldBlock ? "HIGH_VOLATILITY_CHOP" : "TREND_QUALITY_ACCEPTABLE",
+    atr15Pct,
+    trendEfficiency,
+    highVolatility,
+    lowEfficiency
+  };
+}
+
+export function shadowConcentrationDecision({
+  symbol,
+  completedEntriesToday,
+  maxEntriesPerSymbolPerDay = 1
+}) {
+  const wouldLimit = completedEntriesToday >= maxEntriesPerSymbolPerDay;
+  return {
+    id: "shadow-symbol-concentration",
+    mode: "SHADOW",
+    enforced: false,
+    decision: wouldLimit ? "WOULD_LIMIT" : "WOULD_ALLOW",
+    reason: wouldLimit ? "DAILY_SYMBOL_ENTRY_LIMIT" : "WITHIN_DAILY_SYMBOL_ENTRY_LIMIT",
+    symbol,
+    completedEntriesToday,
+    maxEntriesPerSymbolPerDay
+  };
+}
+
+export function shadowAtrPositionSizeDecision({
+  maxTradeUsdt,
+  initialRiskPct,
+  targetRiskPct
+}) {
+  const base = {
+    id: "shadow-atr-position-size",
+    mode: "SHADOW",
+    enforced: false,
+    liveTradeUsdt: maxTradeUsdt
+  };
+  if (
+    ![maxTradeUsdt, initialRiskPct, targetRiskPct].every(Number.isFinite) ||
+    !(maxTradeUsdt > 0 && initialRiskPct > 0 && targetRiskPct > 0)
+  ) {
+    return { ...base, decision: "INSUFFICIENT_DATA", reason: "INVALID_RISK_INPUT" };
+  }
+
+  const targetLossUsdt = maxTradeUsdt * targetRiskPct / 100;
+  const suggestedTradeUsdt = Math.min(
+    maxTradeUsdt,
+    targetLossUsdt / (initialRiskPct / 100)
+  );
+  const wouldReduce = suggestedTradeUsdt + 1e-9 < maxTradeUsdt;
+  return {
+    ...base,
+    decision: wouldReduce ? "WOULD_REDUCE" : "WOULD_KEEP",
+    reason: wouldReduce ? "ATR_RISK_SCALED" : "AT_OR_BELOW_TARGET_RISK",
+    initialRiskPct,
+    targetRiskPct,
+    targetLossUsdt,
+    suggestedTradeUsdt
+  };
+}
+
 export function roundTripCostPct(spendUsdt, quotedProceedsUsdt) {
   return (1 - (quotedProceedsUsdt / spendUsdt)) * 100;
 }

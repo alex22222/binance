@@ -50,6 +50,10 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.match(html, /id="workflow"/);
   assert.ok(html.indexOf('class="actions-section"') > html.indexOf('id="workflow"'));
   assert.match(html, /function renderStrategyRisk\(data\)/);
+  assert.match(html, /Shadow 风控/);
+  assert.match(html, /仅观测，不改变下单/);
+  assert.match(html, /shadowSuggestedTradeUsdt/);
+  assert.match(html, /shadowTrendQualityDecision/);
   assert.match(html, /function renderWorkflow\(data\)/);
   assert.match(html, /href="\/strategies"/);
   assert.match(html, />策略<\/a>/);

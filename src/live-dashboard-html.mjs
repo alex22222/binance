@@ -123,6 +123,7 @@ export function liveDashboardHtml() {
     .signal.historical { background: rgba(245,193,79,.025); }
     .signal-code { display: flex; flex-direction: column; gap: 3px; font-weight: 780; }
     .signal-source { color: var(--gold); font-size: 9px; font-weight: 700; }
+    .signal-shadow { color: var(--gold); font-size: 9px; font-weight: 700; }
     .signal-context { color: var(--muted); font-size: 11px; }
     .signal-direction { font-size: 18px; }
     .signal-strength, .signal-time { color: var(--muted); font-size: 11px; }
@@ -520,6 +521,11 @@ export function liveDashboardHtml() {
         ["全成本估算", pct(request.allInCostPct)],
         ["15分钟趋势", pct(request.trend15mPct)],
         ["初始风险 R", pct(request.initialRiskPct)],
+        ["Shadow 建议", request.shadowRisk
+          ? (request.shadowRisk.trendQuality?.decision === "WOULD_BLOCK" ? "高波动震荡 · " : "") +
+            (request.shadowRisk.concentration?.decision === "WOULD_LIMIT" ? "集中度限制 · " : "") +
+            "建议 " + money(request.shadowRisk.positionSize?.suggestedTradeUsdt) + " USDT（仅观测）"
+          : "—"],
         ["退出原因", request.reason || "—"],
         ["有效期至", time(request.expiresAt)]
       ].forEach(([label, value]) => {
@@ -619,6 +625,17 @@ export function liveDashboardHtml() {
         const code = el("span", "signal-code");
         code.append(el("strong", "", symbol));
         if (historical) code.append(el("small", "signal-source", "本地历史"));
+        if (signal && !historical) {
+          const shadowObservations = [];
+          if (signal.shadowTrendQualityDecision === "WOULD_BLOCK") shadowObservations.push("高波动震荡");
+          if (signal.shadowConcentrationDecision === "WOULD_LIMIT") shadowObservations.push("集中度");
+          if (signal.shadowPositionSizeDecision === "WOULD_REDUCE") {
+            shadowObservations.push("建议 $" + money(signal.shadowSuggestedTradeUsdt));
+          }
+          if (shadowObservations.length) {
+            code.append(el("small", "signal-shadow", "Shadow · " + shadowObservations.join(" · ")));
+          }
+        }
         row.title = !signal
           ? marketClosed ? "休市中，等待常规时段扫描" : "等待信号"
           : historical
@@ -660,7 +677,8 @@ export function liveDashboardHtml() {
         ["初始止损", "clamp(" + data.strategy.atrStopMultiplier + "×ATR15, " + pct(data.risk.minInitialStopPct) + ", " + pct(data.risk.maxInitialStopPct) + ")"],
         ["盈利保护", "+" + data.risk.profitProtectionR + "R 启动 · " + data.strategy.trailingAtrMultiplier + "×ATR15 回撤"],
         ["止盈 / 失效", "+" + data.risk.finalTakeProfitR + "R · " + data.strategy.signalReviewHours + "h 信号失效且 < " + data.strategy.signalReviewMinR + "R"],
-        ["硬风控", "单笔 " + money(data.risk.maxTradeUsdt) + " · 日亏 " + money(data.risk.dailyLossLimitUsdt) + " · " + data.risk.maxOpenPositions + " 仓 · 灾难 " + pct(data.risk.disasterStopLossPct)]
+        ["硬风控", "单笔 " + money(data.risk.maxTradeUsdt) + " · 日亏 " + money(data.risk.dailyLossLimitUsdt) + " · " + data.risk.maxOpenPositions + " 仓 · 灾难 " + pct(data.risk.disasterStopLossPct)],
+        ["Shadow 风控", "单标的集中度 · 趋势效率/震荡 · ATR 仓位建议 · 仅观测，不改变下单"]
       ];
       items.forEach(([label, value]) => {
         const item = el("div", "policy-item");

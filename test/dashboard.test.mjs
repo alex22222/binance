@@ -115,7 +115,13 @@ test("shows pending orders and the latest signal for each symbol", () => {
           initialRiskPct: 1.55,
           finalTakeProfitPct: 3.1,
           costCoverageAllowed: false,
-          costCoverageReason: "INSUFFICIENT_NET_EDGE"
+          costCoverageReason: "INSUFFICIENT_NET_EDGE",
+          shadowConcentrationDecision: "WOULD_LIMIT",
+          shadowCompletedEntriesToday: 1,
+          shadowTrendQualityDecision: "WOULD_BLOCK",
+          shadowTrendEfficiency: 0.2,
+          shadowPositionSizeDecision: "WOULD_REDUCE",
+          shadowSuggestedTradeUsdt: 32.26
         }
       }
     ],
@@ -128,6 +134,10 @@ test("shows pending orders and the latest signal for each symbol", () => {
   assert.equal(snapshot.signals.TSLA.atr15Pct, 0.7);
   assert.equal(snapshot.signals.TSLA.initialRiskPct, 1.55);
   assert.equal(snapshot.signals.TSLA.costCoverageAllowed, false);
+  assert.equal(snapshot.signals.TSLA.shadowConcentrationDecision, "WOULD_LIMIT");
+  assert.equal(snapshot.signals.TSLA.shadowTrendQualityDecision, "WOULD_BLOCK");
+  assert.equal(snapshot.signals.TSLA.shadowTrendEfficiency, 0.2);
+  assert.equal(snapshot.signals.TSLA.shadowSuggestedTradeUsdt, 32.26);
   assert.equal(snapshot.signals.NVDA.upMinutes, 6);
 });
 

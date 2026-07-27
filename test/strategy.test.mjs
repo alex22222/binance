@@ -16,7 +16,10 @@ import {
   rankCandidates,
   roundTripCostPct,
   nyseSessionPlan,
+  shadowAtrPositionSizeDecision,
+  shadowConcentrationDecision,
   shadowDowntrendVetoDecision,
+  shadowTrendQualityDecision,
   simulateRoundTrip,
   uniqueSymbols,
   validateConfig
@@ -525,6 +528,67 @@ test("shadow downtrend veto allows a recovery and reports insufficient evidence"
   );
   assert.equal(insufficient.decision, "INSUFFICIENT_DATA");
   assert.equal(insufficient.enforced, false);
+});
+
+test("shadow trend quality flags high-volatility chop without enforcing it", () => {
+  const choppy = shadowTrendQualityDecision(
+    fifteenMinuteCandles([100, 102, 99, 103, 98, 102, 99, 101, 100]),
+    1.8,
+    Date.parse("2026-07-27T17:00:00.000Z")
+  );
+  assert.equal(choppy.mode, "SHADOW");
+  assert.equal(choppy.enforced, false);
+  assert.equal(choppy.decision, "WOULD_BLOCK");
+  assert.equal(choppy.reason, "HIGH_VOLATILITY_CHOP");
+  assert.ok(choppy.trendEfficiency < 0.35);
+
+  const trending = shadowTrendQualityDecision(
+    fifteenMinuteCandles([100, 101, 102, 103, 104, 105, 106, 107, 108]),
+    1.8,
+    Date.parse("2026-07-27T17:00:00.000Z")
+  );
+  assert.equal(trending.decision, "WOULD_ALLOW");
+  assert.equal(trending.reason, "TREND_QUALITY_ACCEPTABLE");
+});
+
+test("shadow concentration observes a second same-day entry without blocking it", () => {
+  assert.deepEqual(shadowConcentrationDecision({
+    symbol: "CRCL",
+    completedEntriesToday: 1
+  }), {
+    id: "shadow-symbol-concentration",
+    mode: "SHADOW",
+    enforced: false,
+    decision: "WOULD_LIMIT",
+    reason: "DAILY_SYMBOL_ENTRY_LIMIT",
+    symbol: "CRCL",
+    completedEntriesToday: 1,
+    maxEntriesPerSymbolPerDay: 1
+  });
+  assert.equal(shadowConcentrationDecision({
+    symbol: "CRCL",
+    completedEntriesToday: 0
+  }).decision, "WOULD_ALLOW");
+});
+
+test("shadow ATR sizing preserves target dollar risk without changing the live amount", () => {
+  const reduced = shadowAtrPositionSizeDecision({
+    maxTradeUsdt: 50,
+    initialRiskPct: 2.5,
+    targetRiskPct: 1
+  });
+  assert.equal(reduced.mode, "SHADOW");
+  assert.equal(reduced.enforced, false);
+  assert.equal(reduced.decision, "WOULD_REDUCE");
+  assert.equal(reduced.liveTradeUsdt, 50);
+  assert.equal(reduced.suggestedTradeUsdt, 20);
+  assert.equal(reduced.targetLossUsdt, 0.5);
+
+  assert.equal(shadowAtrPositionSizeDecision({
+    maxTradeUsdt: 50,
+    initialRiskPct: 0.8,
+    targetRiskPct: 1
+  }).decision, "WOULD_KEEP");
 });
 
 test("rejects a candidate that clears the raw cost cap but not the all-in coverage gate", () => {

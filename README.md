@@ -313,6 +313,12 @@ npm start
 
 Every run receives a unique run ID and every cycle receives a unique cycle ID. The append-only trace is written to `state/action-trace.jsonl` by default. Credentials, tokens, authorization headers, API keys, and webhook URLs are redacted.
 
+Selected candidates also emit a non-enforcing `shadow_risk_overlay` observation.
+It records same-day symbol concentration, high-volatility trend efficiency, and
+an ATR-scaled position-size suggestion. These fields are displayed on the
+Dashboard but do not change candidate ranking, approval, or the submitted
+amount.
+
 ## Strategy validation
 
 Run the research-only strategy comparison with:

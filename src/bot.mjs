@@ -19,7 +19,10 @@ import {
   pendingOrderAction,
   rankCandidates,
   roundTripCostPct,
+  shadowAtrPositionSizeDecision,
+  shadowConcentrationDecision,
   shadowDowntrendVetoDecision,
+  shadowTrendQualityDecision,
   simulateRoundTrip,
   uniqueSymbols,
   validateConfig
@@ -97,13 +100,31 @@ async function saveJson(path, value) {
   await rename(temporaryPath, path);
 }
 
-function shanghaiDate() {
+function shanghaiDate(nowMs = Date.now()) {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai",
     year: "numeric",
     month: "2-digit",
     day: "2-digit"
-  }).format(new Date());
+  }).format(new Date(nowMs));
+}
+
+function completedEntriesToday(state, symbol, nowMs = Date.now()) {
+  const date = shanghaiDate(nowMs);
+  return (state.shadowEntryHistory || []).filter(
+    (entry) => entry.date === date && entry.symbol === symbol
+  ).length;
+}
+
+function recordShadowEntry(state, symbol, nowMs = Date.now()) {
+  state.shadowEntryHistory = [
+    ...(state.shadowEntryHistory || []),
+    {
+      symbol,
+      date: shanghaiDate(nowMs),
+      completedAt: new Date(nowMs).toISOString()
+    }
+  ].slice(-100);
 }
 
 function freshState() {
@@ -122,7 +143,8 @@ function freshState() {
     lastError: null,
     lastSettingsCheckAt: 0,
     sessionWarningFor: null,
-    walletBalance: null
+    walletBalance: null,
+    shadowEntryHistory: []
   };
 }
 
@@ -839,6 +861,7 @@ async function finalizePendingOrder(config, state, statePath) {
       initialRiskPct: submitted.initialRiskPct,
       profitFloorPct: submitted.profitFloorPct,
       entryAtr15Pct: submitted.entryAtr15Pct,
+      entryShadowRisk: submitted.shadowRisk || null,
       finalTakeProfitPct: submitted.finalTakeProfitPct,
       peakReturnPct: 0,
       profitProtectionActive: false,
@@ -847,6 +870,7 @@ async function finalizePendingOrder(config, state, statePath) {
       orderId: submitted.orderId,
       shadow: false
     };
+    recordShadowEntry(state, submitted.symbol);
     state.pendingOrder = null;
     await traceAction("pending_order", "finished", {
       orderId: submitted.orderId,
@@ -930,6 +954,7 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
   const signal = analyzeCandles(minuteKline);
   const atr = calculateAtrPct(atrKline, config.atrPeriod);
   const shadowDowntrendVeto = shadowDowntrendVetoDecision(atrKline, atr?.atrPct);
+  const shadowTrendQuality = shadowTrendQualityDecision(atrKline, atr?.atrPct);
   const requiredTrend15mPct = atr ? atr.atrPct * config.entryAtrMultiplier : null;
   const trendPassed = signal && atr
     ? signal.trend15mPct + 1e-9 >= requiredTrend15mPct && signal.upMinutes >= config.minDirectionalMinutes
@@ -945,6 +970,7 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
     signal,
     atr,
     shadowDowntrendVeto,
+    shadowTrendQuality,
     thresholds: {
       entryAtrMultiplier: config.entryAtrMultiplier,
       requiredTrend15mPct,
@@ -968,6 +994,17 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
     ema8SlopePct: shadowDowntrendVeto.ema8SlopePct,
     atr15Pct: shadowDowntrendVeto.atr15Pct
   }, currentCycleId);
+  await traceAction("shadow_sub_strategy", "observed", {
+    strategyId,
+    symbol,
+    subStrategyId: shadowTrendQuality.id,
+    decision: shadowTrendQuality.decision,
+    reason: shadowTrendQuality.reason,
+    enforced: shadowTrendQuality.enforced,
+    trendEfficiency: shadowTrendQuality.trendEfficiency,
+    highVolatility: shadowTrendQuality.highVolatility,
+    atr15Pct: shadowTrendQuality.atr15Pct
+  }, currentCycleId);
   if (!signal) {
     await traceAction("candidate_rejected", "skipped", { symbol, reason: "insufficient_closed_candles" }, currentCycleId);
     return null;
@@ -984,7 +1021,8 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
     ...status,
     ...signal,
     atr15Pct: atr.atrPct,
-    shadowDowntrendVeto
+    shadowDowntrendVeto,
+    shadowTrendQuality
   };
   if (!marketOpen || (strategyId === DEFAULT_STRATEGY_ID && !trendPassed)) {
     await traceAction("candidate_rejected", "skipped", {
@@ -1099,7 +1137,9 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
     gasCostPct: costCoverage.gasCostPct,
     executionBufferPct: costCoverage.executionBufferPct,
     shadowDowntrendDecision: completed.shadowDowntrendVeto.decision,
-    shadowDowntrendEnforced: completed.shadowDowntrendVeto.enforced
+    shadowDowntrendEnforced: completed.shadowDowntrendVeto.enforced,
+    shadowTrendQualityDecision: completed.shadowTrendQuality.decision,
+    shadowTrendEfficiency: completed.shadowTrendQuality.trendEfficiency
   }, currentCycleId);
   return completed;
 }
@@ -1239,6 +1279,33 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
     return;
   }
 
+  const shadowConcentration = shadowConcentrationDecision({
+    symbol: selected.symbol,
+    completedEntriesToday: completedEntriesToday(state, selected.symbol, now)
+  });
+  const shadowPositionSize = shadowAtrPositionSizeDecision({
+    maxTradeUsdt: config.maxTradeUsdt,
+    initialRiskPct: selected.initialRiskPct,
+    targetRiskPct: config.minInitialStopPct
+  });
+  const shadowRisk = {
+    mode: "SHADOW",
+    enforced: false,
+    concentration: shadowConcentration,
+    trendQuality: selected.shadowTrendQuality,
+    positionSize: shadowPositionSize
+  };
+  await traceAction("shadow_risk_overlay", "observed", {
+    symbol: selected.symbol,
+    concentrationDecision: shadowConcentration.decision,
+    completedEntriesToday: shadowConcentration.completedEntriesToday,
+    trendQualityDecision: selected.shadowTrendQuality.decision,
+    trendEfficiency: selected.shadowTrendQuality.trendEfficiency,
+    positionSizeDecision: shadowPositionSize.decision,
+    liveTradeUsdt: shadowPositionSize.liveTradeUsdt,
+    suggestedTradeUsdt: shadowPositionSize.suggestedTradeUsdt,
+    enforced: false
+  }, currentCycleId);
   await traceAction("candidate_selected", "succeeded", {
     symbol: selected.symbol,
     trend15mPct: selected.trend15mPct,
@@ -1250,7 +1317,13 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
     netEdgeProxyPct: selected.costCoverage.netEdgeProxyPct,
     atr15Pct: selected.atr15Pct,
     initialRiskPct: selected.initialRiskPct,
-    finalTakeProfitPct: selected.finalTakeProfitPct
+    finalTakeProfitPct: selected.finalTakeProfitPct,
+    shadowConcentrationDecision: shadowConcentration.decision,
+    shadowCompletedEntriesToday: shadowConcentration.completedEntriesToday,
+    shadowTrendQualityDecision: selected.shadowTrendQuality.decision,
+    shadowTrendEfficiency: selected.shadowTrendQuality.trendEfficiency,
+    shadowPositionSizeDecision: shadowPositionSize.decision,
+    shadowSuggestedTradeUsdt: shadowPositionSize.suggestedTradeUsdt
   }, currentCycleId);
   const auditResult = await audit(selected.asset, config);
   if (config.mode === "live" && !feishuConfigured()) {
@@ -1349,6 +1422,7 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
     initialRiskPct: freshInitialRisk.initialRiskPct,
     profitFloorPct: freshProfitFloorPct,
     entryAtr15Pct: selected.atr15Pct,
+    shadowRisk,
     finalTakeProfitPct: freshFinalTakeProfitPct,
     usdtBefore,
     createdAt
@@ -1401,6 +1475,7 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
       initialRiskPct: freshInitialRisk.initialRiskPct,
       profitFloorPct: freshProfitFloorPct,
       entryAtr15Pct: selected.atr15Pct,
+      entryShadowRisk: shadowRisk,
       finalTakeProfitPct: freshFinalTakeProfitPct,
       peakReturnPct: 0,
       profitProtectionActive: false,
@@ -1409,6 +1484,7 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
       orderId: result.orderId,
       shadow: true
     };
+    recordShadowEntry(state, selected.symbol);
   }
   await traceAction("buy_submission", result.shadow ? "simulated" : "submitted", {
     symbol: selected.symbol,
