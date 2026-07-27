@@ -51,7 +51,7 @@ const config = {
   slippagePct: 0.5,
   executionBufferPct: 0.1,
   estimatedRoundTripGasUsdt: 0.1,
-  minNetEdgePct: 0.3,
+  minNetEdgePct: 0.1,
   regularOnlyEntries: true,
   quoteMaxAgeSeconds: 10,
   maxQuoteDriftPct: 0.5,
@@ -593,7 +593,7 @@ test("shadow ATR sizing preserves target dollar risk without changing the live a
 
 test("rejects a candidate that clears the raw cost cap but not the all-in coverage gate", () => {
   const ranked = rankCandidates([
-    { symbol: "A", openState: true, reasonCode: "TRADING", trend15mPct: 0.9, atr15Pct: 1, upMinutes: 12, roundTripCostPct: 0.4 }
+    { symbol: "A", openState: true, reasonCode: "TRADING", trend15mPct: 0.75, atr15Pct: 1, upMinutes: 12, roundTripCostPct: 0.4 }
   ], config);
   assert.deepEqual(ranked, []);
 });
@@ -605,19 +605,19 @@ test("calculates quote-based round-trip cost", () => {
 test("blocks a trade whose signal cannot cover quote cost, gas and execution buffer", () => {
   const result = costCoverageDecision({
     tradeUsdt: 50,
-    grossEdgeProxyPct: 0.8,
+    grossEdgeProxyPct: 0.74,
     takeProfitPct: 2,
     quotedRoundTripCostPct: 0.35,
     executionBufferPct: 0.1,
     estimatedRoundTripGasUsdt: 0.1,
-    minNetEdgePct: 0.3
+    minNetEdgePct: 0.1
   });
 
   assert.equal(result.allowed, false);
   assert.equal(result.reason, "INSUFFICIENT_NET_EDGE");
   assert.ok(Math.abs(result.gasCostPct - 0.2) < 1e-9);
   assert.ok(Math.abs(result.allInCostPct - 0.65) < 1e-9);
-  assert.ok(result.netEdgeProxyPct < 0.3);
+  assert.ok(result.netEdgeProxyPct < 0.1);
 });
 
 test("allows only a target and signal that retain a positive margin after all costs", () => {
@@ -628,7 +628,7 @@ test("allows only a target and signal that retain a positive margin after all co
     quotedRoundTripCostPct: 0.35,
     executionBufferPct: 0.1,
     estimatedRoundTripGasUsdt: 0.1,
-    minNetEdgePct: 0.3
+    minNetEdgePct: 0.1
   });
 
   assert.equal(result.allowed, true);

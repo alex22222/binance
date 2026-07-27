@@ -31,7 +31,7 @@ Entry gates:
 - 15-minute return is at least `0.75 × ATR15`;
 - at least 9 of the last 15 one-minute moves are positive;
 - quoted round-trip cost is at most 0.7%;
-- quoted fees/spread/price impact, 0.10 USDT estimated round-trip BSC gas, and a 0.1% execution buffer leave at least 0.3% net signal edge and net target profit;
+- quoted fees/spread/price impact, 0.10 USDT estimated round-trip BSC gas, and a 0.1% execution buffer leave at least 0.1% net signal edge and net target profit;
 - Binance token audit is supported, low-risk, has no hit risk items, and taxes are at most 5%; or
 - Binance explicitly reports the audit unsupported, the contract came from the current official BSC RWA list, and `allowUnsupportedAuditForOfficialRwa` is enabled.
 

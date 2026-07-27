@@ -27,7 +27,7 @@ const config = {
   slippagePct: 0.5,
   executionBufferPct: 0.1,
   estimatedRoundTripGasUsdt: 0.1,
-  minNetEdgePct: 0.3
+  minNetEdgePct: 0.1
 };
 
 test("builds a live position snapshot from the latest executable sell quote", () => {
