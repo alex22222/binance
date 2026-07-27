@@ -104,17 +104,23 @@ export function buildDashboardSnapshot({
             ) * 100
       }
     : null;
+  const approvalExpiresAtMs = Date.parse(state.approvalRequest?.expiresAt || "");
+  const approvalIsFresh = (
+    state.approvalRequest?.status === "PENDING_CONFIRMATION" &&
+    Number.isFinite(approvalExpiresAtMs) &&
+    nowMs <= approvalExpiresAtMs
+  );
+  const automaticallyApproved = approvalIsFresh && approvalControl?.enabled === true;
   const approvalRequest = state.approvalRequest
     ? {
         ...state.approvalRequest,
-        canDecide: (
-          state.approvalRequest.status === "PENDING_CONFIRMATION" &&
-          Number.isFinite(Date.parse(state.approvalRequest.expiresAt || "")) &&
-          nowMs <= Date.parse(state.approvalRequest.expiresAt)
-        ),
-        displayStatus: nowMs > Date.parse(state.approvalRequest.expiresAt || "")
+        automaticallyApproved,
+        canDecide: approvalIsFresh && !automaticallyApproved,
+        displayStatus: nowMs > approvalExpiresAtMs
           ? "EXPIRED"
-          : state.approvalRequest.status
+          : automaticallyApproved
+            ? "AUTO_APPROVED_REVALIDATING"
+            : state.approvalRequest.status
       }
     : null;
 

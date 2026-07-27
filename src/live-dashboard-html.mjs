@@ -510,8 +510,16 @@ export function liveDashboardHtml() {
         el("div", "approval-title " + (request.side === "BUY" ? "green" : "gold"), request.side + " · " + request.symbol),
         el("div", "contract", request.address)
       );
-      const statusText = request.canDecide ? "过期倒计时 " + countdown(request.expiresAt) : request.displayStatus;
-      head.append(identity, el("span", "badge " + (request.canDecide ? "gold" : "red"), statusText));
+      const statusText = request.automaticallyApproved
+        ? "自动复核中"
+        : request.canDecide
+          ? "过期倒计时 " + countdown(request.expiresAt)
+          : request.displayStatus;
+      head.append(identity, el(
+        "span",
+        "badge " + (request.canDecide || request.automaticallyApproved ? "gold" : "red"),
+        statusText
+      ));
       panel.append(head);
       const grid = el("div", "approval-grid");
       const expected = request.side === "BUY"
@@ -546,6 +554,16 @@ export function liveDashboardHtml() {
         el("div", "contract", "滑点：" + data.strategy.slippagePct + "% · MEV保护：开 · Gas：HIGH · 审批编号：" + request.approvalId)
       );
       panel.append(addresses);
+      if (request.automaticallyApproved) {
+        panel.append(el(
+          "div",
+          "approval-result",
+          "已自动审批，等待重新报价与风控复核；本页面无需人工操作。"
+        ));
+        root.append(panel);
+        submittedApprovalId = null;
+        return;
+      }
       const requiresAuditAcknowledgement = request.audit?.status === "OFFICIAL_RWA_UNSUPPORTED_ACKNOWLEDGED";
       let auditAcknowledgement = null;
       if (requiresAuditAcknowledgement) {

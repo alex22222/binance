@@ -168,6 +168,43 @@ test("dashboard records one exact approval without writing the bot state", async
     const autoSnapshot = await fetch(`${origin}/api/snapshot`).then((response) => response.json());
     assert.equal(autoSnapshot.autoApproval.enabled, true);
 
+    const automaticRequest = createApprovalRequest({
+      side: "BUY",
+      symbol: "TSLA",
+      address: "0x2222222222222222222222222222222222222222",
+      fromToken: "0x55d398326f99059fF775485246999027B3197955",
+      toToken: "0x2222222222222222222222222222222222222222",
+      fromTokenQty: "50",
+      expectedOutputQty: "0.11",
+      quoteTimestamp: new Date().toISOString(),
+      audit: { status: "TRUSTED" }
+    }, {
+      createdAt: new Date().toISOString(),
+      ttlSeconds: 300
+    });
+    await writeFile(statePath, `${JSON.stringify({
+      ...state,
+      approvalRequest: automaticRequest
+    }, null, 2)}\n`);
+    const blockedManualDecision = await fetch(`${origin}/api/approval-decision`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Origin": origin
+      },
+      body: JSON.stringify({
+        approvalId: automaticRequest.approvalId,
+        decision: "APPROVE",
+        confirmation: `APPROVE:${automaticRequest.approvalId}`,
+        dyorAcknowledged: true
+      })
+    });
+    assert.equal(blockedManualDecision.status, 409);
+    assert.equal(
+      (await blockedManualDecision.json()).error,
+      "Manual decisions are disabled while automatic approval is enabled"
+    );
+
     const disabledAutoApproval = await fetch(`${origin}/api/auto-approval`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Origin: origin },

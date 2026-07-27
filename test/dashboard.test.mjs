@@ -309,6 +309,38 @@ test("shows a fresh approval request as actionable and an expired one as read-on
   assert.equal(expired.approvalRequest.displayStatus, "EXPIRED");
 });
 
+test("keeps an automatically approved request read-only while it awaits revalidation", () => {
+  const nowMs = Date.parse("2026-07-24T13:00:00.000Z");
+  const snapshot = buildDashboardSnapshot({
+    config: { ...config, mode: "live" },
+    state: {
+      date: "2026-07-24",
+      realizedPnlUsdt: 0,
+      updatedAt: "2026-07-24T12:59:30.000Z",
+      position: null,
+      pendingOrder: null,
+      approvalRequest: {
+        approvalId: "0123456789abcdef01234567",
+        status: "PENDING_CONFIRMATION",
+        side: "BUY",
+        symbol: "TSLA",
+        expiresAt: "2026-07-24T13:04:00.000Z"
+      }
+    },
+    approvalControl: {
+      enabled: true,
+      updatedAt: "2026-07-24T12:00:00.000Z",
+      updatedBy: "dashboard"
+    },
+    traceRecords: [],
+    nowMs
+  });
+
+  assert.equal(snapshot.approvalRequest.automaticallyApproved, true);
+  assert.equal(snapshot.approvalRequest.canDecide, false);
+  assert.equal(snapshot.approvalRequest.displayStatus, "AUTO_APPROVED_REVALIDATING");
+});
+
 test("marks an old heartbeat as stale and exposes the last cycle error", () => {
   const snapshot = buildDashboardSnapshot({
     config,

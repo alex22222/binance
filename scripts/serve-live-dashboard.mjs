@@ -13,7 +13,7 @@ import { strategyLabHtml } from "../src/strategy-lab-html.mjs";
 import { activateEmergencyStop, clearEmergencyStop } from "../src/reliability.mjs";
 import { createTracer } from "../src/trace.mjs";
 import { approvalDecisionStatus, recordApprovalDecision } from "../src/approvals.mjs";
-import { writeApprovalControl } from "../src/approval-control.mjs";
+import { readApprovalControl, writeApprovalControl } from "../src/approval-control.mjs";
 import { assertSwitchableStrategy, writeStrategyControl } from "../src/strategy-lab.mjs";
 import { createWalletLoginManager } from "../src/wallet-login.mjs";
 import {
@@ -350,6 +350,15 @@ const server = createServer(async (request, response) => {
       }
       const body = await readJsonBody(request);
       const config = await loadConfig();
+      const approvalControl = await readApprovalControl(approvalControlPath(config));
+      if (approvalControl.enabled) {
+        response.writeHead(409, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        response.end(JSON.stringify({
+          success: false,
+          error: "Manual decisions are disabled while automatic approval is enabled"
+        }));
+        return;
+      }
       const state = JSON.parse(await readFile(resolve(projectRoot, config.stateFile), "utf8"));
       const approval = state.approvalRequest;
       if (!approval || body.approvalId !== approval.approvalId) {
