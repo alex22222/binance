@@ -27,4 +27,8 @@ test("strategy page keeps only operational comparison and switch controls", () =
   assert.doesNotMatch(html, /strategy\.thesis/);
   assert.doesNotMatch(html, /\["证据", strategy\.evidence\]/);
   assert.doesNotMatch(html, /\["主要风险", strategy\.risk\]/);
+  assert.match(html, /strategy\.subStrategies/);
+  assert.match(html, /Shadow 风控/);
+  assert.match(html, /subStrategy\.rule/);
+  assert.match(html, /仅观测，不影响入场/);
 });

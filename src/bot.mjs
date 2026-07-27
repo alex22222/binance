@@ -19,6 +19,7 @@ import {
   pendingOrderAction,
   rankCandidates,
   roundTripCostPct,
+  shadowDowntrendVetoDecision,
   simulateRoundTrip,
   uniqueSymbols,
   validateConfig
@@ -928,6 +929,7 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
   ]);
   const signal = analyzeCandles(minuteKline);
   const atr = calculateAtrPct(atrKline, config.atrPeriod);
+  const shadowDowntrendVeto = shadowDowntrendVetoDecision(atrKline, atr?.atrPct);
   const requiredTrend15mPct = atr ? atr.atrPct * config.entryAtrMultiplier : null;
   const trendPassed = signal && atr
     ? signal.trend15mPct + 1e-9 >= requiredTrend15mPct && signal.upMinutes >= config.minDirectionalMinutes
@@ -942,6 +944,7 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
     atrCandles: normalizeCandles(atrKline),
     signal,
     atr,
+    shadowDowntrendVeto,
     thresholds: {
       entryAtrMultiplier: config.entryAtrMultiplier,
       requiredTrend15mPct,
@@ -953,6 +956,18 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
       quoteEvaluated: false
     }
   });
+  await traceAction("shadow_sub_strategy", "observed", {
+    strategyId,
+    symbol,
+    subStrategyId: shadowDowntrendVeto.id,
+    decision: shadowDowntrendVeto.decision,
+    reason: shadowDowntrendVeto.reason,
+    enforced: shadowDowntrendVeto.enforced,
+    return60mPct: shadowDowntrendVeto.return60mPct,
+    return120mPct: shadowDowntrendVeto.return120mPct,
+    ema8SlopePct: shadowDowntrendVeto.ema8SlopePct,
+    atr15Pct: shadowDowntrendVeto.atr15Pct
+  }, currentCycleId);
   if (!signal) {
     await traceAction("candidate_rejected", "skipped", { symbol, reason: "insufficient_closed_candles" }, currentCycleId);
     return null;
@@ -962,7 +977,15 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
     return null;
   }
 
-  const candidate = { symbol, address: asset.contractAddress, asset, ...status, ...signal, atr15Pct: atr.atrPct };
+  const candidate = {
+    symbol,
+    address: asset.contractAddress,
+    asset,
+    ...status,
+    ...signal,
+    atr15Pct: atr.atrPct,
+    shadowDowntrendVeto
+  };
   if (!marketOpen || (strategyId === DEFAULT_STRATEGY_ID && !trendPassed)) {
     await traceAction("candidate_rejected", "skipped", {
       symbol,
@@ -1074,7 +1097,9 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
     initialRiskPct: completed.initialRiskPct,
     finalTakeProfitPct,
     gasCostPct: costCoverage.gasCostPct,
-    executionBufferPct: costCoverage.executionBufferPct
+    executionBufferPct: costCoverage.executionBufferPct,
+    shadowDowntrendDecision: completed.shadowDowntrendVeto.decision,
+    shadowDowntrendEnforced: completed.shadowDowntrendVeto.enforced
   }, currentCycleId);
   return completed;
 }

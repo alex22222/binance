@@ -306,6 +306,75 @@ export function calculateAtrPct(candles, period = 14, nowMs = Date.now()) {
   };
 }
 
+export function shadowDowntrendVetoDecision(candles, atr15Pct, nowMs = Date.now()) {
+  const base = {
+    id: "shadow-downtrend-veto",
+    mode: "SHADOW",
+    enforced: false,
+    source: "TOKEN_15M_CLOSED_CANDLES",
+    thresholds: {
+      return60mAtr: -1,
+      return120mAtr: -1.5,
+      emaPeriod: 8,
+      emaSlopeLookbackBars: 4
+    }
+  };
+  if (!(Number.isFinite(atr15Pct) && atr15Pct > 0)) {
+    return { ...base, decision: "INSUFFICIENT_DATA", reason: "INVALID_ATR" };
+  }
+
+  const closed = candles.filter((candle) => Number(candle[6]) < nowMs);
+  if (closed.length < 13) {
+    return {
+      ...base,
+      decision: "INSUFFICIENT_DATA",
+      reason: "INSUFFICIENT_CLOSED_CANDLES",
+      closedCandles: closed.length
+    };
+  }
+
+  const recent = closed.slice(-13).map((candle) => Number(candle[4]));
+  if (recent.some((close) => !Number.isFinite(close) || close <= 0)) {
+    return {
+      ...base,
+      decision: "INSUFFICIENT_DATA",
+      reason: "INVALID_CANDLE",
+      closedCandles: closed.length
+    };
+  }
+  const lastPrice = recent.at(-1);
+  const return60mPct = ((lastPrice / recent.at(-5)) - 1) * 100;
+  const return120mPct = ((lastPrice / recent.at(-9)) - 1) * 100;
+  const alpha = 2 / (base.thresholds.emaPeriod + 1);
+  const emaValues = recent.reduce((values, close) => {
+    const previous = values.at(-1);
+    values.push(previous == null ? close : close * alpha + previous * (1 - alpha));
+    return values;
+  }, []);
+  const ema8 = emaValues.at(-1);
+  const ema8Prior = emaValues.at(-(base.thresholds.emaSlopeLookbackBars + 1));
+  const conditions = {
+    return60m: return60mPct <= base.thresholds.return60mAtr * atr15Pct,
+    return120m: return120mPct <= base.thresholds.return120mAtr * atr15Pct,
+    belowFallingEma8: lastPrice < ema8 && ema8 < ema8Prior
+  };
+  const wouldBlock = Object.values(conditions).every(Boolean);
+
+  return {
+    ...base,
+    decision: wouldBlock ? "WOULD_BLOCK" : "WOULD_ALLOW",
+    reason: wouldBlock ? "PERSISTENT_DOWNTREND" : "NO_PERSISTENT_DOWNTREND",
+    closedCandles: closed.length,
+    lastPrice,
+    return60mPct,
+    return120mPct,
+    ema8,
+    ema8SlopePct: ((ema8 / ema8Prior) - 1) * 100,
+    atr15Pct,
+    conditions
+  };
+}
+
 export function roundTripCostPct(spendUsdt, quotedProceedsUsdt) {
   return (1 - (quotedProceedsUsdt / spendUsdt)) * 100;
 }

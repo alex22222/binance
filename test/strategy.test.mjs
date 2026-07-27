@@ -16,6 +16,7 @@ import {
   rankCandidates,
   roundTripCostPct,
   nyseSessionPlan,
+  shadowDowntrendVetoDecision,
   simulateRoundTrip,
   uniqueSymbols,
   validateConfig
@@ -474,12 +475,56 @@ test("ranks only candidates that clear trend, consistency, status and cost gates
 
 test("uses a 0.75 ATR adaptive entry threshold with 9 of 15 rising minutes", () => {
   const ranked = rankCandidates([
-    { symbol: "PASS", openState: true, reasonCode: "TRADING", trend15mPct: 0.6, atr15Pct: 0.8, upMinutes: 9, roundTripCostPct: 0.1, costCoverage: { allowed: true, netEdgeProxyPct: 0.2 } },
+    { symbol: "PASS", openState: true, reasonCode: "TRADING", trend15mPct: 0.6, atr15Pct: 0.8, upMinutes: 9, roundTripCostPct: 0.1, costCoverage: { allowed: true, netEdgeProxyPct: 0.2 }, shadowDowntrendVeto: { decision: "WOULD_BLOCK" } },
     { symbol: "TREND_FAIL", openState: true, reasonCode: "TRADING", trend15mPct: 0.59, atr15Pct: 0.8, upMinutes: 12, roundTripCostPct: 0.1, costCoverage: { allowed: true, netEdgeProxyPct: 0.19 } },
     { symbol: "DIRECTION_FAIL", openState: true, reasonCode: "TRADING", trend15mPct: 1, atr15Pct: 0.8, upMinutes: 8, roundTripCostPct: 0.1, costCoverage: { allowed: true, netEdgeProxyPct: 0.6 } }
   ], config);
 
   assert.deepEqual(ranked.map((candidate) => candidate.symbol), ["PASS"]);
+});
+
+function fifteenMinuteCandles(closes) {
+  const start = Date.parse("2026-07-27T13:30:00.000Z");
+  return closes.map((close, index) => {
+    const openTime = start + index * 15 * 60_000;
+    return [openTime, close + 0.2, close + 0.5, close - 0.5, close, 1, openTime + 15 * 60_000 - 1];
+  });
+}
+
+test("shadow downtrend veto marks a persistent ATR-scaled decline without enforcing it", () => {
+  const result = shadowDowntrendVetoDecision(
+    fifteenMinuteCandles([100, 99, 98, 97, 96, 95, 94, 93, 92, 91, 90, 89, 88]),
+    1,
+    Date.parse("2026-07-27T17:00:00.000Z")
+  );
+
+  assert.equal(result.mode, "SHADOW");
+  assert.equal(result.enforced, false);
+  assert.equal(result.decision, "WOULD_BLOCK");
+  assert.equal(result.reason, "PERSISTENT_DOWNTREND");
+  assert.deepEqual(result.conditions, {
+    return60m: true,
+    return120m: true,
+    belowFallingEma8: true
+  });
+});
+
+test("shadow downtrend veto allows a recovery and reports insufficient evidence", () => {
+  const recovering = shadowDowntrendVetoDecision(
+    fifteenMinuteCandles([100, 99, 98, 97, 96, 95, 94, 95, 96, 97, 98, 99, 100]),
+    1,
+    Date.parse("2026-07-27T17:00:00.000Z")
+  );
+  assert.equal(recovering.decision, "WOULD_ALLOW");
+  assert.equal(recovering.reason, "NO_PERSISTENT_DOWNTREND");
+
+  const insufficient = shadowDowntrendVetoDecision(
+    fifteenMinuteCandles([100, 99]),
+    1,
+    Date.parse("2026-07-27T15:00:00.000Z")
+  );
+  assert.equal(insufficient.decision, "INSUFFICIENT_DATA");
+  assert.equal(insufficient.enforced, false);
 });
 
 test("rejects a candidate that clears the raw cost cap but not the all-in coverage gate", () => {

@@ -73,7 +73,7 @@ export function strategyLabHtml() {
     .label { color: var(--muted); font-size: 10px; letter-spacing: .09em; text-transform: uppercase; }
     .metric strong { display: block; margin-top: 6px; overflow: hidden; text-overflow: ellipsis; font: 700 14px ui-monospace, SFMono-Regular, monospace; }
     .facts { display: grid; gap: 7px; margin-bottom: 12px; }
-    .fact { display: grid; grid-template-columns: 66px 1fr; gap: 10px; font-size: 12px; line-height: 1.5; }
+    .fact { display: grid; grid-template-columns: 72px 1fr; gap: 10px; font-size: 12px; line-height: 1.5; }
     .fact span:last-child { color: #bdc5d0; }
     .strategy-switch { width: 100%; margin-top: auto; padding: 11px 12px; border: 1px solid var(--blue); border-radius: 10px; color: #d8e5ff; background: rgba(120,169,255,.08); cursor: pointer; font-weight: 750; transition: background-color .2s, border-color .2s; }
     .strategy-switch:hover:not(:disabled) { border-color: rgba(120,169,255,.75); background: rgba(120,169,255,.17); }
@@ -231,6 +231,12 @@ export function strategyLabHtml() {
         ].forEach(([label, value]) => {
           const fact = el("div", "fact");
           fact.append(el("span", "label", label), el("span", "", value));
+          facts.append(fact);
+        });
+        (strategy.subStrategies || []).forEach((subStrategy) => {
+          const fact = el("div", "fact");
+          const description = subStrategy.name + " · " + subStrategy.role + " · " + subStrategy.rule + " · 仅观测，不影响入场";
+          fact.append(el("span", "label", "Shadow 风控"), el("span", "", description));
           facts.append(fact);
         });
         card.append(facts);

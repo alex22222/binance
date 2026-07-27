@@ -3,6 +3,20 @@ import { dirname } from "node:path";
 
 export const DEFAULT_STRATEGY_ID = "adaptive-momentum";
 
+export const SHADOW_DOWNTREND_VETO = Object.freeze({
+  id: "shadow-downtrend-veto",
+  name: "单边下跌否决器",
+  mode: "SHADOW",
+  enforced: false,
+  rule: "代币15分钟收盘价：60分钟≤-1.0×ATR15、120分钟≤-1.5×ATR15，且价格位于下行EMA8下方",
+  evidence: "前向观测中，尚未证明能提高成本后收益",
+  risk: "可能把V形反转误判为不可买"
+});
+
+function downtrendVeto(role) {
+  return [{ ...SHADOW_DOWNTREND_VETO, role }];
+}
+
 export const STRATEGIES = [
   {
     id: DEFAULT_STRATEGY_ID,
@@ -13,7 +27,8 @@ export const STRATEGIES = [
     entry: "≥ 0.75×ATR15，且 9/15 个一分钟变化上涨",
     exit: "-1R / +2R / ATR 移动保护",
     evidence: "启发式，待样本外验证",
-    risk: "追涨与趋势反转"
+    risk: "追涨与趋势反转",
+    subStrategies: downtrendVeto("识别大级别持续下跌中的短周期反弹")
   },
   {
     id: "executable-basis-reversion",
@@ -24,7 +39,8 @@ export const STRATEGIES = [
     entry: "可执行折价净覆盖成本与最小边际",
     exit: "折价收敛，或触发统一 ATR 风控",
     evidence: "产品结构驱动，研究优先",
-    risk: "底层报价延迟、盘外跳空与无对冲方向风险"
+    risk: "底层报价延迟、盘外跳空与无对冲方向风险",
+    subStrategies: downtrendVeto("区分可回归折价与趋势性下跌造成的折价")
   },
   {
     id: "residual-reversal",
@@ -35,7 +51,8 @@ export const STRATEGIES = [
     entry: "显著负残差且无公司行动",
     exit: "残差回归零轴",
     evidence: "学术证据较强，尚缺可执行报价验证",
-    risk: "市场单边与交易成本"
+    risk: "市场单边与交易成本",
+    subStrategies: downtrendVeto("避免把持续下跌误识别为临时负残差")
   },
   {
     id: "session-momentum",
@@ -46,7 +63,8 @@ export const STRATEGIES = [
     entry: "限定 SPY/QQQ 与美股特定时段",
     exit: "收盘前退出",
     evidence: "样本外研究支持，但不是任意 15 分钟动量",
-    risk: "尾盘价差与事件日跳变"
+    risk: "尾盘价差与事件日跳变",
+    subStrategies: downtrendVeto("标记开盘方向性下跌中的假动量机会")
   }
 ];
 
