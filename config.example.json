@@ -40,7 +40,7 @@
   "minNetEdgePct": 0.3,
   "regularOnlyEntries": true,
   "quoteMaxAgeSeconds": 10,
-  "maxQuoteDriftPct": 0.3,
+  "maxQuoteDriftPct": 0.5,
   "allowUnsupportedAuditForOfficialRwa": true,
   "stateFile": "state/bot-state.json",
   "traceFile": "state/action-trace.jsonl",

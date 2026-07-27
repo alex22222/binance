@@ -54,7 +54,7 @@ const config = {
   minNetEdgePct: 0.3,
   regularOnlyEntries: true,
   quoteMaxAgeSeconds: 10,
-  maxQuoteDriftPct: 0.3,
+  maxQuoteDriftPct: 0.5,
   allowUnsupportedAuditForOfficialRwa: true,
   traceFile: "state/action-trace.jsonl",
   marketDataDirectory: "state/market-data",
