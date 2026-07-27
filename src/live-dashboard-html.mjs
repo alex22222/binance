@@ -244,7 +244,7 @@ export function liveDashboardHtml() {
     <section class="signals-section">
       <div class="section-head"><h2>信号</h2><span class="signal-context" id="signalContext">读取市场状态…</span></div>
       <div class="panel signals">
-        <div class="signal-table-head" aria-hidden="true"><span>代码</span><span>方向</span><span>强度 / 15分钟</span><span>变化</span><span>更新时间</span></div>
+        <div class="signal-table-head" aria-hidden="true"><span>代码</span><span>方向</span><span>强度 / 15分钟</span><span>变化</span><span>拉取时间</span></div>
         <div id="signals"></div>
         <button class="signal-toggle" id="signalToggle" type="button" aria-expanded="false">查看全部</button>
       </div>
@@ -468,6 +468,8 @@ export function liveDashboardHtml() {
       const pnlText = position.unrealizedPnlUsdt == null
         ? "等待首个可执行报价"
         : (position.unrealizedPnlUsdt >= 0 ? "+" : "") + money(position.unrealizedPnlUsdt) + " USDT · " + pct(position.returnPct);
+      const gasText = money(position.entryGasUsdt) + " 已计入场 · " +
+        money(position.estimatedExitGasUsdt) + " 预估出场";
       const riskText = position.initialRiskPct == null
         ? "等待风险参数"
         : "R " + pct(position.initialRiskPct) + " · 峰值 " + pct(position.peakReturnPct) +
@@ -477,7 +479,8 @@ export function liveDashboardHtml() {
         ["数量", String(position.quantity)],
         ["成本", money(position.costBasisUsdt) + " USDT"],
         ["可执行卖出值", money(position.lastQuoteProceedsUsdt) + " USDT"],
-        ["未实现盈亏", pnlText],
+        ["预估净盈亏", pnlText],
+        ["Gas", gasText],
         ["动态风控", riskText]
       ].forEach(([label, value], index) => {
         const cell = el("div", "position-cell");
@@ -641,12 +644,17 @@ export function liveDashboardHtml() {
           : historical
             ? "本地历史信号，仅供参考，不触发交易"
             : costsCovered ? "成本已覆盖" : signal.costCoverageReason || "未通过成本门槛";
+        const fetchedTime = el("time", "signal-time", shortTime(signal?.dataFetchedAt));
+        if (signal?.dataFetchedAt) {
+          fetchedTime.dateTime = signal.dataFetchedAt;
+          fetchedTime.title = new Date(signal.dataFetchedAt).toLocaleString("zh-CN", { hour12: false });
+        }
         row.append(
           code,
           el("span", "signal-direction " + (!signal ? "muted" : signal.trend15mPct >= 0 ? "green" : "red"), direction),
           el("span", "signal-strength", signal ? (signal.upMinutes ?? "—") + "/15 ↑" : "—"),
           el("span", "signal-change " + (signalPassed ? "green" : signal ? "red" : "muted"), signal ? pct(signal.trend15mPct) : "—"),
-          el("time", "signal-time", shortTime(signal?.timestamp))
+          fetchedTime
         );
         root.append(row);
       });
@@ -673,7 +681,16 @@ export function liveDashboardHtml() {
       const policy = el("div", "policy-grid");
       const items = [
         ["入场", data.strategy.entryIntervalMinutes + " 分钟 · ≥ " + data.strategy.entryAtrMultiplier + "×ATR15 · " + data.strategy.minDirectionalMinutes + "/15 上涨"],
-        ["成本", "报价 ≤ " + pct(data.strategy.maxRoundTripCostPct) + " · Gas+" + pct(data.strategy.executionBufferPct) + " 缓冲 · 净边 ≥ " + pct(data.strategy.minNetEdgePct)],
+        [
+          "成本",
+          "报价往返 ≤ " + pct(data.strategy.maxRoundTripCostPct) +
+            " · 执行缓冲 " + pct(data.strategy.executionBufferPct) +
+            " · Gas " + money(data.strategy.effectiveRoundTripGasUsdt) + " USDT" +
+            (data.strategy.gasEstimateSource === "ACTUAL_P90"
+              ? "（实际 P90，" + data.strategy.actualGasSampleCount + " 笔）"
+              : "（固定估算，已采集 " + data.strategy.actualGasSampleCount + "/10 笔）") +
+            " · 净边 ≥ " + pct(data.strategy.minNetEdgePct)
+        ],
         ["初始止损", "clamp(" + data.strategy.atrStopMultiplier + "×ATR15, " + pct(data.risk.minInitialStopPct) + ", " + pct(data.risk.maxInitialStopPct) + ")"],
         ["盈利保护", "+" + data.risk.profitProtectionR + "R 启动 · " + data.strategy.trailingAtrMultiplier + "×ATR15 回撤"],
         ["止盈 / 失效", "+" + data.risk.finalTakeProfitR + "R · " + data.strategy.signalReviewHours + "h 信号失效且 < " + data.strategy.signalReviewMinR + "R"],
@@ -759,6 +776,8 @@ export function liveDashboardHtml() {
         const realizedPnl = document.getElementById("realizedPnl");
         realizedPnl.textContent = (data.risk.realizedPnlUsdt >= 0 ? "+" : "") + money(data.risk.realizedPnlUsdt) + " USDT";
         realizedPnl.className = data.risk.realizedPnlUsdt >= 0 ? "green" : "red";
+        realizedPnl.title = "毛盈亏 " + money(data.risk.realizedGrossPnlUsdt) +
+          " USDT · Gas -" + money(data.risk.gasCostUsdt) + " USDT · 当前显示净盈亏";
         document.getElementById("dailyLossRemaining").textContent = money(data.risk.dailyLossRemainingUsdt) + " USDT";
         document.getElementById("maxTrade").textContent = money(data.risk.maxTradeUsdt) + " USDT";
         renderAssetTrend(data.assetTrend);

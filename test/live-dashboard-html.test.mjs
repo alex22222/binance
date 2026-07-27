@@ -23,6 +23,10 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.match(html, /data\.walletBalance\?\.totalUsd/);
   assert.match(html, /data\.walletBalance\.assetCount \+ " 项资产/);
   assert.match(html, /id="realizedPnl"/);
+  assert.match(html, /当前显示净盈亏/);
+  assert.match(html, /预估净盈亏/);
+  assert.match(html, /实际 P90/);
+  assert.match(html, /固定估算/);
   assert.match(html, /id="dailyLossRemaining"/);
   assert.match(html, /id="maxTrade"/);
   assert.match(html, /id="walletStatus"/);
@@ -72,8 +76,8 @@ test("live dashboard provides an approval-first iPhone layout and compact signal
   assert.match(html, />方向<\/span>/);
   assert.match(html, />强度 \/ 15分钟<\/span>/);
   assert.match(html, />变化<\/span>/);
-  assert.match(html, />更新时间<\/span>/);
-  assert.match(html, /signal\?\.timestamp/);
+  assert.match(html, />拉取时间<\/span>/);
+  assert.match(html, /signal\?\.dataFetchedAt/);
   assert.match(html, /id="signalToggle"/);
   assert.match(html, /id="signalContext"/);
   assert.match(html, /休市中 · 显示本地历史信号/);

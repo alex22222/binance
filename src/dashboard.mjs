@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { readEmergencyStop } from "./reliability.mjs";
 import { buildStrategyComparison, DEFAULT_STRATEGY_ID } from "./strategy-lab.mjs";
 import { buildAssetTrend } from "./wallet-balance.mjs";
+import { effectiveRoundTripGasEstimate } from "./execution-accounting.mjs";
 
 function finiteNumber(value, fallback = 0) {
   const number = Number(value);
@@ -25,6 +26,7 @@ function latestSignals(traceRecords) {
       event: record.event,
       status: record.status,
       timestamp: record.timestamp,
+      dataFetchedAt: record.details.dataFetchedAt || record.timestamp,
       source: record.details.signalSource === "local-history" ? "local-history" : "server-live",
       trend15mPct: finiteNumber(record.details.trend15mPct, null),
       upMinutes: finiteNumber(record.details.upMinutes, null),
@@ -62,6 +64,10 @@ export function buildDashboardSnapshot({
   const staleAfterMs = Math.max(15_000, finiteNumber(config.pollSeconds, 60) * 3_000);
   const heartbeatAgeMs = Number.isFinite(updatedAtMs) ? Math.max(0, nowMs - updatedAtMs) : null;
   const realizedPnlUsdt = finiteNumber(state.realizedPnlUsdt);
+  const gasEstimate = effectiveRoundTripGasEstimate({
+    configuredGasUsdt: config.estimatedRoundTripGasUsdt,
+    observations: state.roundTripGasHistoryUsdt || []
+  });
   const position = state.position
     ? {
         ...state.position,
@@ -74,12 +80,28 @@ export function buildDashboardSnapshot({
         peakReturnPct: finiteNumber(state.position.peakReturnPct, 0),
         trailingStopPct: finiteNumber(state.position.trailingStopPct, null),
         lastQuoteProceedsUsdt: finiteNumber(state.position.lastQuoteProceedsUsdt, null),
-        unrealizedPnlUsdt: state.position.lastQuoteProceedsUsdt == null
+        entryGasUsdt: finiteNumber(state.position.entryGasUsdt, gasEstimate.gasUsdt / 2),
+        estimatedExitGasUsdt: gasEstimate.gasUsdt / 2,
+        grossUnrealizedPnlUsdt: state.position.lastQuoteProceedsUsdt == null
           ? null
           : finiteNumber(state.position.lastQuoteProceedsUsdt) - finiteNumber(state.position.costBasisUsdt),
+        unrealizedPnlUsdt: state.position.lastQuoteProceedsUsdt == null
+          ? null
+          : finiteNumber(state.position.lastQuoteProceedsUsdt) -
+            finiteNumber(state.position.costBasisUsdt) -
+            finiteNumber(state.position.entryGasUsdt, gasEstimate.gasUsdt / 2) -
+            gasEstimate.gasUsdt / 2,
         returnPct: state.position.lastQuoteProceedsUsdt == null || !(finiteNumber(state.position.costBasisUsdt) > 0)
           ? null
-          : ((finiteNumber(state.position.lastQuoteProceedsUsdt) / finiteNumber(state.position.costBasisUsdt)) - 1) * 100
+          : (
+              (
+                finiteNumber(state.position.lastQuoteProceedsUsdt) -
+                finiteNumber(state.position.entryGasUsdt, gasEstimate.gasUsdt / 2) -
+                gasEstimate.gasUsdt / 2
+              ) /
+              finiteNumber(state.position.costBasisUsdt) -
+              1
+            ) * 100
       }
     : null;
   const approvalRequest = state.approvalRequest
@@ -138,6 +160,8 @@ export function buildDashboardSnapshot({
       maxTradeUsdt: finiteNumber(config.maxTradeUsdt),
       dailyLossLimitUsdt: finiteNumber(config.dailyLossLimitUsdt),
       realizedPnlUsdt,
+      realizedGrossPnlUsdt: finiteNumber(state.realizedGrossPnlUsdt),
+      gasCostUsdt: finiteNumber(state.gasCostUsdt),
       dailyLossRemainingUsdt: Math.max(0, finiteNumber(config.dailyLossLimitUsdt) + realizedPnlUsdt),
       maxOpenPositions: config.maxOpenPositions,
       disasterStopLossPct: finiteNumber(config.disasterStopLossPct),
@@ -158,6 +182,9 @@ export function buildDashboardSnapshot({
       slippagePct: config.slippagePct,
       executionBufferPct: config.executionBufferPct,
       estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt,
+      effectiveRoundTripGasUsdt: gasEstimate.gasUsdt,
+      gasEstimateSource: gasEstimate.source,
+      actualGasSampleCount: gasEstimate.sampleCount,
       minNetEdgePct: config.minNetEdgePct,
       atrPeriod: config.atrPeriod,
       atrStopMultiplier: config.atrStopMultiplier,

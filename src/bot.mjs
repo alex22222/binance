@@ -66,12 +66,19 @@ import {
   summarizeWalletBalances,
   upsertWalletBalanceSnapshot
 } from "./wallet-balance.mjs";
+import {
+  effectiveRoundTripGasEstimate,
+  gasCostFromReceipt,
+  realizedTradePnl
+} from "./execution-accounting.mjs";
 
 const execFileAsync = promisify(execFile);
 const BSC_CHAIN_ID = "56";
 const USDT_ADDRESS = "0x55d398326f99059fF775485246999027B3197955";
 const API_BASE = "https://www.binance.com/bapi/defi";
 const AUDIT_URL = "https://web3.binance.com/bapi/defi/v1/public/wallet-direct/security/token/audit";
+const BSC_RPC_URL = "https://bsc-dataseed.binance.org/";
+const BNB_PRICE_URL = "https://data-api.binance.vision/api/v3/ticker/price?symbol=BNBUSDT";
 const WALLET_BALANCE_REFRESH_MS = 5 * 60 * 1000;
 const once = process.argv.includes("--once");
 const testFeishu = process.argv.includes("--test-feishu");
@@ -131,6 +138,9 @@ function freshState() {
   return {
     date: shanghaiDate(),
     realizedPnlUsdt: 0,
+    realizedGrossPnlUsdt: 0,
+    gasCostUsdt: 0,
+    roundTripGasHistoryUsdt: [],
     position: null,
     pendingOrder: null,
     approvalRequest: null,
@@ -157,7 +167,8 @@ async function loadState(path) {
       position: state.position,
       pendingOrder: state.pendingOrder,
       approvalRequest: state.approvalRequest,
-      walletBalance: state.walletBalance || null
+      walletBalance: state.walletBalance || null,
+      roundTripGasHistoryUsdt: state.roundTripGasHistoryUsdt || []
     };
   } catch (error) {
     if (error.code === "ENOENT") return freshState();
@@ -206,6 +217,93 @@ async function fetchJson(url, options = {}) {
     await traceAction("external_api_call", "failed", { endpoint, method: options.method || "GET", error: error.message }, currentCycleId);
     throw error;
   }
+}
+
+async function fetchPublicJson(url, options = {}) {
+  return retry(async () => {
+    const response = await fetch(url, {
+      ...options,
+      signal: AbortSignal.timeout(10_000),
+      headers: {
+        "Accept-Encoding": "identity",
+        "Content-Type": "application/json",
+        "User-Agent": "binance-web3-stock-bot/1.0",
+        ...options.headers
+      }
+    });
+    if (!response.ok) {
+      const error = new Error(`HTTP ${response.status} from ${new URL(url).hostname}`);
+      error.status = response.status;
+      throw error;
+    }
+    return response.json();
+  }, {
+    attempts: 3,
+    delayMs: 500,
+    shouldRetry: isTransientNetworkError
+  });
+}
+
+async function actualGasCostForOrder(order, fallbackGasUsdt) {
+  const txHash = order?.txHash || null;
+  if (!txHash) {
+    return {
+      txHash: null,
+      gasBnb: null,
+      gasUsdt: fallbackGasUsdt,
+      bnbUsdtPrice: null,
+      source: "ESTIMATED_FALLBACK",
+      reason: "ORDER_TX_HASH_UNAVAILABLE"
+    };
+  }
+  try {
+    const [receiptResponse, priceResponse] = await Promise.all([
+      fetchPublicJson(BSC_RPC_URL, {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "eth_getTransactionReceipt",
+          params: [txHash],
+          id: 1
+        })
+      }),
+      fetchPublicJson(BNB_PRICE_URL)
+    ]);
+    if (receiptResponse.error) throw new Error(receiptResponse.error.message || "BSC receipt lookup failed");
+    if (!receiptResponse.result) throw new Error("BSC transaction receipt is not available");
+    const bnbUsdtPrice = Number(priceResponse.price);
+    if (!(bnbUsdtPrice > 0)) throw new Error("BNB/USDT price is unavailable");
+    return {
+      ...gasCostFromReceipt({
+        receipt: receiptResponse.result,
+        bnbUsdtPrice
+      }),
+      bnbUsdtPrice,
+      source: "ACTUAL_RECEIPT",
+      reason: null
+    };
+  } catch (error) {
+    await traceAction("gas_accounting", "fallback", {
+      txHash,
+      fallbackGasUsdt,
+      error: error.message
+    }, currentCycleId);
+    return {
+      txHash,
+      gasBnb: null,
+      gasUsdt: fallbackGasUsdt,
+      bnbUsdtPrice: null,
+      source: "ESTIMATED_FALLBACK",
+      reason: error.message
+    };
+  }
+}
+
+function currentGasEstimate(config, state) {
+  return effectiveRoundTripGasEstimate({
+    configuredGasUsdt: config.estimatedRoundTripGasUsdt,
+    observations: state.roundTripGasHistoryUsdt || []
+  });
 }
 
 function bawResultFromOutput(output, operation) {
@@ -849,6 +947,10 @@ async function finalizePendingOrder(config, state, statePath) {
   }
 
   if (submitted.side === "BUY") {
+    const roundTripGasUsdt = Number.isFinite(Number(submitted.estimatedRoundTripGasUsdt))
+      ? Number(submitted.estimatedRoundTripGasUsdt)
+      : currentGasEstimate(config, state).gasUsdt;
+    const entryGas = await actualGasCostForOrder(order, roundTripGasUsdt / 2);
     const quantity = await tokenBalance(submitted.address);
     if (!(quantity > 0)) throw new Error(`Finished BUY has no token balance for ${submitted.symbol}`);
     state.position = {
@@ -868,6 +970,10 @@ async function finalizePendingOrder(config, state, statePath) {
       trailingStopPct: null,
       openedAt: submitted.createdAt,
       orderId: submitted.orderId,
+      entryTxHash: entryGas.txHash,
+      entryGasBnb: entryGas.gasBnb,
+      entryGasUsdt: entryGas.gasUsdt,
+      entryGasSource: entryGas.source,
       shadow: false
     };
     recordShadowEntry(state, submitted.symbol);
@@ -876,7 +982,11 @@ async function finalizePendingOrder(config, state, statePath) {
       orderId: submitted.orderId,
       side: submitted.side,
       symbol: submitted.symbol,
-      quantity
+      quantity,
+      txHash: entryGas.txHash,
+      gasBnb: entryGas.gasBnb,
+      gasUsdt: entryGas.gasUsdt,
+      gasSource: entryGas.source
     }, currentCycleId);
     await notify(
       state,
@@ -885,6 +995,7 @@ async function finalizePendingOrder(config, state, statePath) {
         `${submitted.symbol} ${submitted.address}`,
         `实际持仓: ${quantity}`,
         `投入: ${submitted.costBasisUsdt} USDT`,
+        `入场 Gas: ${entryGas.gasUsdt.toFixed(4)} USDT (${entryGas.source})`,
         `订单: ${submitted.orderId}`
       ].join("\n")
     );
@@ -893,8 +1004,25 @@ async function finalizePendingOrder(config, state, statePath) {
 
   const usdtAfter = await tokenBalance(USDT_ADDRESS);
   const proceedsUsdt = Math.max(0, usdtAfter - submitted.usdtBefore);
-  const realizedPnlUsdt = proceedsUsdt - submitted.costBasisUsdt;
-  state.realizedPnlUsdt += realizedPnlUsdt;
+  const roundTripGasUsdt = Number.isFinite(Number(submitted.estimatedRoundTripGasUsdt))
+    ? Number(submitted.estimatedRoundTripGasUsdt)
+    : currentGasEstimate(config, state).gasUsdt;
+  const exitGas = await actualGasCostForOrder(order, roundTripGasUsdt / 2);
+  const pnl = realizedTradePnl({
+    proceedsUsdt,
+    costBasisUsdt: submitted.costBasisUsdt,
+    entryGasUsdt: submitted.entryGasUsdt ?? roundTripGasUsdt / 2,
+    exitGasUsdt: exitGas.gasUsdt
+  });
+  state.realizedGrossPnlUsdt = Number(state.realizedGrossPnlUsdt || 0) + pnl.grossPnlUsdt;
+  state.gasCostUsdt = Number(state.gasCostUsdt || 0) + pnl.gasCostUsdt;
+  state.realizedPnlUsdt += pnl.netPnlUsdt;
+  if (submitted.entryGasSource === "ACTUAL_RECEIPT" && exitGas.source === "ACTUAL_RECEIPT") {
+    state.roundTripGasHistoryUsdt = [
+      ...(state.roundTripGasHistoryUsdt || []),
+      pnl.gasCostUsdt
+    ].slice(-100);
+  }
   state.cooldownUntil[submitted.symbol] = Date.now() + config.reentryCooldownMinutes * 60_000;
   state.position = null;
   state.pendingOrder = null;
@@ -904,7 +1032,14 @@ async function finalizePendingOrder(config, state, statePath) {
     symbol: submitted.symbol,
     strategyId: submitted.strategyId || DEFAULT_STRATEGY_ID,
     proceedsUsdt,
-    realizedPnlUsdt
+    grossPnlUsdt: pnl.grossPnlUsdt,
+    gasCostUsdt: pnl.gasCostUsdt,
+    realizedPnlUsdt: pnl.netPnlUsdt,
+    entryTxHash: submitted.entryTxHash || null,
+    exitTxHash: exitGas.txHash,
+    exitGasBnb: exitGas.gasBnb,
+    exitGasUsdt: exitGas.gasUsdt,
+    exitGasSource: exitGas.source
   }, currentCycleId);
   await notify(
     state,
@@ -912,7 +1047,9 @@ async function finalizePendingOrder(config, state, statePath) {
       `[Agentic Stock Bot] SELL FINISHED ${submitted.reason}`,
       `${submitted.symbol} ${submitted.address}`,
       `实际回收: ${proceedsUsdt.toFixed(4)} USDT`,
-      `本笔盈亏: ${realizedPnlUsdt.toFixed(4)} USDT`,
+      `毛盈亏: ${pnl.grossPnlUsdt.toFixed(4)} USDT`,
+      `Gas: -${pnl.gasCostUsdt.toFixed(4)} USDT`,
+      `本笔净盈亏: ${pnl.netPnlUsdt.toFixed(4)} USDT`,
       `当日累计已实现盈亏: ${state.realizedPnlUsdt.toFixed(4)} USDT`,
       `订单: ${submitted.orderId}`
     ].join("\n")
@@ -920,15 +1057,23 @@ async function finalizePendingOrder(config, state, statePath) {
   return true;
 }
 
-async function buildCandidate(symbol, asset, config, knownStatus = null) {
+async function buildCandidate(
+  symbol,
+  asset,
+  config,
+  knownStatus = null,
+  estimatedRoundTripGasUsdt = config.estimatedRoundTripGasUsdt
+) {
   const strategyId = config.activeStrategyId || DEFAULT_STRATEGY_ID;
   const scanId = randomUUID();
   const status = knownStatus || await assetStatus(asset.contractAddress);
+  let dataFetchedAt = new Date().toISOString();
   const marketOpen = entryMarketAllowed(status, config.regularOnlyEntries, Date.now());
   if (!marketOpen) {
     await recordMarketData("market_scan", {
       cycleId: currentCycleId,
       scanId,
+      dataFetchedAt,
       symbol,
       contractAddress: asset.contractAddress,
       marketStatus: status,
@@ -940,6 +1085,7 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
     });
     await traceAction("candidate_rejected", "skipped", {
       symbol,
+      dataFetchedAt,
       reason: status.marketStatus === "offhours" ? "non_regular_session" : "market_status_gate",
       openState: status.openState,
       reasonCode: status.reasonCode,
@@ -951,6 +1097,7 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
     candles(asset.contractAddress, "1m", 31),
     candles(asset.contractAddress, "15m", config.atrPeriod + 2)
   ]);
+  dataFetchedAt = new Date().toISOString();
   const signal = analyzeCandles(minuteKline);
   const atr = calculateAtrPct(atrKline, config.atrPeriod);
   const shadowDowntrendVeto = shadowDowntrendVetoDecision(atrKline, atr?.atrPct);
@@ -962,6 +1109,7 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
   await recordMarketData("market_scan", {
     cycleId: currentCycleId,
     scanId,
+    dataFetchedAt,
     symbol,
     contractAddress: asset.contractAddress,
     marketStatus: status,
@@ -1006,11 +1154,19 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
     atr15Pct: shadowTrendQuality.atr15Pct
   }, currentCycleId);
   if (!signal) {
-    await traceAction("candidate_rejected", "skipped", { symbol, reason: "insufficient_closed_candles" }, currentCycleId);
+    await traceAction("candidate_rejected", "skipped", {
+      symbol,
+      dataFetchedAt,
+      reason: "insufficient_closed_candles"
+    }, currentCycleId);
     return null;
   }
   if (!atr) {
-    await traceAction("candidate_rejected", "skipped", { symbol, reason: "insufficient_closed_atr_candles" }, currentCycleId);
+    await traceAction("candidate_rejected", "skipped", {
+      symbol,
+      dataFetchedAt,
+      reason: "insufficient_closed_atr_candles"
+    }, currentCycleId);
     return null;
   }
 
@@ -1018,6 +1174,7 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
     symbol,
     address: asset.contractAddress,
     asset,
+    dataFetchedAt,
     ...status,
     ...signal,
     atr15Pct: atr.atrPct,
@@ -1027,6 +1184,7 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
   if (!marketOpen || (strategyId === DEFAULT_STRATEGY_ID && !trendPassed)) {
     await traceAction("candidate_rejected", "skipped", {
       symbol,
+      dataFetchedAt,
       reason: "market_or_trend_gate",
       openState: candidate.openState,
       reasonCode: candidate.reasonCode,
@@ -1045,7 +1203,7 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
     tradeUsdt: config.maxTradeUsdt,
     quotedRoundTripCostPct,
     executionBufferPct: config.executionBufferPct,
-    estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt
+    estimatedRoundTripGasUsdt
   });
   let basis = null;
   let grossEdgeProxyPct = candidate.trend15mPct;
@@ -1076,7 +1234,7 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
         takeProfitPct: finalTakeProfitPct,
         quotedRoundTripCostPct,
         executionBufferPct: config.executionBufferPct,
-        estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt,
+        estimatedRoundTripGasUsdt,
         minNetEdgePct: config.minNetEdgePct
       })
     : {
@@ -1122,6 +1280,7 @@ async function buildCandidate(symbol, asset, config, knownStatus = null) {
   });
   await traceAction("candidate_evaluated", "succeeded", {
     symbol,
+    dataFetchedAt,
     trend15mPct: completed.trend15mPct,
     upMinutes: completed.upMinutes,
     roundTripCostPct: completed.roundTripCostPct,
@@ -1149,6 +1308,7 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
     await traceAction("entry_decision", "skipped", { reason: "daily_loss_limit" }, currentCycleId);
     return;
   }
+  const gasEstimate = currentGasEstimate(config, state);
   const now = Date.now();
   let schedule = null;
   if (!approvedRequest) {
@@ -1254,7 +1414,13 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
   const candidates = (await Promise.all(
     sessionDecision.symbols.map(async (symbol) => {
       try {
-        return await buildCandidate(symbol, assets.get(symbol), config, statusBySymbol.get(symbol));
+        return await buildCandidate(
+          symbol,
+          assets.get(symbol),
+          config,
+          statusBySymbol.get(symbol),
+          gasEstimate.gasUsdt
+        );
       } catch (error) {
         await recordMarketData("candidate_error", {
           cycleId: currentCycleId,
@@ -1308,6 +1474,7 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
   }, currentCycleId);
   await traceAction("candidate_selected", "succeeded", {
     symbol: selected.symbol,
+    dataFetchedAt: selected.dataFetchedAt,
     trend15mPct: selected.trend15mPct,
     upMinutes: selected.upMinutes,
     roundTripCostPct: selected.roundTripCostPct,
@@ -1361,7 +1528,7 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
     tradeUsdt: config.maxTradeUsdt,
     quotedRoundTripCostPct: freshRoundTripCostPct,
     executionBufferPct: config.executionBufferPct,
-    estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt
+    estimatedRoundTripGasUsdt: gasEstimate.gasUsdt
   });
   const freshInitialRisk = initialRiskDecision({
     atr15Pct: selected.atr15Pct,
@@ -1388,7 +1555,7 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
     takeProfitPct: freshFinalTakeProfitPct,
     quotedRoundTripCostPct: freshRoundTripCostPct,
     executionBufferPct: config.executionBufferPct,
-    estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt,
+    estimatedRoundTripGasUsdt: gasEstimate.gasUsdt,
     minNetEdgePct: config.minNetEdgePct
   });
   await traceAction("cost_coverage_decision", freshCostCoverage.allowed ? "succeeded" : "skipped", {
@@ -1419,6 +1586,9 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
     fromTokenQty: config.maxTradeUsdt,
     costBasisUsdt: config.maxTradeUsdt,
     costCoverage: freshCostCoverage,
+    estimatedRoundTripGasUsdt: gasEstimate.gasUsdt,
+    gasEstimateSource: gasEstimate.source,
+    gasEstimateSampleCount: gasEstimate.sampleCount,
     initialRiskPct: freshInitialRisk.initialRiskPct,
     profitFloorPct: freshProfitFloorPct,
     entryAtr15Pct: selected.atr15Pct,
@@ -1482,6 +1652,10 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
       trailingStopPct: null,
       openedAt: createdAt,
       orderId: result.orderId,
+      entryTxHash: null,
+      entryGasBnb: null,
+      entryGasUsdt: gasEstimate.gasUsdt / 2,
+      entryGasSource: "ESTIMATED_SHADOW",
       shadow: true
     };
     recordShadowEntry(state, selected.symbol);
@@ -1497,6 +1671,9 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
     initialRiskPct: freshInitialRisk.initialRiskPct,
     profitFloorPct: freshProfitFloorPct,
     finalTakeProfitPct: freshFinalTakeProfitPct,
+    gasEstimateUsdt: gasEstimate.gasUsdt,
+    gasEstimateSource: gasEstimate.source,
+    gasEstimateSampleCount: gasEstimate.sampleCount,
     orderId: result.orderId
   }, currentCycleId);
   await notify(
@@ -1522,6 +1699,7 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
 async function evaluateExit(config, state, statePath, emergencyStopPath, approvedRequest = null) {
   const position = state.position;
   if (!position) return;
+  const gasEstimate = currentGasEstimate(config, state);
 
   const quantity = position.shadow ? Number(position.quantity) : await tokenBalance(position.address);
   if (!(quantity > 0)) throw new Error(`Position balance missing for ${position.symbol}`);
@@ -1664,6 +1842,13 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
     fromTokenQty: quantity,
     quantity,
     costBasisUsdt: position.costBasisUsdt,
+    estimatedRoundTripGasUsdt: gasEstimate.gasUsdt,
+    gasEstimateSource: gasEstimate.source,
+    gasEstimateSampleCount: gasEstimate.sampleCount,
+    entryTxHash: position.entryTxHash || null,
+    entryGasBnb: position.entryGasBnb ?? null,
+    entryGasUsdt: position.entryGasUsdt ?? gasEstimate.gasUsdt / 2,
+    entryGasSource: position.entryGasSource || "ESTIMATED_FALLBACK",
     usdtBefore,
     reason: confirmedReason.type,
     createdAt
@@ -1708,8 +1893,15 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
   }
   const result = await submitOrder(config, state, statePath, emergencyStopPath, orderDetails);
   if (result.shadow) {
-    const realizedPnlUsdt = confirmedProceedsUsdt - position.costBasisUsdt;
-    state.realizedPnlUsdt += realizedPnlUsdt;
+    const pnl = realizedTradePnl({
+      proceedsUsdt: confirmedProceedsUsdt,
+      costBasisUsdt: position.costBasisUsdt,
+      entryGasUsdt: position.entryGasUsdt ?? gasEstimate.gasUsdt / 2,
+      exitGasUsdt: gasEstimate.gasUsdt / 2
+    });
+    state.realizedGrossPnlUsdt = Number(state.realizedGrossPnlUsdt || 0) + pnl.grossPnlUsdt;
+    state.gasCostUsdt = Number(state.gasCostUsdt || 0) + pnl.gasCostUsdt;
+    state.realizedPnlUsdt += pnl.netPnlUsdt;
     state.cooldownUntil[position.symbol] = Date.now() + config.reentryCooldownMinutes * 60_000;
     state.position = null;
   }
@@ -1719,7 +1911,14 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
     address: position.address,
     reason: confirmedReason.type,
     expectedProceedsUsdt: confirmedProceedsUsdt,
-    realizedPnlUsdt: result.shadow ? confirmedProceedsUsdt - position.costBasisUsdt : null,
+    realizedPnlUsdt: result.shadow
+      ? realizedTradePnl({
+          proceedsUsdt: confirmedProceedsUsdt,
+          costBasisUsdt: position.costBasisUsdt,
+          entryGasUsdt: position.entryGasUsdt ?? gasEstimate.gasUsdt / 2,
+          exitGasUsdt: gasEstimate.gasUsdt / 2
+        }).netPnlUsdt
+      : null,
     returnPct: confirmedReason.returnPct,
     initialRiskPct: position.initialRiskPct,
     atr15Pct: atr.atrPct,
@@ -1733,7 +1932,7 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
       `[Agentic Stock Bot] SELL SUBMITTED ${config.mode.toUpperCase()} ${confirmedReason.type}`,
       `${position.symbol} ${position.address}`,
       `预计回收: ${confirmedProceedsUsdt.toFixed(4)} USDT`,
-      `预计盈亏: ${(confirmedProceedsUsdt - position.costBasisUsdt).toFixed(4)} USDT (${confirmedReason.returnPct.toFixed(3)}%)`,
+      `预计净盈亏: ${(confirmedProceedsUsdt - position.costBasisUsdt - gasEstimate.gasUsdt).toFixed(4)} USDT`,
       `初始风险 R: ${Number(position.initialRiskPct).toFixed(3)}%`,
       `ATR15: ${atr.atrPct.toFixed(3)}%`,
       `成本保护下限: ${profitFloorPct.toFixed(3)}%`,

@@ -1,5 +1,68 @@
 # Design QA
 
+## Signal data fetch time
+
+- Source visual truth: `/var/folders/xx/1h1hmbcn1xvgs5_sft5jmpgc0000gp/T/codex-clipboard-44a45f30-8b91-4b3a-a4d1-880ba4d6463c.png`
+- Implementation full page: `/Users/henry/projects/binance/artifacts/signal-data-fetch-time-full.png`
+- Implementation focused region: `/Users/henry/projects/binance/artifacts/signal-data-fetch-time-focus.png`
+- Normalized comparison: `/Users/henry/projects/binance/artifacts/signal-data-fetch-time-comparison.png`
+- Source pixels: 2662 × 304
+- Desktop viewport: 1280 × 720 CSS px, DPR 2
+- Implementation full-page pixels: 1280 × 2150
+- Focused implementation pixels: 1220 × 180
+- Mobile viewport: 390 × 844 CSS px
+- State: local historical signals during off-hours; timestamps fall back to the
+  trace timestamp for records created before `dataFetchedAt` existed
+
+### Full-view comparison evidence
+
+The source is itself a focused crop of the complete signal section rather than
+a full Dashboard. The complete implementation page was captured to confirm the
+section remains in its existing position and that surrounding layout was not
+changed. The source crop and implementation signal region were then normalized
+to the same 1220 px width for the full available visual-target comparison.
+
+### Focused comparison evidence
+
+- The five-column table, header alignment, row density, typography hierarchy,
+  colors, borders, and signal context match the supplied signal-section target.
+- The final header intentionally reads `拉取时间` instead of the source's
+  `更新时间` so its meaning matches the newly recorded backend event.
+- Existing records show their trace timestamp as a compatibility fallback.
+  New scans expose the moment both 1-minute and 15-minute K-line requests finish.
+
+### Required fidelity surfaces
+
+- Fonts and typography: existing system and monospace stack, weights, sizes,
+  line heights, and compact hierarchy are unchanged.
+- Spacing and layout rhythm: column tracks, 10 px gaps, row height, padding,
+  section spacing, radii, and borders remain aligned with the source.
+- Colors and visual tokens: existing dark panel, muted labels, green/red
+  semantics, and grid texture are preserved.
+- Image quality and asset fidelity: the target contains no raster imagery,
+  logo change, illustration, or custom icon asset.
+- Copy and content: only the time-column label changes, clarifying that the
+  value is the data fetch completion time.
+
+### Responsive and interaction checks
+
+- Desktop document width and scroll width are both 1280 px.
+- At 390 px, document width and scroll width are both 390 px; five signal rows
+  remain visible by default and all ten rows retain machine-readable timestamps.
+- Hovering a time exposes the complete localized timestamp through its title.
+- Browser console contains no warnings or errors at either viewport.
+
+### Comparison history
+
+1. The first implementation pass replaced the ambiguous update time with the
+   explicit fetch completion time while preserving the existing table layout.
+2. The normalized source/implementation comparison found no actionable
+   P0/P1/P2 layout, typography, color, asset, or copy issue.
+
+final result: passed
+
+---
+
 ## Asset trend dashboard
 
 - Source: `/var/folders/xx/1h1hmbcn1xvgs5_sft5jmpgc0000gp/T/codex-clipboard-3297066c-fd2f-4bbb-af6d-f33a5efa0e41.png`

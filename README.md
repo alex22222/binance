@@ -54,14 +54,25 @@ The all-in entry estimate is:
 
 ```text
 quoted round-trip cost
-+ (estimatedRoundTripGasUsdt / maxTradeUsdt × 100%)
++ (effectiveRoundTripGasUsdt / maxTradeUsdt × 100%)
 + executionBufferPct
 ```
+
+`effectiveRoundTripGasUsdt` uses the configured estimate until ten completed
+live round trips have both BSC transaction receipts. It then uses the rolling
+P90 of the latest 100 actual round-trip Gas observations. Each finished order
+records its transaction hash, receipt Gas, BNB amount, and BNB/USDT conversion.
+If receipt or price lookup is unavailable, accounting falls back to half of the
+current round-trip estimate for that leg and marks the source as estimated.
 
 The bot rejects the candidate unless both the 15-minute gross edge proxy and
 the dynamic `+2R` target retain at least `minNetEdgePct` after this estimate.
 It repeats the same decision using refreshed buy and sell quotes immediately
 before submitting an order.
+
+Realized PnL and the daily loss gate use net PnL after both transaction Gas
+charges. The Dashboard exposes gross PnL, accounted Gas, the net result, and
+whether the entry estimate still uses the configured value or actual P90.
 
 `ATR15` is ATR(14), calculated only from closed 15-minute candles. The initial
 risk unit `R` is:

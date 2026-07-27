@@ -60,6 +60,8 @@ test("builds a live position snapshot from the latest executable sell quote", ()
         openedAt: "2026-07-24T12:00:00.000Z",
         lastQuoteProceedsUsdt: 54,
         lastQuoteAt: "2026-07-24T12:59:30.000Z",
+        entryGasUsdt: 0.04,
+        entryGasSource: "ACTUAL_RECEIPT",
         shadow: false
       }
     },
@@ -68,8 +70,11 @@ test("builds a live position snapshot from the latest executable sell quote", ()
   });
 
   assert.equal(snapshot.health.status, "RUNNING");
-  assert.equal(snapshot.position.unrealizedPnlUsdt, 4);
-  assert.ok(Math.abs(snapshot.position.returnPct - 8) < 1e-9);
+  assert.equal(snapshot.position.grossUnrealizedPnlUsdt, 4);
+  assert.equal(snapshot.position.unrealizedPnlUsdt, 3.91);
+  assert.ok(Math.abs(snapshot.position.returnPct - 7.82) < 1e-9);
+  assert.equal(snapshot.position.entryGasUsdt, 0.04);
+  assert.equal(snapshot.position.estimatedExitGasUsdt, 0.05);
   assert.equal(snapshot.risk.dailyLossRemainingUsdt, 9);
   assert.equal(snapshot.risk.disasterStopLossPct, 8);
   assert.equal(snapshot.position.initialRiskPct, 2);
@@ -77,6 +82,9 @@ test("builds a live position snapshot from the latest executable sell quote", ()
   assert.equal(snapshot.position.trailingStopPct, 7.6);
   assert.equal(snapshot.position.address, "0xabc");
   assert.equal(snapshot.strategy.regularOnlyEntries, true);
+  assert.equal(snapshot.strategy.effectiveRoundTripGasUsdt, 0.1);
+  assert.equal(snapshot.strategy.gasEstimateSource, "CONFIGURED");
+  assert.equal(snapshot.strategy.actualGasSampleCount, 0);
   assert.equal(snapshot.walletBalance.totalUsd, 449.67578352);
   assert.equal(snapshot.walletBalance.assetCount, 2);
 });
@@ -106,6 +114,7 @@ test("shows pending orders and the latest signal for each symbol", () => {
         status: "succeeded",
         details: {
           symbol: "TSLA",
+          dataFetchedAt: "2026-07-24T12:58:57.250Z",
           trend15mPct: 1.1,
           upMinutes: 11,
           roundTripCostPct: 0.4,
@@ -130,6 +139,7 @@ test("shows pending orders and the latest signal for each symbol", () => {
 
   assert.equal(snapshot.pendingOrder.orderId, "order-1");
   assert.equal(snapshot.signals.TSLA.trend15mPct, 1.1);
+  assert.equal(snapshot.signals.TSLA.dataFetchedAt, "2026-07-24T12:58:57.250Z");
   assert.equal(snapshot.signals.TSLA.allInCostPct, 0.9);
   assert.equal(snapshot.signals.TSLA.atr15Pct, 0.7);
   assert.equal(snapshot.signals.TSLA.initialRiskPct, 1.55);
@@ -248,6 +258,7 @@ test("uses read-only local signal history until a newer server signal replaces i
   assert.equal(snapshot.signals.NVDA.source, "server-live");
   assert.equal(snapshot.signals.TSLA.trend15mPct, -0.02);
   assert.equal(snapshot.signals.TSLA.source, "local-history");
+  assert.equal(snapshot.signals.TSLA.dataFetchedAt, "2026-07-25T01:45:00.000Z");
 });
 
 test("shows a fresh approval request as actionable and an expired one as read-only", () => {
