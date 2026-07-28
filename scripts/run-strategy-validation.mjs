@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { backtestStrategyLibrary } from "../src/strategy-backtest.mjs";
+import { writeShadowOutcomeReport } from "../src/shadow-outcomes.mjs";
 import {
   latestCompletedTradingDate,
   newYorkDate,
@@ -270,7 +271,18 @@ const assumptions = {
   maxTradeUsdt: config.maxTradeUsdt,
   roundTripCostPct: config.maxRoundTripCostPct +
     config.executionBufferPct +
-    config.estimatedRoundTripGasUsdt / config.maxTradeUsdt * 100
+    config.estimatedRoundTripGasUsdt / config.maxTradeUsdt * 100,
+  maxOpenPositions: config.maxOpenPositions,
+  atrStopMultiplier: config.atrStopMultiplier,
+  minInitialStopPct: config.minInitialStopPct,
+  maxInitialStopPct: config.maxInitialStopPct,
+  profitProtectionR: config.profitProtectionR,
+  trailingAtrMultiplier: config.trailingAtrMultiplier,
+  finalTakeProfitR: config.finalTakeProfitR,
+  signalReviewHours: config.signalReviewHours,
+  signalReviewMinR: config.signalReviewMinR,
+  minNetEdgePct: config.minNetEdgePct,
+  disasterStopLossPct: config.disasterStopLossPct
 };
 const forwardStartMs = Date.parse(validationState.startedAt);
 const historical = backtestStrategyLibrary(filterDataset(dataset, (timestamp) => timestamp < forwardStartMs), assumptions);
@@ -287,6 +299,7 @@ const report = {
   limitations: [
     "Historical basis results use reference prices and the current shares multiplier, not archived amount-specific executable quotes.",
     "All historical strategies use a conservative fixed round-trip cost assumption.",
+    "The simulator matches production position count and configured exits, but candle closes remain proxies for executable quotes and intrabar fills.",
     "Research strategies are validation-only and are not enabled in production."
   ],
   historical,
@@ -294,11 +307,20 @@ const report = {
 };
 await atomicJson(join(stateDirectory, "latest.json"), report);
 await atomicJson(join(reportDirectory, `${isoDate(now)}.json`), report);
+const shadowOutcomes = await writeShadowOutcomeReport({
+  marketDataDirectory: resolve(projectRoot, config.marketDataDirectory),
+  outputPath: resolve(projectRoot, "state/shadow-outcomes/latest.json"),
+  generatedAt: report.generatedAt
+});
 await writeFile(join(stateDirectory, "LOOP_STATE.md"), stateMarkdown(validationState, downloadSummary, report), { mode: 0o600 });
 console.log(JSON.stringify({
   event: "validation_finished",
   report: join(stateDirectory, "latest.json"),
   targetAt: validationState.targetAt,
+  shadowOutcomes: {
+    candidates: shadowOutcomes.candidates,
+    horizons: shadowOutcomes.horizons
+  },
   downloadSummary,
   historical: historical.strategies.map(({ id, performance }) => ({ id, ...performance })),
   forward: forward.strategies.map(({ id, performance }) => ({ id, ...performance }))

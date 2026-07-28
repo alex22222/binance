@@ -120,6 +120,13 @@ export function strategyLabHtml() {
     </section>
 
     <section>
+      <div class="section-head"><h2>Shadow 前向 A/B</h2></div>
+      <div class="panel return-panel" id="shadowOutcomeComparison">
+        <p class="validation-meta">正在读取非执行候选的前向结果…</p>
+      </div>
+    </section>
+
+    <section>
       <div class="section-head"><h2>策略</h2></div>
       <div class="strategy-grid" id="strategyComparison"></div>
       <div class="status" id="status" aria-live="polite"></div>
@@ -175,6 +182,34 @@ export function strategyLabHtml() {
         validationCards("历史基线", report.historical.strategies),
         validationCards("30天前向", report.forward.strategies)
       );
+    }
+
+    function renderShadowOutcomes(report) {
+      const root = document.getElementById("shadowOutcomeComparison");
+      root.replaceChildren();
+      if (!report?.available || !report.horizons?.length) {
+        root.append(el("p", "validation-meta", "Shadow 候选尚无可标注的前向结果。"));
+        return;
+      }
+      root.append(el(
+        "p",
+        "validation-meta",
+        "WOULD_ALLOW 与 WOULD_BLOCK 使用底层价格代理并扣除入场全成本；不是可执行卖价，不参与交易。已带 Shadow 判定 " +
+          report.shadowLabeledCandidates + " / " + report.candidates + " 个。"
+      ));
+      report.horizons.forEach((horizon) => {
+        const allow = horizon.cohorts.WOULD_ALLOW;
+        const block = horizon.cohorts.WOULD_BLOCK;
+        const row = el("div", "return-row");
+        row.append(
+          el("div", "return-name", horizon.horizonMinutes + " 分钟 · " + horizon.labeled + " 个"),
+          el("div", "validation-meta", "WOULD_ALLOW " + allow.samples + " 个 / 胜率 " + pct(allow.winRatePct) +
+            " / 均值 " + pct(allow.averageNetReturnPct) + " · WOULD_BLOCK " + block.samples +
+            " 个 / 胜率 " + pct(block.winRatePct) + " / 均值 " + pct(block.averageNetReturnPct)),
+          el("div", "return-value", "")
+        );
+        root.append(row);
+      });
     }
 
     function renderReturns(strategies) {
@@ -278,14 +313,16 @@ export function strategyLabHtml() {
 
     async function refresh() {
       try {
-        const [snapshotResponse, validationResponse] = await Promise.all([
+        const [snapshotResponse, validationResponse, shadowOutcomeResponse] = await Promise.all([
           fetch("/api/snapshot", { cache: "no-store" }),
-          fetch("/api/strategy-validation", { cache: "no-store" })
+          fetch("/api/strategy-validation", { cache: "no-store" }),
+          fetch("/api/shadow-outcomes", { cache: "no-store" })
         ]);
         if (!snapshotResponse.ok) throw new Error("HTTP " + snapshotResponse.status);
         latestSnapshot = await snapshotResponse.json();
         renderStrategies(latestSnapshot);
         renderValidation(validationResponse.ok ? await validationResponse.json() : null);
+        renderShadowOutcomes(shadowOutcomeResponse.ok ? await shadowOutcomeResponse.json() : null);
       } catch (error) {
         const status = document.getElementById("status");
         status.className = "status error";

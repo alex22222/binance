@@ -55,6 +55,7 @@ test("builds a live position snapshot from the latest executable sell quote", ()
         entryAtr15Pct: 1,
         currentAtr15Pct: 0.9,
         peakReturnPct: 8.5,
+        worstReturnPct: -1.2,
         profitProtectionActive: true,
         trailingStopPct: 7.6,
         openedAt: "2026-07-24T12:00:00.000Z",
@@ -80,6 +81,9 @@ test("builds a live position snapshot from the latest executable sell quote", ()
   assert.equal(snapshot.position.initialRiskPct, 2);
   assert.equal(snapshot.position.profitFloorPct, 1.7);
   assert.equal(snapshot.position.trailingStopPct, 7.6);
+  assert.equal(snapshot.position.riskUsdt, 1);
+  assert.equal(snapshot.position.maeR, -0.6);
+  assert.equal(snapshot.position.mfeR, 4.25);
   assert.equal(snapshot.position.address, "0xabc");
   assert.equal(snapshot.strategy.regularOnlyEntries, true);
   assert.equal(snapshot.strategy.effectiveRoundTripGasUsdt, 0.1);
@@ -87,6 +91,9 @@ test("builds a live position snapshot from the latest executable sell quote", ()
   assert.equal(snapshot.strategy.actualGasSampleCount, 0);
   assert.equal(snapshot.walletBalance.totalUsd, 449.67578352);
   assert.equal(snapshot.walletBalance.assetCount, 2);
+  assert.equal(snapshot.risk.dailyLossUsedUsdt, 1);
+  assert.equal(snapshot.risk.dailyLossUsedPct, 10);
+  assert.equal(snapshot.risk.openRiskUsdt, 1);
 });
 
 test("builds separate executable PnL snapshots for every open position", () => {

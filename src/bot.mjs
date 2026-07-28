@@ -77,7 +77,9 @@ import {
   effectiveRoundTripGasEstimate,
   gasCostFromReceipt,
   noLossExitDecision,
-  realizedTradePnl
+  realizedTradePnl,
+  tradeExcursionMetrics,
+  updateReturnExcursion
 } from "./execution-accounting.mjs";
 import {
   addOpenPosition,
@@ -984,6 +986,9 @@ async function finalizePendingOrder(config, state, statePath) {
       entryShadowRisk: submitted.shadowRisk || null,
       finalTakeProfitPct: submitted.finalTakeProfitPct,
       peakReturnPct: 0,
+      worstReturnPct: 0,
+      excursionTrackingStartedAt: submitted.createdAt,
+      excursionPartial: false,
       profitProtectionActive: false,
       trailingStopPct: null,
       openedAt: submitted.createdAt,
@@ -1032,6 +1037,13 @@ async function finalizePendingOrder(config, state, statePath) {
     entryGasUsdt: submitted.entryGasUsdt ?? roundTripGasUsdt / 2,
     exitGasUsdt: exitGas.gasUsdt
   });
+  const excursion = tradeExcursionMetrics({
+    costBasisUsdt: submitted.costBasisUsdt,
+    initialRiskPct: submitted.initialRiskPct,
+    worstReturnPct: submitted.worstReturnPct,
+    peakReturnPct: submitted.peakReturnPct,
+    netPnlUsdt: pnl.netPnlUsdt
+  });
   state.realizedGrossPnlUsdt = Number(state.realizedGrossPnlUsdt || 0) + pnl.grossPnlUsdt;
   state.gasCostUsdt = Number(state.gasCostUsdt || 0) + pnl.gasCostUsdt;
   state.realizedPnlUsdt += pnl.netPnlUsdt;
@@ -1053,6 +1065,9 @@ async function finalizePendingOrder(config, state, statePath) {
     grossPnlUsdt: pnl.grossPnlUsdt,
     gasCostUsdt: pnl.gasCostUsdt,
     realizedPnlUsdt: pnl.netPnlUsdt,
+    exitReason: submitted.reason,
+    ...excursion,
+    excursionPartial: submitted.excursionPartial === true,
     entryTxHash: submitted.entryTxHash || null,
     exitTxHash: exitGas.txHash,
     exitGasBnb: exitGas.gasBnb,
@@ -1718,6 +1733,9 @@ async function evaluateEntry(
       entryShadowRisk: shadowRisk,
       finalTakeProfitPct: freshFinalTakeProfitPct,
       peakReturnPct: 0,
+      worstReturnPct: 0,
+      excursionTrackingStartedAt: createdAt,
+      excursionPartial: false,
       profitProtectionActive: false,
       trailingStopPct: null,
       openedAt: createdAt,
@@ -1789,6 +1807,12 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
     : null;
   const proceedsUsdt = Number(sellQuote.toCoinAmount);
   const returnPct = ((proceedsUsdt / position.costBasisUsdt) - 1) * 100;
+  const excursion = updateReturnExcursion(position, returnPct);
+  if (position.worstReturnPct == null) {
+    position.excursionTrackingStartedAt = new Date().toISOString();
+    position.excursionPartial = true;
+  }
+  position.worstReturnPct = excursion.worstReturnPct;
   const storedProfitFloorPct = Number(position.profitFloorPct);
   const entryAllInCostPct = Number(position.entryCostCoverage?.allInCostPct);
   const profitFloorPct = storedProfitFloorPct > 0
@@ -1861,6 +1885,7 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
   });
   const confirmedProceedsUsdt = Number(confirmationQuote.toCoinAmount);
   const confirmedReturnPct = ((confirmedProceedsUsdt / position.costBasisUsdt) - 1) * 100;
+  position.worstReturnPct = updateReturnExcursion(position, confirmedReturnPct).worstReturnPct;
   let confirmedReason = dynamicExitDecision({
     returnPct: confirmedReturnPct,
     initialRiskPct: Number(position.initialRiskPct),
@@ -1952,6 +1977,11 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
     entryGasBnb: position.entryGasBnb ?? null,
     entryGasUsdt: position.entryGasUsdt ?? gasEstimate.gasUsdt / 2,
     entryGasSource: position.entryGasSource || "ESTIMATED_FALLBACK",
+    initialRiskPct: position.initialRiskPct,
+    peakReturnPct: confirmedReason.peakReturnPct,
+    worstReturnPct: position.worstReturnPct,
+    excursionTrackingStartedAt: position.excursionTrackingStartedAt || null,
+    excursionPartial: position.excursionPartial === true,
     usdtBefore,
     reason: confirmedReason.type,
     createdAt
@@ -1995,12 +2025,20 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
     }
   }
   const result = await submitOrder(config, state, statePath, emergencyStopPath, orderDetails);
+  let shadowExcursion = null;
   if (result.shadow) {
     const pnl = realizedTradePnl({
       proceedsUsdt: confirmedProceedsUsdt,
       costBasisUsdt: position.costBasisUsdt,
       entryGasUsdt: position.entryGasUsdt ?? gasEstimate.gasUsdt / 2,
       exitGasUsdt: gasEstimate.gasUsdt / 2
+    });
+    shadowExcursion = tradeExcursionMetrics({
+      costBasisUsdt: position.costBasisUsdt,
+      initialRiskPct: position.initialRiskPct,
+      worstReturnPct: position.worstReturnPct,
+      peakReturnPct: confirmedReason.peakReturnPct,
+      netPnlUsdt: pnl.netPnlUsdt
     });
     state.realizedGrossPnlUsdt = Number(state.realizedGrossPnlUsdt || 0) + pnl.grossPnlUsdt;
     state.gasCostUsdt = Number(state.gasCostUsdt || 0) + pnl.gasCostUsdt;
@@ -2027,6 +2065,14 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
     atr15Pct: atr.atrPct,
     trailingStopPct: confirmedReason.trailingStopPct,
     profitFloorPct,
+    ...(shadowExcursion || tradeExcursionMetrics({
+      costBasisUsdt: position.costBasisUsdt,
+      initialRiskPct: position.initialRiskPct,
+      worstReturnPct: position.worstReturnPct,
+      peakReturnPct: confirmedReason.peakReturnPct,
+      netPnlUsdt: null
+    })),
+    excursionPartial: position.excursionPartial === true,
     orderId: result.orderId
   }, currentCycleId);
   await notify(

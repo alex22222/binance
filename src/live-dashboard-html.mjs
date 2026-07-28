@@ -499,7 +499,10 @@ export function liveDashboardHtml() {
           money(position.estimatedExitGasUsdt) + " 预估出场";
         const riskText = position.initialRiskPct == null
           ? "等待风险参数"
-          : "R " + pct(position.initialRiskPct) + " · 峰值 " + pct(position.peakReturnPct) +
+          : "1R " + money(position.riskUsdt) + " USDT · 报价 MAE " +
+            (position.maeR == null ? "待采集" : position.maeR.toFixed(2) + "R") +
+            " · MFE " + (position.mfeR == null ? "待采集" : position.mfeR.toFixed(2) + "R") +
+            " · 峰值 " + pct(position.peakReturnPct) +
             " · 成本下限 " + pct(position.profitFloorPct) +
             " · 保护 " + (position.trailingStopPct == null ? "未启用" : pct(position.trailingStopPct));
         [
@@ -753,6 +756,8 @@ export function liveDashboardHtml() {
         ["盈利保护", "+" + data.risk.profitProtectionR + "R 启动 · " + data.strategy.trailingAtrMultiplier + "×ATR15 回撤"],
         ["止盈 / 失效", "+" + data.risk.finalTakeProfitR + "R · " + data.strategy.signalReviewHours + "h 信号失效且 < " + data.strategy.signalReviewMinR + "R"],
         ["硬风控", "单笔 " + money(data.risk.maxTradeUsdt) + " · 日亏 " + money(data.risk.dailyLossLimitUsdt) + " · " + data.risk.maxOpenPositions + " 仓 · 灾难 " + pct(data.risk.disasterStopLossPct)],
+        ["开放风险", money(data.risk.openRiskUsdt) + " USDT · 占日亏损上限 " + pct(data.risk.openRiskToDailyLimitPct)],
+        ["日亏损额度使用", money(data.risk.dailyLossUsedUsdt) + " / " + money(data.risk.dailyLossLimitUsdt) + " USDT · " + pct(data.risk.dailyLossUsedPct)],
         ["Shadow 风控", "单标的集中度 · 趋势效率/震荡 · ATR 仓位建议 · 仅观测，不改变下单"]
       ];
       items.forEach(([label, value]) => {

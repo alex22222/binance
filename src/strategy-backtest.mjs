@@ -183,7 +183,7 @@ function sessionMinute(timestamp) {
   return Number(parts.hour) * 60 + Number(parts.minute);
 }
 
-function adaptiveEntry(market, timestamp, costPct) {
+function adaptiveEntry(market, timestamp, costPct, minNetEdgePct) {
   return Object.keys(market).map((ticker) => {
     const feature = momentumFeature(market, ticker, timestamp);
     return feature ? { ticker, feature } : null;
@@ -191,7 +191,7 @@ function adaptiveEntry(market, timestamp, costPct) {
     feature &&
     feature.trend15mPct + 1e-9 >= feature.atr15Pct * 0.75 &&
     feature.upMinutes >= 9 &&
-    feature.trend15mPct >= costPct + 0.3
+    feature.trend15mPct >= costPct + minNetEdgePct
   )).sort((left, right) => right.feature.trend15mPct - left.feature.trend15mPct)[0] || null;
 }
 
@@ -206,21 +206,21 @@ function basisFeature(market, ticker, timestamp) {
   };
 }
 
-function basisEntry(market, timestamp, costPct) {
+function basisEntry(market, timestamp, costPct, minNetEdgePct) {
   return Object.keys(market).map((ticker) => {
     const feature = basisFeature(market, ticker, timestamp);
     return feature ? { ticker, feature } : null;
-  }).filter(Boolean).filter(({ feature }) => -feature.basisPct >= costPct + 0.3)
+  }).filter(Boolean).filter(({ feature }) => -feature.basisPct >= costPct + minNetEdgePct)
     .sort((left, right) => left.feature.basisPct - right.feature.basisPct)[0] || null;
 }
 
-function residualEntry(market, timestamp, costPct) {
+function residualEntry(market, timestamp, costPct, minNetEdgePct) {
   return Object.keys(market).filter((ticker) => !["SPY", "QQQ"].includes(ticker)).map((ticker) => {
     const feature = residualFeature(market, ticker, timestamp);
     const momentum = momentumFeature(market, ticker, timestamp);
     return feature && momentum ? { ticker, feature: { ...feature, ...momentum } } : null;
   }).filter(Boolean).filter(({ feature }) => (
-    feature.zScore <= -2 && -feature.residualPct >= costPct + 0.3
+    feature.zScore <= -2 && -feature.residualPct >= costPct + minNetEdgePct
   )).sort((left, right) => left.feature.zScore - right.feature.zScore)[0] || null;
 }
 
@@ -241,16 +241,16 @@ function sessionEntry(market, timestamp) {
     .sort((left, right) => right.feature.openingReturnPct - left.feature.openingReturnPct)[0] || null;
 }
 
-function strategySignal(strategyId, market, timestamp, costPct) {
-  if (strategyId === "adaptive-momentum") return adaptiveEntry(market, timestamp, costPct);
-  if (strategyId === "executable-basis-reversion") return basisEntry(market, timestamp, costPct);
-  if (strategyId === "residual-reversal") return residualEntry(market, timestamp, costPct);
+function strategySignal(strategyId, market, timestamp, costPct, minNetEdgePct) {
+  if (strategyId === "adaptive-momentum") return adaptiveEntry(market, timestamp, costPct, minNetEdgePct);
+  if (strategyId === "executable-basis-reversion") return basisEntry(market, timestamp, costPct, minNetEdgePct);
+  if (strategyId === "residual-reversal") return residualEntry(market, timestamp, costPct, minNetEdgePct);
   return sessionEntry(market, timestamp);
 }
 
-function signalStillValid(strategyId, market, position, timestamp, costPct) {
+function signalStillValid(strategyId, market, position, timestamp, costPct, minNetEdgePct) {
   if (strategyId === "adaptive-momentum") {
-    return adaptiveEntry(market, timestamp, costPct)?.ticker === position.ticker;
+    return adaptiveEntry(market, timestamp, costPct, minNetEdgePct)?.ticker === position.ticker;
   }
   if (strategyId === "executable-basis-reversion") {
     return (basisFeature(market, position.ticker, timestamp)?.basisPct ?? 0) < -0.1;
@@ -261,51 +261,91 @@ function signalStillValid(strategyId, market, position, timestamp, costPct) {
   return sessionMinute(timestamp) < 15 * 60 + 50;
 }
 
-function simulateStrategy(strategyId, market, timestamps, { notionalUsdt, roundTripCostPct }) {
+function simulateStrategy(strategyId, market, timestamps, options) {
+  const {
+    notionalUsdt,
+    roundTripCostPct,
+    maxOpenPositions,
+    atrStopMultiplier,
+    minInitialStopPct,
+    maxInitialStopPct,
+    profitProtectionR,
+    trailingAtrMultiplier,
+    finalTakeProfitR,
+    signalReviewHours,
+    signalReviewMinR,
+    minNetEdgePct,
+    disasterStopLossPct
+  } = options;
   const trades = [];
-  let position = null;
+  let positions = [];
   let pending = null;
   for (const timestamp of timestamps) {
-    if (pending && !position) {
+    if (pending && positions.length < maxOpenPositions) {
       const candle = market[pending.ticker]?.candles[market[pending.ticker].index.get(timestamp)];
-      if (candle) {
+      if (candle && !positions.some(({ ticker }) => ticker === pending.ticker)) {
         const feature = momentumFeature(market, pending.ticker, timestamp);
         const currentAtrPct = feature?.atr15Pct || pending.feature.atr15Pct || 1;
-        position = {
+        positions.push({
           ticker: pending.ticker,
           entryTime: timestamp,
           entryPrice: candle.open,
-          initialRiskPct: Math.min(3.5, Math.max(1, currentAtrPct * 1.5)),
-          peakReturnPct: -roundTripCostPct
-        };
+          initialRiskPct: Math.min(maxInitialStopPct, Math.max(minInitialStopPct, currentAtrPct * atrStopMultiplier)),
+          peakGrossReturnPct: 0,
+          peakNetReturnPct: -roundTripCostPct,
+          worstNetReturnPct: -roundTripCostPct
+        });
       }
       pending = null;
     }
-    if (position) {
+    const retained = [];
+    for (const position of positions) {
       const candle = market[position.ticker].candles[market[position.ticker].index.get(timestamp)];
-      if (!candle) continue;
-      const returnPct = (candle.close / position.entryPrice - 1) * 100 - roundTripCostPct;
-      position.peakReturnPct = Math.max(position.peakReturnPct, returnPct);
+      if (!candle) {
+        retained.push(position);
+        continue;
+      }
+      const grossReturnPct = (candle.close / position.entryPrice - 1) * 100;
+      const returnPct = grossReturnPct - roundTripCostPct;
+      position.peakGrossReturnPct = Math.max(position.peakGrossReturnPct, grossReturnPct);
+      position.peakNetReturnPct = Math.max(position.peakNetReturnPct, returnPct);
+      position.worstNetReturnPct = Math.min(position.worstNetReturnPct, returnPct);
       const feature = momentumFeature(market, position.ticker, timestamp);
-      const currentAtrPct = feature?.atr15Pct || position.initialRiskPct / 1.5;
-      const protectedStop = position.peakReturnPct >= position.initialRiskPct
-        ? Math.max(roundTripCostPct + 0.3, position.peakReturnPct - currentAtrPct)
+      const currentAtrPct = feature?.atr15Pct || position.initialRiskPct / atrStopMultiplier;
+      const protectedStop = position.peakGrossReturnPct >= position.initialRiskPct * profitProtectionR
+        ? Math.max(
+            roundTripCostPct + minNetEdgePct,
+            position.peakGrossReturnPct - currentAtrPct * trailingAtrMultiplier
+          )
         : null;
-      const valid = signalStillValid(strategyId, market, position, timestamp, roundTripCostPct);
+      const valid = signalStillValid(
+        strategyId,
+        market,
+        position,
+        timestamp,
+        roundTripCostPct,
+        minNetEdgePct
+      );
       const basisNormalized = strategyId === "executable-basis-reversion" &&
         (basisFeature(market, position.ticker, timestamp)?.basisPct ?? -Infinity) >= -0.1;
       const residualNormalized = strategyId === "residual-reversal" &&
         (residualFeature(market, position.ticker, timestamp)?.zScore ?? -Infinity) >= 0;
       const sessionClose = strategyId === "session-momentum" && sessionMinute(timestamp) >= 15 * 60 + 50;
       const heldMs = timestamp - position.entryTime;
-      const reason = returnPct <= -position.initialRiskPct ? "INITIAL_STOP"
-        : returnPct >= position.initialRiskPct * 2 ? "TAKE_PROFIT"
-          : protectedStop != null && returnPct <= protectedStop ? "TRAILING_STOP"
-            : heldMs >= 4 * 60 * 60_000 && !valid && returnPct < position.initialRiskPct * 0.5 ? "SIGNAL_REVIEW"
+      const rawReason = grossReturnPct <= -disasterStopLossPct ? "DISASTER_STOP"
+        : grossReturnPct <= -position.initialRiskPct ? "INITIAL_STOP"
+          : grossReturnPct >= position.initialRiskPct * finalTakeProfitR ? "TAKE_PROFIT"
+            : protectedStop != null && grossReturnPct <= protectedStop ? "TRAILING_STOP"
+            : heldMs >= signalReviewHours * 60 * 60_000 &&
+              !valid &&
+              grossReturnPct < position.initialRiskPct * signalReviewMinR ? "SIGNAL_REVIEW"
               : basisNormalized ? "BASIS_NORMALIZED"
                 : residualNormalized ? "RESIDUAL_NORMALIZED"
                   : sessionClose ? "SESSION_CLOSE"
                     : null;
+      const reason = rawReason && (
+        ["INITIAL_STOP", "DISASTER_STOP"].includes(rawReason) || returnPct >= 0
+      ) ? rawReason : null;
       if (reason) {
         trades.push({
           strategyId,
@@ -316,13 +356,23 @@ function simulateStrategy(strategyId, market, timestamps, { notionalUsdt, roundT
           exitPrice: candle.close,
           returnPct,
           pnlUsdt: notionalUsdt * returnPct / 100,
+          riskUsdt: notionalUsdt * position.initialRiskPct / 100,
+          maePct: position.worstNetReturnPct,
+          mfePct: position.peakNetReturnPct,
+          maeR: position.worstNetReturnPct / position.initialRiskPct,
+          mfeR: position.peakNetReturnPct / position.initialRiskPct,
+          realizedR: returnPct / position.initialRiskPct,
           reason
         });
-        position = null;
+      } else {
+        retained.push(position);
       }
-      continue;
     }
-    if (cadence(timestamp)) pending = strategySignal(strategyId, market, timestamp, roundTripCostPct);
+    positions = retained;
+    if (cadence(timestamp) && positions.length < maxOpenPositions && !pending) {
+      const signal = strategySignal(strategyId, market, timestamp, roundTripCostPct, minNetEdgePct);
+      if (signal && !positions.some(({ ticker }) => ticker === signal.ticker)) pending = signal;
+    }
   }
   return trades;
 }
@@ -330,15 +380,27 @@ function simulateStrategy(strategyId, market, timestamps, { notionalUsdt, roundT
 export function backtestStrategyLibrary(dataset, options = {}) {
   const notionalUsdt = Number(options.maxTradeUsdt || DEFAULT_NOTIONAL_USDT);
   const roundTripCostPct = Number(options.roundTripCostPct || DEFAULT_ROUND_TRIP_COST_PCT);
+  const simulationOptions = {
+    notionalUsdt,
+    roundTripCostPct,
+    maxOpenPositions: Number(options.maxOpenPositions || 1),
+    atrStopMultiplier: Number(options.atrStopMultiplier || 1.5),
+    minInitialStopPct: Number(options.minInitialStopPct || 1),
+    maxInitialStopPct: Number(options.maxInitialStopPct || 3.5),
+    profitProtectionR: Number(options.profitProtectionR || 1),
+    trailingAtrMultiplier: Number(options.trailingAtrMultiplier || 1),
+    finalTakeProfitR: Number(options.finalTakeProfitR || 2),
+    signalReviewHours: Number(options.signalReviewHours || 4),
+    signalReviewMinR: Number(options.signalReviewMinR || 0.5),
+    minNetEdgePct: Number(options.minNetEdgePct || 0.1),
+    disasterStopLossPct: Number(options.disasterStopLossPct || 8)
+  };
   const market = marketView(dataset);
   const timestamps = [...new Set(Object.values(market).flatMap(({ candles }) => (
     candles.map(({ openTime }) => openTime)
   )))].sort((left, right) => left - right);
   const strategies = definitions.map((definition) => {
-    const trades = simulateStrategy(definition.id, market, timestamps, {
-      notionalUsdt,
-      roundTripCostPct
-    });
+    const trades = simulateStrategy(definition.id, market, timestamps, simulationOptions);
     return {
       ...definition,
       performance: performanceMetrics(trades, notionalUsdt),
@@ -352,9 +414,23 @@ export function backtestStrategyLibrary(dataset, options = {}) {
     assumptions: {
       notionalUsdt,
       roundTripCostPct,
-      onePositionAtATime: true,
+      costModel: "roundTripCostPct deducted from every completed trade",
+      maxOpenPositions: simulationOptions.maxOpenPositions,
+      onePositionAtATime: simulationOptions.maxOpenPositions === 1,
       signalExecutionDelayMinutes: 1,
-      basisUsesCurrentMultiplier: true
+      basisUsesCurrentMultiplier: true,
+      exitParameters: {
+        atrStopMultiplier: simulationOptions.atrStopMultiplier,
+        minInitialStopPct: simulationOptions.minInitialStopPct,
+        maxInitialStopPct: simulationOptions.maxInitialStopPct,
+        profitProtectionR: simulationOptions.profitProtectionR,
+        trailingAtrMultiplier: simulationOptions.trailingAtrMultiplier,
+        finalTakeProfitR: simulationOptions.finalTakeProfitR,
+        signalReviewHours: simulationOptions.signalReviewHours,
+        signalReviewMinR: simulationOptions.signalReviewMinR,
+        disasterStopLossPct: simulationOptions.disasterStopLossPct,
+        ordinaryExitsRequireNonNegativeNetReturn: true
+      }
     },
     dataCoverage: {
       symbols: Object.keys(market).length,

@@ -10,6 +10,7 @@
     "dashboard:open": "npm run dashboard && open artifacts/strategy-mock-dashboard.html",
     "dashboard:live": "node scripts/serve-live-dashboard.mjs",
     "strategy:validate": "node scripts/run-strategy-validation.mjs",
+    "strategy:shadow-outcomes": "node scripts/run-shadow-outcomes.mjs",
     "watch": "node watch/watcher.mjs",
     "test:watch-webbridge": "node watch/webbridge-smoke.mjs",
     "preflight:linux": "node scripts/preflight-linux.mjs",

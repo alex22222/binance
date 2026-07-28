@@ -60,9 +60,25 @@ test("backtest output never omits an untriggered strategy", () => {
   };
   const result = backtestStrategyLibrary(dataset, {
     maxTradeUsdt: 50,
-    roundTripCostPct: 1
+    roundTripCostPct: 1,
+    maxOpenPositions: 3,
+    atrStopMultiplier: 1.5,
+    minInitialStopPct: 1,
+    maxInitialStopPct: 3.5,
+    profitProtectionR: 1,
+    trailingAtrMultiplier: 1,
+    finalTakeProfitR: 2,
+    signalReviewHours: 4,
+    signalReviewMinR: 0.5,
+    minNetEdgePct: 0.1,
+    disasterStopLossPct: 8
   });
   assert.equal(result.strategies.length, 4);
   assert.ok(result.strategies.every(({ performance }) => performance.trades === 0));
   assert.equal(result.dataCoverage.symbols, 3);
+  assert.equal(result.assumptions.maxOpenPositions, 3);
+  assert.equal(result.assumptions.onePositionAtATime, false);
+  assert.equal(result.assumptions.exitParameters.profitProtectionR, 1);
+  assert.equal(result.assumptions.exitParameters.ordinaryExitsRequireNonNegativeNetReturn, true);
+  assert.equal(result.assumptions.costModel, "roundTripCostPct deducted from every completed trade");
 });

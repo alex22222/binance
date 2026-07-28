@@ -12,15 +12,26 @@ function finiteNumber(value, fallback = 0) {
 }
 
 function buildPositionSnapshot(position, gasEstimate) {
+  const costBasisUsdt = finiteNumber(position.costBasisUsdt);
+  const initialRiskPct = finiteNumber(position.initialRiskPct, null);
+  const worstReturnPct = position.worstReturnPct == null
+    ? null
+    : finiteNumber(position.worstReturnPct, null);
+  const peakReturnPct = finiteNumber(position.peakReturnPct, 0);
+  const riskUsdt = initialRiskPct > 0 ? costBasisUsdt * initialRiskPct / 100 : null;
   return {
     ...position,
     quantity: finiteNumber(position.quantity),
-    costBasisUsdt: finiteNumber(position.costBasisUsdt),
-    initialRiskPct: finiteNumber(position.initialRiskPct, null),
+    costBasisUsdt,
+    initialRiskPct,
     profitFloorPct: finiteNumber(position.profitFloorPct, null),
     entryAtr15Pct: finiteNumber(position.entryAtr15Pct, null),
     currentAtr15Pct: finiteNumber(position.currentAtr15Pct, null),
-    peakReturnPct: finiteNumber(position.peakReturnPct, 0),
+    peakReturnPct,
+    worstReturnPct,
+    riskUsdt,
+    maeR: initialRiskPct > 0 && worstReturnPct != null ? worstReturnPct / initialRiskPct : null,
+    mfeR: initialRiskPct > 0 ? peakReturnPct / initialRiskPct : null,
     trailingStopPct: finiteNumber(position.trailingStopPct, null),
     lastQuoteProceedsUsdt: finiteNumber(position.lastQuoteProceedsUsdt, null),
     entryGasUsdt: finiteNumber(position.entryGasUsdt, gasEstimate.gasUsdt / 2),
@@ -109,6 +120,12 @@ export function buildDashboardSnapshot({
   const positions = openPositions(state).map((position) => (
     buildPositionSnapshot(position, gasEstimate)
   ));
+  const openRiskUsdt = positions.reduce(
+    (sum, current) => sum + (Number.isFinite(current.riskUsdt) ? current.riskUsdt : 0),
+    0
+  );
+  const dailyLossLimitUsdt = finiteNumber(config.dailyLossLimitUsdt);
+  const dailyLossUsedUsdt = Math.max(0, -realizedPnlUsdt);
   const position = positions[0] || null;
   const approvalExpiresAtMs = Date.parse(state.approvalRequest?.expiresAt || "");
   const approvalIsFresh = (
@@ -176,11 +193,15 @@ export function buildDashboardSnapshot({
     assetTrend: buildAssetTrend(walletBalanceHistory, state.walletBalance, 30),
     risk: {
       maxTradeUsdt: finiteNumber(config.maxTradeUsdt),
-      dailyLossLimitUsdt: finiteNumber(config.dailyLossLimitUsdt),
+      dailyLossLimitUsdt,
       realizedPnlUsdt,
       realizedGrossPnlUsdt: finiteNumber(state.realizedGrossPnlUsdt),
       gasCostUsdt: finiteNumber(state.gasCostUsdt),
-      dailyLossRemainingUsdt: Math.max(0, finiteNumber(config.dailyLossLimitUsdt) + realizedPnlUsdt),
+      dailyLossRemainingUsdt: Math.max(0, dailyLossLimitUsdt + realizedPnlUsdt),
+      dailyLossUsedUsdt,
+      dailyLossUsedPct: dailyLossLimitUsdt > 0 ? dailyLossUsedUsdt / dailyLossLimitUsdt * 100 : null,
+      openRiskUsdt,
+      openRiskToDailyLimitPct: dailyLossLimitUsdt > 0 ? openRiskUsdt / dailyLossLimitUsdt * 100 : null,
       maxOpenPositions: config.maxOpenPositions,
       openPositionCount: positions.length,
       disasterStopLossPct: finiteNumber(config.disasterStopLossPct),

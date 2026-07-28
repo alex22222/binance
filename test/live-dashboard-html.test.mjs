@@ -60,6 +60,10 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.match(html, /function renderStrategyRisk\(data\)/);
   assert.match(html, /Shadow 风控/);
   assert.match(html, /仅观测，不改变下单/);
+  assert.match(html, /开放风险/);
+  assert.match(html, /日亏损额度使用/);
+  assert.match(html, /MAE/);
+  assert.match(html, /MFE/);
   assert.match(html, /shadowSuggestedTradeUsdt/);
   assert.match(html, /shadowTrendQualityDecision/);
   assert.match(html, /function renderWorkflow\(data\)/);

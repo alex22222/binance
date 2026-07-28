@@ -32,6 +32,44 @@ export function realizedTradePnl({
   };
 }
 
+export function updateReturnExcursion(position, returnPct) {
+  const currentReturnPct = Number(returnPct);
+  const previousWorst = Number(position?.worstReturnPct);
+  const previousPeak = Number(position?.peakReturnPct);
+  return {
+    worstReturnPct: Number.isFinite(currentReturnPct)
+      ? Math.min(Number.isFinite(previousWorst) ? previousWorst : 0, currentReturnPct)
+      : Number.isFinite(previousWorst) ? previousWorst : 0,
+    peakReturnPct: Number.isFinite(currentReturnPct)
+      ? Math.max(Number.isFinite(previousPeak) ? previousPeak : 0, currentReturnPct)
+      : Number.isFinite(previousPeak) ? previousPeak : 0
+  };
+}
+
+export function tradeExcursionMetrics({
+  costBasisUsdt,
+  initialRiskPct,
+  worstReturnPct,
+  peakReturnPct,
+  netPnlUsdt
+}) {
+  const costBasis = Number(costBasisUsdt);
+  const riskPct = Number(initialRiskPct);
+  const riskUsdt = costBasis > 0 && riskPct > 0 ? costBasis * riskPct / 100 : null;
+  const maePct = Number.isFinite(Number(worstReturnPct)) ? Number(worstReturnPct) : null;
+  const mfePct = Number.isFinite(Number(peakReturnPct)) ? Number(peakReturnPct) : null;
+  return {
+    riskUsdt,
+    maePct,
+    mfePct,
+    maeR: riskPct > 0 && maePct != null ? maePct / riskPct : null,
+    mfeR: riskPct > 0 && mfePct != null ? mfePct / riskPct : null,
+    realizedR: riskUsdt > 0 && Number.isFinite(Number(netPnlUsdt))
+      ? Number(netPnlUsdt) / riskUsdt
+      : null
+  };
+}
+
 export function noLossExitDecision({
   proceedsUsdt,
   costBasisUsdt,

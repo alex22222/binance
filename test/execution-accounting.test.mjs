@@ -4,7 +4,9 @@ import {
   effectiveRoundTripGasEstimate,
   gasCostFromReceipt,
   noLossExitDecision,
-  realizedTradePnl
+  realizedTradePnl,
+  tradeExcursionMetrics,
+  updateReturnExcursion
 } from "../src/execution-accounting.mjs";
 
 test("calculates the actual gas cost from a BSC transaction receipt", () => {
@@ -78,5 +80,39 @@ test("uses configured gas until ten actual round trips exist, then uses P90", ()
     gasUsdt: 0.09,
     source: "ACTUAL_P90",
     sampleCount: 10
+  });
+});
+
+test("tracks adverse and favorable executable returns without changing a position decision", () => {
+  assert.deepEqual(updateReturnExcursion({
+    worstReturnPct: -0.4,
+    peakReturnPct: 1.2
+  }, -0.8), {
+    worstReturnPct: -0.8,
+    peakReturnPct: 1.2
+  });
+  assert.deepEqual(updateReturnExcursion({
+    worstReturnPct: -0.8,
+    peakReturnPct: 1.2
+  }, 1.6), {
+    worstReturnPct: -0.8,
+    peakReturnPct: 1.6
+  });
+});
+
+test("attributes a completed trade in USDT and R multiples", () => {
+  assert.deepEqual(tradeExcursionMetrics({
+    costBasisUsdt: 50,
+    initialRiskPct: 2,
+    worstReturnPct: -1,
+    peakReturnPct: 3,
+    netPnlUsdt: 0.5
+  }), {
+    riskUsdt: 1,
+    maePct: -1,
+    mfePct: 3,
+    maeR: -0.5,
+    mfeR: 1.5,
+    realizedR: 0.5
   });
 });
