@@ -79,6 +79,15 @@ import {
   noLossExitDecision,
   realizedTradePnl
 } from "./execution-accounting.mjs";
+import {
+  addOpenPosition,
+  entryCapacityDecision,
+  findOpenPosition,
+  heldPositionSymbols,
+  migratePositionState,
+  openPositions,
+  removeOpenPosition
+} from "./position-state.mjs";
 
 const execFileAsync = promisify(execFile);
 const BSC_CHAIN_ID = "56";
@@ -149,7 +158,7 @@ function freshState() {
     realizedGrossPnlUsdt: 0,
     gasCostUsdt: 0,
     roundTripGasHistoryUsdt: [],
-    position: null,
+    positions: [],
     pendingOrder: null,
     approvalRequest: null,
     cooldownUntil: {},
@@ -169,11 +178,11 @@ function freshState() {
 
 async function loadState(path) {
   try {
-    const state = await loadJson(path);
+    const state = migratePositionState(await loadJson(path));
     if (state.date === shanghaiDate()) return state;
     return {
       ...freshState(),
-      position: state.position,
+      positions: state.positions,
       pendingOrder: state.pendingOrder,
       approvalRequest: state.approvalRequest,
       walletBalance: state.walletBalance || null,
@@ -962,7 +971,7 @@ async function finalizePendingOrder(config, state, statePath) {
     const entryGas = await actualGasCostForOrder(order, roundTripGasUsdt / 2);
     const quantity = await tokenBalance(submitted.address);
     if (!isPositiveTokenAmount(quantity)) throw new Error(`Finished BUY has no token balance for ${submitted.symbol}`);
-    state.position = {
+    addOpenPosition(state, {
       symbol: submitted.symbol,
       strategyId: submitted.strategyId || DEFAULT_STRATEGY_ID,
       address: submitted.address,
@@ -984,7 +993,7 @@ async function finalizePendingOrder(config, state, statePath) {
       entryGasUsdt: entryGas.gasUsdt,
       entryGasSource: entryGas.source,
       shadow: false
-    };
+    }, config.maxOpenPositions);
     recordShadowEntry(state, submitted.symbol);
     state.pendingOrder = null;
     await traceAction("pending_order", "finished", {
@@ -1033,7 +1042,7 @@ async function finalizePendingOrder(config, state, statePath) {
     ].slice(-100);
   }
   state.cooldownUntil[submitted.symbol] = Date.now() + config.reentryCooldownMinutes * 60_000;
-  state.position = null;
+  removeOpenPosition(state, submitted);
   state.pendingOrder = null;
   await traceAction("pending_order", "finished", {
     orderId: submitted.orderId,
@@ -1320,6 +1329,17 @@ async function evaluateEntry(
   approvedRequest = null,
   { scanOnly = false } = {}
 ) {
+  if (!scanOnly) {
+    const capacity = entryCapacityDecision(state, config.maxOpenPositions);
+    if (!capacity.allowed) {
+      await traceAction("entry_decision", "skipped", {
+        reason: "max_open_positions",
+        openPositionCount: capacity.openPositionCount,
+        maxOpenPositions: capacity.maxOpenPositions
+      }, currentCycleId);
+      return;
+    }
+  }
   if (!scanOnly && dailyLossReached(state.realizedPnlUsdt, config.dailyLossLimitUsdt)) {
     await traceAction("entry_decision", "skipped", { reason: "daily_loss_limit" }, currentCycleId);
     return;
@@ -1362,24 +1382,28 @@ async function evaluateEntry(
   }
 
   const symbols = approvedRequest ? [approvedRequest.symbol] : config.symbols;
+  const heldSymbols = heldPositionSymbols(state);
   const eligibleSymbols = [];
   for (const symbol of symbols) {
-    if (!scanOnly && (state.cooldownUntil[symbol] || 0) > now) {
+    if (!scanOnly && heldSymbols.has(symbol)) {
+      await traceAction("candidate_rejected", "skipped", { symbol, reason: "already_held" }, currentCycleId);
+    } else if (!scanOnly && (state.cooldownUntil[symbol] || 0) > now) {
       await traceAction("candidate_rejected", "skipped", { symbol, reason: "cooldown" }, currentCycleId);
     } else {
       eligibleSymbols.push(symbol);
     }
   }
-  if (eligibleSymbols.length === 0) {
+  const symbolsToScan = approvedRequest ? eligibleSymbols : symbols;
+  if (symbolsToScan.length === 0) {
     await traceAction(scanOnly ? "signal_refresh" : "entry_decision", "skipped", {
       reason: "no_eligible_symbol"
     }, currentCycleId);
     return;
   }
 
-  const assets = await resolveAssets(eligibleSymbols);
+  const assets = await resolveAssets(symbolsToScan);
   const statusEntries = (await Promise.all(
-    eligibleSymbols.map(async (symbol) => {
+    symbolsToScan.map(async (symbol) => {
       try {
         return {
           symbol,
@@ -1428,7 +1452,7 @@ async function evaluateEntry(
     decision: sessionDecision
   });
   if (!sessionDecision.shouldScan) {
-    const reason = statusEntries.length === 0 && eligibleSymbols.length > 0
+    const reason = statusEntries.length === 0 && symbolsToScan.length > 0
       ? "market_status_unavailable"
       : "non_regular_session";
     await traceAction(scanOnly ? "signal_refresh" : "entry_decision", "skipped", {
@@ -1479,10 +1503,12 @@ async function evaluateEntry(
     return;
   }
 
+  const eligibleSymbolSet = new Set(eligibleSymbols);
+  const entryCandidates = candidates.filter((candidate) => eligibleSymbolSet.has(candidate.symbol));
   const selected = config.activeStrategyId === "executable-basis-reversion"
-    ? candidates.filter((candidate) => candidate.costCoverage?.allowed)
+    ? entryCandidates.filter((candidate) => candidate.costCoverage?.allowed)
       .sort((left, right) => right.costCoverage.netEdgeProxyPct - left.costCoverage.netEdgeProxyPct)[0]
-    : rankCandidates(candidates, config)[0];
+    : rankCandidates(entryCandidates, config)[0];
   if (!selected) {
     await traceAction("entry_decision", "skipped", { reason: "no_candidate_passed" }, currentCycleId);
     log("No entry candidate passed all gates");
@@ -1679,7 +1705,7 @@ async function evaluateEntry(
   }
   const result = await submitOrder(config, state, statePath, emergencyStopPath, orderDetails);
   if (result.shadow) {
-    state.position = {
+    addOpenPosition(state, {
       symbol: selected.symbol,
       strategyId: selected.strategyId || DEFAULT_STRATEGY_ID,
       address: selected.address,
@@ -1701,7 +1727,7 @@ async function evaluateEntry(
       entryGasUsdt: gasEstimate.gasUsdt / 2,
       entryGasSource: "ESTIMATED_SHADOW",
       shadow: true
-    };
+    }, config.maxOpenPositions);
     recordShadowEntry(state, selected.symbol);
   }
   await traceAction("buy_submission", result.shadow ? "simulated" : "submitted", {
@@ -1740,8 +1766,7 @@ async function evaluateEntry(
   );
 }
 
-async function evaluateExit(config, state, statePath, emergencyStopPath, approvedRequest = null) {
-  const position = state.position;
+async function evaluateExit(config, state, statePath, emergencyStopPath, position, approvedRequest = null) {
   if (!position) return;
   const gasEstimate = currentGasEstimate(config, state);
 
@@ -1981,7 +2006,7 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
     state.gasCostUsdt = Number(state.gasCostUsdt || 0) + pnl.gasCostUsdt;
     state.realizedPnlUsdt += pnl.netPnlUsdt;
     state.cooldownUntil[position.symbol] = Date.now() + config.reentryCooldownMinutes * 60_000;
-    state.position = null;
+    removeOpenPosition(state, position);
   }
   await traceAction("sell_submission", result.shadow ? "simulated" : "submitted", {
     symbol: position.symbol,
@@ -2062,19 +2087,31 @@ async function processTradeApproval(config, state, statePath, emergencyStopPath)
 
   await ensureNotEmergencyStopped(emergencyStopPath, state);
   if (request.side === "BUY") {
-    if (state.position) throw new Error("Approved BUY blocked because a position already exists");
+    const capacity = entryCapacityDecision(state, config.maxOpenPositions);
+    if (!capacity.allowed) {
+      throw new Error(`Approved BUY blocked because ${capacity.openPositionCount} positions are already open`);
+    }
+    if (findOpenPosition(state, { symbol: request.symbol })) {
+      throw new Error(`Approved BUY blocked because ${request.symbol} is already held`);
+    }
     await evaluateEntry(config, state, statePath, emergencyStopPath, request);
     return true;
   }
-  if (!state.position) throw new Error("Approved SELL blocked because the position no longer exists");
-  await evaluateExit(config, state, statePath, emergencyStopPath, request);
+  const position = findOpenPosition(state, {
+    symbol: request.symbol,
+    address: request.address
+  });
+  if (!position) throw new Error("Approved SELL blocked because the position no longer exists");
+  await evaluateExit(config, state, statePath, emergencyStopPath, position, request);
   return true;
 }
 
 async function cycle(config, state, statePath, emergencyStopPath) {
   currentCycleId = randomUUID();
+  const positionCount = openPositions(state).length;
   await traceAction("cycle", "started", {
-    hasPosition: Boolean(state.position),
+    hasPosition: positionCount > 0,
+    positionCount,
     hasPendingOrder: Boolean(state.pendingOrder)
   }, currentCycleId);
   try {
@@ -2112,35 +2149,47 @@ async function cycle(config, state, statePath, emergencyStopPath) {
       await finalizePendingOrder(config, state, statePath);
     } else if (state.approvalRequest) {
       await processTradeApproval(config, state, statePath, emergencyStopPath);
-    } else if (state.position) {
-      await evaluateExit(config, state, statePath, emergencyStopPath);
-      const strategyControl = await readStrategyControl(
-        resolve(projectRoot, config.strategyControlFile),
-        config.defaultStrategyId
-      );
-      config.activeStrategyId = strategyControl.strategyId;
-      await evaluateEntry(
-        config,
-        state,
-        statePath,
-        emergencyStopPath,
-        null,
-        { scanOnly: true }
-      );
     } else {
-      const strategyControl = await readStrategyControl(
-        resolve(projectRoot, config.strategyControlFile),
-        config.defaultStrategyId
-      );
-      config.activeStrategyId = strategyControl.strategyId;
-      await evaluateEntry(config, state, statePath, emergencyStopPath);
+      let monitoringError = null;
+      for (const position of [...openPositions(state)]) {
+        try {
+          await evaluateExit(config, state, statePath, emergencyStopPath, position);
+        } catch (error) {
+          monitoringError ||= error;
+          await traceAction("position_monitoring", "failed", {
+            symbol: position.symbol,
+            address: position.address,
+            error: error.message
+          }, currentCycleId);
+        }
+        if (state.pendingOrder || state.approvalRequest) break;
+      }
+      if (monitoringError) throw monitoringError;
+      if (!state.pendingOrder && !state.approvalRequest) {
+        const strategyControl = await readStrategyControl(
+          resolve(projectRoot, config.strategyControlFile),
+          config.defaultStrategyId
+        );
+        config.activeStrategyId = strategyControl.strategyId;
+        const capacity = entryCapacityDecision(state, config.maxOpenPositions);
+        await evaluateEntry(
+          config,
+          state,
+          statePath,
+          emergencyStopPath,
+          null,
+          { scanOnly: !capacity.allowed }
+        );
+      }
     }
     state.updatedAt = new Date().toISOString();
     state.lastError = null;
     state.lastFailureFingerprint = null;
     await saveJson(statePath, state);
+    const savedPositionCount = openPositions(state).length;
     await traceAction("state_saved", "succeeded", {
-      hasPosition: Boolean(state.position),
+      hasPosition: savedPositionCount > 0,
+      positionCount: savedPositionCount,
       hasPendingOrder: Boolean(state.pendingOrder),
       realizedPnlUsdt: state.realizedPnlUsdt
     }, currentCycleId);
@@ -2330,7 +2379,7 @@ async function main() {
     await ensureNotEmergencyStopped(emergencyStopPath, state);
     if (config.mode === "live") {
       await sendFeishu(
-        `[Agentic Stock Bot] LIVE STARTED\n单笔上限: ${config.maxTradeUsdt} USDT\n日亏损上限: ${config.dailyLossLimitUsdt} USDT`
+        `[Agentic Stock Bot] LIVE STARTED\n单笔上限: ${config.maxTradeUsdt} USDT\n最大同时持仓: ${config.maxOpenPositions}\n日亏损上限: ${config.dailyLossLimitUsdt} USDT`
       );
     }
 
@@ -2338,12 +2387,14 @@ async function main() {
       mode: config.mode,
       symbols: config.symbols,
       maxTradeUsdt: config.maxTradeUsdt,
+      maxOpenPositions: config.maxOpenPositions,
       dailyLossLimitUsdt: config.dailyLossLimitUsdt
     });
     await traceAction("startup", "succeeded", {
       mode: config.mode,
       symbols: config.symbols,
       maxTradeUsdt: config.maxTradeUsdt,
+      maxOpenPositions: config.maxOpenPositions,
       dailyLossLimitUsdt: config.dailyLossLimitUsdt,
       maxRoundTripCostPct: config.maxRoundTripCostPct,
       executionBufferPct: config.executionBufferPct,

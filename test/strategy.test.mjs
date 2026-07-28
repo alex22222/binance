@@ -77,6 +77,9 @@ test("deduplicates the configured universe", () => {
 test("rejects limits above the user-approved risk envelope", () => {
   assert.throws(() => validateConfig({ ...config, maxTradeUsdt: 51 }), /maxTradeUsdt/);
   assert.throws(() => validateConfig({ ...config, dailyLossLimitUsdt: 11 }), /dailyLossLimitUsdt/);
+  assert.doesNotThrow(() => validateConfig({ ...config, maxOpenPositions: 3 }));
+  assert.throws(() => validateConfig({ ...config, maxOpenPositions: 4 }), /maxOpenPositions/);
+  assert.throws(() => validateConfig({ ...config, maxOpenPositions: 0 }), /maxOpenPositions/);
 });
 
 test("requires a market data directory for replayable scans", () => {

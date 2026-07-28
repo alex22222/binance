@@ -109,6 +109,7 @@ export function liveDashboardHtml() {
     h2 { margin: 0; font-size: 17px; letter-spacing: -.025em; white-space: nowrap; }
     .muted { color: var(--muted); }
     .position { padding: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: center; }
+    .position + .position { border-top: 1px solid var(--line); }
     .position-symbol { font-size: 24px; font-weight: 780; letter-spacing: -.045em; }
     .position > :first-child { grid-column: 1 / -1; }
     .contract { margin-top: 7px; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, monospace; word-break: break-all; }
@@ -473,51 +474,58 @@ export function liveDashboardHtml() {
     function renderPosition(data) {
       const root = document.getElementById("position");
       root.replaceChildren();
-      if (!data.position) {
+      const positions = Array.isArray(data.positions)
+        ? data.positions
+        : data.position
+          ? [data.position]
+          : [];
+      if (!positions.length) {
         const copy = data.pendingOrder ? "处理中：" + data.pendingOrder.side + " " + data.pendingOrder.symbol : "空仓";
         root.append(el("div", "empty", copy));
         return;
       }
-      const position = data.position;
-      const row = el("div", "position");
-      const identity = el("div");
-      identity.append(
-        el("div", "position-symbol", position.symbol + " · " + (position.shadow ? "SHADOW" : "ON-CHAIN")),
-        el("div", "contract", position.address)
-      );
-      row.append(identity);
-      const pnlText = position.unrealizedPnlUsdt == null
-        ? "等待首个可执行报价"
-        : (position.unrealizedPnlUsdt >= 0 ? "+" : "") + money(position.unrealizedPnlUsdt) + " USDT · " + pct(position.returnPct);
-      const gasText = money(position.entryGasUsdt) + " 已计入场 · " +
-        money(position.estimatedExitGasUsdt) + " 预估出场";
-      const riskText = position.initialRiskPct == null
-        ? "等待风险参数"
-        : "R " + pct(position.initialRiskPct) + " · 峰值 " + pct(position.peakReturnPct) +
-          " · 成本下限 " + pct(position.profitFloorPct) +
-          " · 保护 " + (position.trailingStopPct == null ? "未启用" : pct(position.trailingStopPct));
-      [
-        ["数量", String(position.quantity)],
-        ["成本", money(position.costBasisUsdt) + " USDT"],
-        ["可执行卖出值", money(position.lastQuoteProceedsUsdt) + " USDT"],
-        ["预估净盈亏", pnlText],
-        ["Gas", gasText],
-        ["动态风控", riskText]
-      ].forEach(([label, value], index) => {
-        const cell = el("div", "position-cell");
-        cell.append(el("span", "label", label), el("strong", index === 3 ? (position.unrealizedPnlUsdt >= 0 ? "green" : "red") : "", value));
-        row.append(cell);
+      positions.forEach((position) => {
+        const row = el("div", "position");
+        const identity = el("div");
+        identity.append(
+          el("div", "position-symbol", position.symbol + " · " + (position.shadow ? "SHADOW" : "ON-CHAIN")),
+          el("div", "contract", position.address)
+        );
+        row.append(identity);
+        const pnlText = position.unrealizedPnlUsdt == null
+          ? "等待首个可执行报价"
+          : (position.unrealizedPnlUsdt >= 0 ? "+" : "") + money(position.unrealizedPnlUsdt) + " USDT · " + pct(position.returnPct);
+        const gasText = money(position.entryGasUsdt) + " 已计入场 · " +
+          money(position.estimatedExitGasUsdt) + " 预估出场";
+        const riskText = position.initialRiskPct == null
+          ? "等待风险参数"
+          : "R " + pct(position.initialRiskPct) + " · 峰值 " + pct(position.peakReturnPct) +
+            " · 成本下限 " + pct(position.profitFloorPct) +
+            " · 保护 " + (position.trailingStopPct == null ? "未启用" : pct(position.trailingStopPct));
+        [
+          ["数量", String(position.quantity)],
+          ["成本", money(position.costBasisUsdt) + " USDT"],
+          ["可执行卖出值", money(position.lastQuoteProceedsUsdt) + " USDT"],
+          ["预估净盈亏", pnlText],
+          ["Gas", gasText],
+          ["动态风控", riskText]
+        ].forEach(([label, value], index) => {
+          const cell = el("div", "position-cell");
+          cell.append(el("span", "label", label), el("strong", index === 3 ? (position.unrealizedPnlUsdt >= 0 ? "green" : "red") : "", value));
+          row.append(cell);
+        });
+        root.append(row);
       });
-      root.append(row);
     }
     function renderApproval(data) {
       const root = document.getElementById("approval");
       root.replaceChildren();
       const request = data.approvalRequest;
       if (!request) {
+        const shadowPosition = (data.positions || []).find((position) => position.shadow) || data.position;
         const copy = data.mode === "shadow"
-          ? data.position?.shadow
-            ? "当前为 SHADOW 模拟：" + data.position.symbol + " 模拟仓位不会扣除钱包资产，不能确认。切换 Live 后，新的合格候选才会在这里出现真实确认按钮。"
+          ? shadowPosition?.shadow
+            ? "当前为 SHADOW 模拟：" + shadowPosition.symbol + " 等模拟仓位不会扣除钱包资产，不能确认。切换 Live 后，新的合格候选才会在这里出现真实确认按钮。"
             : "当前为 SHADOW 模拟：候选即使通过也只会模拟，不会生成真实确认按钮。"
           : "暂无待确认订单";
         root.append(el("div", "empty", copy));
@@ -763,7 +771,7 @@ export function liveDashboardHtml() {
           ? 4
           : data.approvalRequest
             ? 3
-            : data.position
+            : data.positions?.length || data.position
               ? 5
               : 1;
       const steps = ["15分钟扫描", "趋势/成本/审计", "创建订单", "逐笔确认", "复核并执行", "60秒退出检查"];

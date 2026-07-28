@@ -4,11 +4,11 @@ Automated BSC tokenized-stock monitor and trader for Binance Agentic Wallet.
 
 The bot:
 
-- checks market status every 15 minutes while flat, and only runs the full entry scan during the regular session;
+- checks market status every 15 minutes while entry capacity is available, and only runs the full entry scan during the regular session;
 - from the expected 09:30 New York open, checks every 60 seconds until Binance reports `marketStatus: regular`, then starts the full scan in that same cycle;
 - applies the published 2026-2028 U.S. cash-equity holiday and 13:00 early-close calendar before trusting Binance's live status;
-- checks an open position every minute using executable sell quotes;
-- holds at most one position;
+- checks every open position each minute using executable sell quotes;
+- holds at most three different stock positions while serializing approvals and on-chain orders;
 - caps each order at 50 USDT;
 - stops opening positions after 10 USDT of realized daily loss;
 - resolves current BSC contracts from Binance on every entry cycle;
@@ -23,7 +23,7 @@ The bot:
 
 ## Strategy
 
-The X post used 15 minutes as a monitoring interval for an existing multi-position portfolio. This bot keeps that behavior for decisions but limits exposure to one highest-ranked position.
+The X post used 15 minutes as a monitoring interval for an existing multi-position portfolio. This bot keeps that behavior for decisions, opens only the highest-ranked eligible candidate per cycle, and limits aggregate exposure to three different positions.
 
 Entry gates:
 
@@ -82,9 +82,9 @@ clamp(1.5 × ATR15, 1.0%, 3.5%)
 ```
 
 Execution costs do not widen the price stop; they are used for entry admission
-and the profit floor. While flat outside regular hours, the bot skips all
-K-line, ATR, and two-way quote work. Exit checks remain active every 60 seconds
-for an existing position, regardless of the market session, using an executable
+and the profit floor. Outside regular hours, the bot skips entry K-line, ATR,
+and two-way quote work. Exit checks remain active every 60 seconds for every
+existing position, regardless of the market session, using an executable
 sell quote:
 
 - the initial stop is `-1R`;
@@ -212,7 +212,7 @@ Start the local live position and safety-control dashboard:
 npm run dashboard:live
 ```
 
-Open `http://127.0.0.1:4173`. It refreshes every three seconds and shows the bot heartbeat, current position, executable-quote PnL, pending order, risk budget, latest 15-minute signals, and recent action trace. A live candidate appears as a five-minute, one-time approval request containing the exact side, symbol, full contract addresses, amount, quote, costs, risk parameters, and audit status. The server binds only to `127.0.0.1`.
+Open `http://127.0.0.1:4173`. It refreshes every three seconds and shows the bot heartbeat, all current positions, per-position executable-quote PnL, pending order, risk budget, latest 15-minute signals, and recent action trace. A live candidate appears as a five-minute, one-time approval request containing the exact side, symbol, full contract addresses, amount, quote, costs, risk parameters, and audit status. The server binds only to `127.0.0.1`.
 
 Approving or rejecting from the dashboard writes a new immutable decision under `state/approval-decisions/`; it never edits `state/bot-state.json`. The bot consumes that exact decision on its next cycle. Before an approved swap is submitted it rechecks the wallet, emergency stop, position state, trend/exit trigger, executable quote, quote drift, cost coverage, and token audit. An expired, mismatched, reused, or materially changed approval fails closed without broadcasting.
 

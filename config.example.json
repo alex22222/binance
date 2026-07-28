@@ -14,7 +14,7 @@
   ],
   "maxTradeUsdt": 50,
   "dailyLossLimitUsdt": 10,
-  "maxOpenPositions": 1,
+  "maxOpenPositions": 3,
   "pollSeconds": 60,
   "entryIntervalMinutes": 15,
   "defaultStrategyId": "adaptive-momentum",

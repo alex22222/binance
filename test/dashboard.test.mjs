@@ -89,6 +89,43 @@ test("builds a live position snapshot from the latest executable sell quote", ()
   assert.equal(snapshot.walletBalance.assetCount, 2);
 });
 
+test("builds separate executable PnL snapshots for every open position", () => {
+  const snapshot = buildDashboardSnapshot({
+    config: { ...config, maxOpenPositions: 3 },
+    state: {
+      date: "2026-07-28",
+      realizedPnlUsdt: 0,
+      updatedAt: "2026-07-28T14:00:00.000Z",
+      positions: [
+        {
+          symbol: "NVDA",
+          address: "0x111",
+          quantity: 1,
+          costBasisUsdt: 50,
+          lastQuoteProceedsUsdt: 52,
+          entryGasUsdt: 0.04
+        },
+        {
+          symbol: "TSLA",
+          address: "0x222",
+          quantity: 2,
+          costBasisUsdt: 50,
+          lastQuoteProceedsUsdt: 49,
+          entryGasUsdt: 0.04
+        }
+      ]
+    },
+    traceRecords: [],
+    nowMs: Date.parse("2026-07-28T14:00:30.000Z")
+  });
+
+  assert.equal(snapshot.positions.length, 2);
+  assert.equal(snapshot.position.symbol, "NVDA");
+  assert.equal(snapshot.positions[0].unrealizedPnlUsdt, 1.91);
+  assert.equal(snapshot.positions[1].unrealizedPnlUsdt, -1.09);
+  assert.equal(snapshot.risk.openPositionCount, 2);
+});
+
 test("shows pending orders and the latest signal for each symbol", () => {
   const snapshot = buildDashboardSnapshot({
     config,

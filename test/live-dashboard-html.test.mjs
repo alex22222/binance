@@ -25,6 +25,8 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.match(html, /id="realizedPnl"/);
   assert.match(html, /当前显示净盈亏/);
   assert.match(html, /预估净盈亏/);
+  assert.match(html, /const positions = Array\.isArray\(data\.positions\)/);
+  assert.match(html, /positions\.forEach\(\(position\) =>/);
   assert.match(html, /实际 P90/);
   assert.match(html, /固定估算/);
   assert.match(html, /已自动审批，等待重新报价与风控复核/);

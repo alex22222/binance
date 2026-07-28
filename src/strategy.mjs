@@ -158,7 +158,9 @@ export function validateConfig(config) {
   if (!Array.isArray(config.symbols) || config.symbols.length === 0) errors.push("symbols must not be empty");
   if (!(config.maxTradeUsdt > 0 && config.maxTradeUsdt <= 50)) errors.push("maxTradeUsdt must be between 0 and 50");
   if (!(config.dailyLossLimitUsdt > 0 && config.dailyLossLimitUsdt <= 10)) errors.push("dailyLossLimitUsdt must be between 0 and 10");
-  if (config.maxOpenPositions !== 1) errors.push("maxOpenPositions must be 1");
+  if (!(Number.isInteger(config.maxOpenPositions) && config.maxOpenPositions >= 1 && config.maxOpenPositions <= 3)) {
+    errors.push("maxOpenPositions must be an integer between 1 and 3");
+  }
   if (!(Number.isInteger(config.pollSeconds) && config.pollSeconds > 0 && config.pollSeconds <= 60)) {
     errors.push("pollSeconds must be an integer between 1 and 60");
   }

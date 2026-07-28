@@ -4,10 +4,48 @@ import { readEmergencyStop } from "./reliability.mjs";
 import { buildStrategyComparison, DEFAULT_STRATEGY_ID } from "./strategy-lab.mjs";
 import { buildAssetTrend } from "./wallet-balance.mjs";
 import { effectiveRoundTripGasEstimate } from "./execution-accounting.mjs";
+import { openPositions } from "./position-state.mjs";
 
 function finiteNumber(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
+}
+
+function buildPositionSnapshot(position, gasEstimate) {
+  return {
+    ...position,
+    quantity: finiteNumber(position.quantity),
+    costBasisUsdt: finiteNumber(position.costBasisUsdt),
+    initialRiskPct: finiteNumber(position.initialRiskPct, null),
+    profitFloorPct: finiteNumber(position.profitFloorPct, null),
+    entryAtr15Pct: finiteNumber(position.entryAtr15Pct, null),
+    currentAtr15Pct: finiteNumber(position.currentAtr15Pct, null),
+    peakReturnPct: finiteNumber(position.peakReturnPct, 0),
+    trailingStopPct: finiteNumber(position.trailingStopPct, null),
+    lastQuoteProceedsUsdt: finiteNumber(position.lastQuoteProceedsUsdt, null),
+    entryGasUsdt: finiteNumber(position.entryGasUsdt, gasEstimate.gasUsdt / 2),
+    estimatedExitGasUsdt: gasEstimate.gasUsdt / 2,
+    grossUnrealizedPnlUsdt: position.lastQuoteProceedsUsdt == null
+      ? null
+      : finiteNumber(position.lastQuoteProceedsUsdt) - finiteNumber(position.costBasisUsdt),
+    unrealizedPnlUsdt: position.lastQuoteProceedsUsdt == null
+      ? null
+      : finiteNumber(position.lastQuoteProceedsUsdt) -
+        finiteNumber(position.costBasisUsdt) -
+        finiteNumber(position.entryGasUsdt, gasEstimate.gasUsdt / 2) -
+        gasEstimate.gasUsdt / 2,
+    returnPct: position.lastQuoteProceedsUsdt == null || !(finiteNumber(position.costBasisUsdt) > 0)
+      ? null
+      : (
+          (
+            finiteNumber(position.lastQuoteProceedsUsdt) -
+            finiteNumber(position.entryGasUsdt, gasEstimate.gasUsdt / 2) -
+            gasEstimate.gasUsdt / 2
+          ) /
+          finiteNumber(position.costBasisUsdt) -
+          1
+        ) * 100
+  };
 }
 
 function latestSignals(traceRecords) {
@@ -68,42 +106,10 @@ export function buildDashboardSnapshot({
     configuredGasUsdt: config.estimatedRoundTripGasUsdt,
     observations: state.roundTripGasHistoryUsdt || []
   });
-  const position = state.position
-    ? {
-        ...state.position,
-        quantity: finiteNumber(state.position.quantity),
-        costBasisUsdt: finiteNumber(state.position.costBasisUsdt),
-        initialRiskPct: finiteNumber(state.position.initialRiskPct, null),
-        profitFloorPct: finiteNumber(state.position.profitFloorPct, null),
-        entryAtr15Pct: finiteNumber(state.position.entryAtr15Pct, null),
-        currentAtr15Pct: finiteNumber(state.position.currentAtr15Pct, null),
-        peakReturnPct: finiteNumber(state.position.peakReturnPct, 0),
-        trailingStopPct: finiteNumber(state.position.trailingStopPct, null),
-        lastQuoteProceedsUsdt: finiteNumber(state.position.lastQuoteProceedsUsdt, null),
-        entryGasUsdt: finiteNumber(state.position.entryGasUsdt, gasEstimate.gasUsdt / 2),
-        estimatedExitGasUsdt: gasEstimate.gasUsdt / 2,
-        grossUnrealizedPnlUsdt: state.position.lastQuoteProceedsUsdt == null
-          ? null
-          : finiteNumber(state.position.lastQuoteProceedsUsdt) - finiteNumber(state.position.costBasisUsdt),
-        unrealizedPnlUsdt: state.position.lastQuoteProceedsUsdt == null
-          ? null
-          : finiteNumber(state.position.lastQuoteProceedsUsdt) -
-            finiteNumber(state.position.costBasisUsdt) -
-            finiteNumber(state.position.entryGasUsdt, gasEstimate.gasUsdt / 2) -
-            gasEstimate.gasUsdt / 2,
-        returnPct: state.position.lastQuoteProceedsUsdt == null || !(finiteNumber(state.position.costBasisUsdt) > 0)
-          ? null
-          : (
-              (
-                finiteNumber(state.position.lastQuoteProceedsUsdt) -
-                finiteNumber(state.position.entryGasUsdt, gasEstimate.gasUsdt / 2) -
-                gasEstimate.gasUsdt / 2
-              ) /
-              finiteNumber(state.position.costBasisUsdt) -
-              1
-            ) * 100
-      }
-    : null;
+  const positions = openPositions(state).map((position) => (
+    buildPositionSnapshot(position, gasEstimate)
+  ));
+  const position = positions[0] || null;
   const approvalExpiresAtMs = Date.parse(state.approvalRequest?.expiresAt || "");
   const approvalIsFresh = (
     state.approvalRequest?.status === "PENDING_CONFIRMATION" &&
@@ -176,6 +182,7 @@ export function buildDashboardSnapshot({
       gasCostUsdt: finiteNumber(state.gasCostUsdt),
       dailyLossRemainingUsdt: Math.max(0, finiteNumber(config.dailyLossLimitUsdt) + realizedPnlUsdt),
       maxOpenPositions: config.maxOpenPositions,
+      openPositionCount: positions.length,
       disasterStopLossPct: finiteNumber(config.disasterStopLossPct),
       minInitialStopPct: finiteNumber(config.minInitialStopPct),
       maxInitialStopPct: finiteNumber(config.maxInitialStopPct),
@@ -205,6 +212,7 @@ export function buildDashboardSnapshot({
       signalReviewMinR: config.signalReviewMinR
     },
     strategies: buildStrategyComparison(activeStrategyId, traceRecords),
+    positions,
     position,
     approvalRequest,
     pendingOrder: state.pendingOrder || null,
