@@ -590,6 +590,10 @@ export function dynamicExitDecision({
   };
 }
 
+export function isStopLossExit(type) {
+  return type === "INITIAL_STOP" || type === "DISASTER_STOP";
+}
+
 export function costCoverageDecision({
   tradeUsdt,
   grossEdgeProxyPct,

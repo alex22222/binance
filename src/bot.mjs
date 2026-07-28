@@ -15,6 +15,7 @@ import {
   entryStatusCheckDecision,
   executionCostEstimate,
   initialRiskDecision,
+  isStopLossExit,
   nyseSessionPlan,
   pendingOrderAction,
   rankCandidates,
@@ -1843,7 +1844,8 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
     exitGasUsdt: gasEstimate.gasUsdt,
     slippagePct: config.slippagePct
   });
-  if (!noLoss.allowed) {
+  const stopLossExit = isStopLossExit(confirmedReason.type);
+  if (!noLoss.allowed && !stopLossExit) {
     await traceAction("exit_decision", "skipped", {
       symbol: position.symbol,
       reason: "no_loss_floor",
@@ -1860,6 +1862,14 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
       estimatedNetPnlUsdt: noLoss.netPnlUsdt
     });
     return;
+  }
+  if (!noLoss.allowed) {
+    await traceAction("exit_decision", "allowed", {
+      symbol: position.symbol,
+      reason: "stop_loss_override",
+      exitType: confirmedReason.type,
+      estimatedNetPnlUsdt: noLoss.netPnlUsdt
+    }, currentCycleId);
   }
   const usdtBefore = config.mode === "live" ? await tokenBalance(USDT_ADDRESS) : null;
   const createdAt = new Date().toISOString();

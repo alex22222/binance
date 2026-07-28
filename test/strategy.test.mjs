@@ -12,6 +12,7 @@ import {
   entryStatusCheckDecision,
   expectedUsRegularWindow,
   initialRiskDecision,
+  isStopLossExit,
   pendingOrderAction,
   rankCandidates,
   roundTripCostPct,
@@ -378,6 +379,13 @@ test("uses initial R, disaster stop and 2R final take profit", () => {
   assert.equal(dynamicExitDecision({ ...base, returnPct: -2 }).type, "INITIAL_STOP");
   assert.equal(dynamicExitDecision({ ...base, returnPct: -8.1 }).type, "DISASTER_STOP");
   assert.equal(dynamicExitDecision({ ...base, returnPct: 4 }).type, "TAKE_PROFIT_2R");
+});
+
+test("classifies both initial and disaster exits as stop losses", () => {
+  assert.equal(isStopLossExit("INITIAL_STOP"), true);
+  assert.equal(isStopLossExit("DISASTER_STOP"), true);
+  assert.equal(isStopLossExit("TRAILING_STOP"), false);
+  assert.equal(isStopLossExit("SIGNAL_TIMEOUT"), false);
 });
 
 test("activates profit protection at 1R and exits on a one-ATR peak retracement", () => {
