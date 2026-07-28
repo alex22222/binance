@@ -122,6 +122,9 @@ export function liveDashboardHtml() {
     .signal:last-child { border-bottom: 0; }
     .signal.historical { background: rgba(245,193,79,.025); }
     .signal-code { display: flex; flex-direction: column; gap: 3px; font-weight: 780; }
+    .signal-symbol-link { width: max-content; color: var(--text); text-decoration-color: rgba(120,169,255,.45); text-underline-offset: 3px; }
+    .signal-symbol-link:hover { color: var(--blue); text-decoration-color: currentColor; }
+    .signal-symbol-link:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-radius: 3px; }
     .signal-source { color: var(--gold); font-size: 9px; font-weight: 700; }
     .signal-shadow { color: var(--gold); font-size: 9px; font-weight: 700; }
     .signal-context { color: var(--muted); font-size: 11px; }
@@ -280,6 +283,24 @@ export function liveDashboardHtml() {
       if (className) node.className = className;
       if (text != null) node.textContent = text;
       return node;
+    };
+    const tradingViewSymbols = {
+      NVDA: "NASDAQ:NVDA",
+      TSLA: "NASDAQ:TSLA",
+      AAPL: "NASDAQ:AAPL",
+      MSFT: "NASDAQ:MSFT",
+      AMZN: "NASDAQ:AMZN",
+      META: "NASDAQ:META",
+      CRCL: "NYSE:CRCL",
+      GOOGL: "NASDAQ:GOOGL",
+      SPY: "AMEX:SPY",
+      QQQ: "NASDAQ:QQQ"
+    };
+    const stockChartUrl = (symbol) => {
+      const tradingViewSymbol = tradingViewSymbols[symbol];
+      return tradingViewSymbol
+        ? "https://www.tradingview.com/chart/?symbol=" + encodeURIComponent(tradingViewSymbol)
+        : null;
     };
     let submittedApprovalId = null;
     let autoApprovalEnabled = false;
@@ -644,7 +665,18 @@ export function liveDashboardHtml() {
         const direction = !signal ? "—" : signal.trend15mPct > 0 ? "↑" : signal.trend15mPct < 0 ? "↓" : "—";
         const row = el("article", "signal" + (historical ? " historical" : ""));
         const code = el("span", "signal-code");
-        code.append(el("strong", "", symbol));
+        const chartUrl = stockChartUrl(symbol);
+        if (chartUrl) {
+          const symbolLink = el("a", "signal-symbol-link", symbol);
+          symbolLink.href = chartUrl;
+          symbolLink.target = "_blank";
+          symbolLink.rel = "noopener noreferrer";
+          symbolLink.title = symbol + " 美股实时走势图 · TradingView";
+          symbolLink.setAttribute("aria-label", symbolLink.title);
+          code.append(symbolLink);
+        } else {
+          code.append(el("strong", "", symbol));
+        }
         if (historical) code.append(el("small", "signal-source", "本地历史"));
         if (signal && !historical) {
           const shadowObservations = [];

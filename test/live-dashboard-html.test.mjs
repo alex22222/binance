@@ -80,6 +80,14 @@ test("live dashboard provides an approval-first iPhone layout and compact signal
   assert.match(html, />变化<\/span>/);
   assert.match(html, />拉取时间<\/span>/);
   assert.match(html, /signal\?\.dataFetchedAt/);
+  assert.match(html, /const tradingViewSymbols = \{/);
+  assert.match(html, /CRCL: "NYSE:CRCL"/);
+  assert.match(html, /SPY: "AMEX:SPY"/);
+  assert.match(html, /QQQ: "NASDAQ:QQQ"/);
+  assert.match(html, /https:\/\/www\.tradingview\.com\/chart\/\?symbol=/);
+  assert.match(html, /symbolLink\.target = "_blank"/);
+  assert.match(html, /symbolLink\.rel = "noopener noreferrer"/);
+  assert.match(html, /美股实时走势图 · TradingView/);
   assert.match(html, /id="signalToggle"/);
   assert.match(html, /id="signalContext"/);
   assert.match(html, /休市中 · 显示本地历史信号/);
