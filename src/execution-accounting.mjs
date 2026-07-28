@@ -32,6 +32,28 @@ export function realizedTradePnl({
   };
 }
 
+export function noLossExitDecision({
+  proceedsUsdt,
+  costBasisUsdt,
+  entryGasUsdt = 0,
+  exitGasUsdt = 0,
+  slippagePct = 0
+}) {
+  const slippage = Math.min(100, finiteNonNegative(slippagePct));
+  const worstCaseProceedsUsdt = Number(proceedsUsdt) * (1 - slippage / 100);
+  const { netPnlUsdt } = realizedTradePnl({
+    proceedsUsdt: worstCaseProceedsUsdt,
+    costBasisUsdt,
+    entryGasUsdt,
+    exitGasUsdt
+  });
+  return {
+    allowed: Number.isFinite(netPnlUsdt) && netPnlUsdt >= 0,
+    worstCaseProceedsUsdt,
+    netPnlUsdt
+  };
+}
+
 export function effectiveRoundTripGasEstimate({
   configuredGasUsdt,
   observations = [],

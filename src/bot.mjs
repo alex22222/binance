@@ -74,6 +74,7 @@ import {
 import {
   effectiveRoundTripGasEstimate,
   gasCostFromReceipt,
+  noLossExitDecision,
   realizedTradePnl
 } from "./execution-accounting.mjs";
 
@@ -1833,6 +1834,31 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
       trailingStopPct: confirmedReason.trailingStopPct,
       profitFloorPct
     }, currentCycleId);
+    return;
+  }
+  const noLoss = noLossExitDecision({
+    proceedsUsdt: confirmedProceedsUsdt,
+    costBasisUsdt: position.costBasisUsdt,
+    entryGasUsdt: position.entryGasUsdt ?? gasEstimate.gasUsdt / 2,
+    exitGasUsdt: gasEstimate.gasUsdt,
+    slippagePct: config.slippagePct
+  });
+  if (!noLoss.allowed) {
+    await traceAction("exit_decision", "skipped", {
+      symbol: position.symbol,
+      reason: "no_loss_floor",
+      proceedsUsdt: confirmedProceedsUsdt,
+      worstCaseProceedsUsdt: noLoss.worstCaseProceedsUsdt,
+      estimatedNetPnlUsdt: noLoss.netPnlUsdt,
+      slippagePct: config.slippagePct,
+      entryGasUsdt: position.entryGasUsdt ?? gasEstimate.gasUsdt / 2,
+      exitGasReserveUsdt: gasEstimate.gasUsdt
+    }, currentCycleId);
+    log("Exit blocked by no-loss floor", {
+      symbol: position.symbol,
+      proceedsUsdt: confirmedProceedsUsdt,
+      estimatedNetPnlUsdt: noLoss.netPnlUsdt
+    });
     return;
   }
   const usdtBefore = config.mode === "live" ? await tokenBalance(USDT_ADDRESS) : null;

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   effectiveRoundTripGasEstimate,
   gasCostFromReceipt,
+  noLossExitDecision,
   realizedTradePnl
 } from "../src/execution-accounting.mjs";
 
@@ -32,6 +33,30 @@ test("subtracts both transaction gas charges from realized PnL", () => {
     gasCostUsdt: 0.09,
     netPnlUsdt: 0.91
   });
+});
+
+test("blocks an exit unless its slippage-adjusted proceeds cover principal and gas", () => {
+  const blocked = noLossExitDecision({
+    proceedsUsdt: 50.2,
+    costBasisUsdt: 50,
+    entryGasUsdt: 0.02,
+    exitGasUsdt: 0.1,
+    slippagePct: 0.5
+  });
+  assert.equal(blocked.allowed, false);
+  assert.ok(Math.abs(blocked.worstCaseProceedsUsdt - 49.949) < 1e-9);
+  assert.ok(Math.abs(blocked.netPnlUsdt - (-0.171)) < 1e-9);
+
+  const allowed = noLossExitDecision({
+    proceedsUsdt: 50.5,
+    costBasisUsdt: 50,
+    entryGasUsdt: 0.02,
+    exitGasUsdt: 0.1,
+    slippagePct: 0.5
+  });
+  assert.equal(allowed.allowed, true);
+  assert.ok(Math.abs(allowed.worstCaseProceedsUsdt - 50.2475) < 1e-9);
+  assert.ok(Math.abs(allowed.netPnlUsdt - 0.1275) < 1e-9);
 });
 
 test("uses configured gas until ten actual round trips exist, then uses P90", () => {
