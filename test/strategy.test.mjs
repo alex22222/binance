@@ -14,6 +14,7 @@ import {
   initialRiskDecision,
   isStopLossExit,
   pendingOrderAction,
+  positionSignalRefreshDecision,
   rankCandidates,
   roundTripCostPct,
   nyseSessionPlan,
@@ -272,6 +273,28 @@ test("keeps the normal 15-minute cadence outside the expected regular window", (
     entryIntervalMinutes: 15,
     pollSeconds: 60
   }).due, true);
+});
+
+test("refreshes position-time signals on their own 15-minute cadence", () => {
+  const lastRefreshMs = Date.parse("2026-07-27T16:35:00.000Z");
+  assert.equal(positionSignalRefreshDecision({
+    nowMs: lastRefreshMs,
+    lastSignalRefreshAt: 0,
+    entryIntervalMinutes: 15
+  }).due, true);
+  assert.equal(positionSignalRefreshDecision({
+    nowMs: lastRefreshMs + 15 * 60_000 - 1,
+    lastSignalRefreshAt: lastRefreshMs,
+    entryIntervalMinutes: 15
+  }).due, false);
+  assert.deepEqual(positionSignalRefreshDecision({
+    nowMs: lastRefreshMs + 15 * 60_000,
+    lastSignalRefreshAt: lastRefreshMs,
+    entryIntervalMinutes: 15
+  }), {
+    due: true,
+    intervalMs: 15 * 60_000
+  });
 });
 
 test("rejects incomplete or unsafe cost-coverage settings", () => {

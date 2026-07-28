@@ -130,6 +130,19 @@ export function entryStatusCheckDecision({
   };
 }
 
+export function positionSignalRefreshDecision({
+  nowMs,
+  lastSignalRefreshAt = 0,
+  entryIntervalMinutes
+}) {
+  const intervalMs = entryIntervalMinutes * 60_000;
+  const previousRefreshMs = Number(lastSignalRefreshAt || 0);
+  return {
+    due: previousRefreshMs === 0 || nowMs - previousRefreshMs >= intervalMs,
+    intervalMs
+  };
+}
+
 export function validateConfig(config) {
   const errors = [];
   if (!["adaptive-momentum", "executable-basis-reversion"].includes(config.defaultStrategyId)) {

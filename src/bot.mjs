@@ -18,6 +18,7 @@ import {
   isStopLossExit,
   nyseSessionPlan,
   pendingOrderAction,
+  positionSignalRefreshDecision,
   rankCandidates,
   roundTripCostPct,
   shadowAtrPositionSizeDecision,
@@ -153,6 +154,7 @@ function freshState() {
     approvalRequest: null,
     cooldownUntil: {},
     lastEntryDecisionAt: 0,
+    lastSignalRefreshAt: 0,
     lastMarketStatusCheckAt: 0,
     lastMarketSession: null,
     pendingNotifications: [],
@@ -1310,15 +1312,36 @@ async function buildCandidate(
   return completed;
 }
 
-async function evaluateEntry(config, state, statePath, emergencyStopPath, approvedRequest = null) {
-  if (dailyLossReached(state.realizedPnlUsdt, config.dailyLossLimitUsdt)) {
+async function evaluateEntry(
+  config,
+  state,
+  statePath,
+  emergencyStopPath,
+  approvedRequest = null,
+  { scanOnly = false } = {}
+) {
+  if (!scanOnly && dailyLossReached(state.realizedPnlUsdt, config.dailyLossLimitUsdt)) {
     await traceAction("entry_decision", "skipped", { reason: "daily_loss_limit" }, currentCycleId);
     return;
   }
   const gasEstimate = currentGasEstimate(config, state);
   const now = Date.now();
   let schedule = null;
-  if (!approvedRequest) {
+  if (scanOnly) {
+    schedule = positionSignalRefreshDecision({
+      nowMs: now,
+      lastSignalRefreshAt: state.lastSignalRefreshAt,
+      entryIntervalMinutes: config.entryIntervalMinutes
+    });
+    if (!schedule.due) {
+      await traceAction("signal_refresh", "skipped", {
+        reason: "signal_refresh_interval",
+        intervalMs: schedule.intervalMs
+      }, currentCycleId);
+      return;
+    }
+    state.lastSignalRefreshAt = now;
+  } else if (!approvedRequest) {
     schedule = entryStatusCheckDecision({
       nowMs: now,
       lastMarketStatusCheckAt: state.lastMarketStatusCheckAt,
@@ -1341,14 +1364,16 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
   const symbols = approvedRequest ? [approvedRequest.symbol] : config.symbols;
   const eligibleSymbols = [];
   for (const symbol of symbols) {
-    if ((state.cooldownUntil[symbol] || 0) > now) {
+    if (!scanOnly && (state.cooldownUntil[symbol] || 0) > now) {
       await traceAction("candidate_rejected", "skipped", { symbol, reason: "cooldown" }, currentCycleId);
     } else {
       eligibleSymbols.push(symbol);
     }
   }
   if (eligibleSymbols.length === 0) {
-    await traceAction("entry_decision", "skipped", { reason: "no_eligible_symbol" }, currentCycleId);
+    await traceAction(scanOnly ? "signal_refresh" : "entry_decision", "skipped", {
+      reason: "no_eligible_symbol"
+    }, currentCycleId);
     return;
   }
 
@@ -1406,7 +1431,7 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
     const reason = statusEntries.length === 0 && eligibleSymbols.length > 0
       ? "market_status_unavailable"
       : "non_regular_session";
-    await traceAction("entry_decision", "skipped", {
+    await traceAction(scanOnly ? "signal_refresh" : "entry_decision", "skipped", {
       reason,
       regularOnlyEntries: config.regularOnlyEntries,
       statusCount: statusEntries.length,
@@ -1415,7 +1440,7 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
     log("Heavy entry scan skipped", { reason });
     return;
   }
-  if (!approvedRequest) state.lastEntryDecisionAt = now;
+  if (!approvedRequest && !scanOnly) state.lastEntryDecisionAt = now;
 
   const statusBySymbol = new Map(statusEntries.map(({ symbol, status }) => [symbol, status]));
   const candidates = (await Promise.all(
@@ -1441,6 +1466,18 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
       }
     })
   )).filter(Boolean);
+
+  if (scanOnly) {
+    await traceAction("signal_refresh", "succeeded", {
+      symbolCount: sessionDecision.symbols.length,
+      candidateCount: candidates.length,
+      tradingEnabled: false
+    }, currentCycleId);
+    log("Position-time signal refresh completed", {
+      symbolCount: sessionDecision.symbols.length
+    });
+    return;
+  }
 
   const selected = config.activeStrategyId === "executable-basis-reversion"
     ? candidates.filter((candidate) => candidate.costCoverage?.allowed)
@@ -2077,6 +2114,19 @@ async function cycle(config, state, statePath, emergencyStopPath) {
       await processTradeApproval(config, state, statePath, emergencyStopPath);
     } else if (state.position) {
       await evaluateExit(config, state, statePath, emergencyStopPath);
+      const strategyControl = await readStrategyControl(
+        resolve(projectRoot, config.strategyControlFile),
+        config.defaultStrategyId
+      );
+      config.activeStrategyId = strategyControl.strategyId;
+      await evaluateEntry(
+        config,
+        state,
+        statePath,
+        emergencyStopPath,
+        null,
+        { scanOnly: true }
+      );
     } else {
       const strategyControl = await readStrategyControl(
         resolve(projectRoot, config.strategyControlFile),
