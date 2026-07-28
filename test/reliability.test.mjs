@@ -70,6 +70,7 @@ test("creates a deterministic write-ahead intent and requires review after an am
   assert.deepEqual(matchingOrdersForIntent([
     { orderId: "match", fromToken: "0xUSDT", toToken: "0xAbC", fromTokenQty: "50" },
     { orderId: "wrong-amount", fromToken: "0xusdt", toToken: "0xabc", fromTokenQty: "49" },
+    { orderId: "rounded-up", fromToken: "0xusdt", toToken: "0xabc", fromTokenQty: "50.000000000000000041" },
     { orderId: "wrong-token", fromToken: "0xusdt", toToken: "0xdef", fromTokenQty: "50" }
   ], left).map((item) => item.orderId), ["match"]);
 });

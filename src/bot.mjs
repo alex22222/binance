@@ -67,6 +67,11 @@ import {
   upsertWalletBalanceSnapshot
 } from "./wallet-balance.mjs";
 import {
+  exactTokenBalance,
+  isPositiveTokenAmount,
+  sameTokenAmount
+} from "./token-amount.mjs";
+import {
   effectiveRoundTripGasEstimate,
   gasCostFromReceipt,
   realizedTradePnl
@@ -581,7 +586,7 @@ async function tokenBalance(address) {
     "--binanceChainId",
     BSC_CHAIN_ID
   ]);
-  return Number(balances[0]?.balance || 0);
+  return exactTokenBalance(balances);
 }
 
 async function refreshWalletBalance(state, statePath) {
@@ -694,7 +699,7 @@ function approvalDetailsMatch(request, details) {
     request.address.toLowerCase() === details.address.toLowerCase() &&
     request.fromToken.toLowerCase() === details.fromToken.toLowerCase() &&
     request.toToken.toLowerCase() === details.toToken.toLowerCase() &&
-    Math.abs(Number(request.fromTokenQty) - Number(details.fromTokenQty)) < 1e-12
+    sameTokenAmount(request.fromTokenQty, details.fromTokenQty)
   );
 }
 
@@ -952,7 +957,7 @@ async function finalizePendingOrder(config, state, statePath) {
       : currentGasEstimate(config, state).gasUsdt;
     const entryGas = await actualGasCostForOrder(order, roundTripGasUsdt / 2);
     const quantity = await tokenBalance(submitted.address);
-    if (!(quantity > 0)) throw new Error(`Finished BUY has no token balance for ${submitted.symbol}`);
+    if (!isPositiveTokenAmount(quantity)) throw new Error(`Finished BUY has no token balance for ${submitted.symbol}`);
     state.position = {
       symbol: submitted.symbol,
       strategyId: submitted.strategyId || DEFAULT_STRATEGY_ID,
@@ -1003,7 +1008,7 @@ async function finalizePendingOrder(config, state, statePath) {
   }
 
   const usdtAfter = await tokenBalance(USDT_ADDRESS);
-  const proceedsUsdt = Math.max(0, usdtAfter - submitted.usdtBefore);
+  const proceedsUsdt = Math.max(0, Number(usdtAfter) - Number(submitted.usdtBefore));
   const roundTripGasUsdt = Number.isFinite(Number(submitted.estimatedRoundTripGasUsdt))
     ? Number(submitted.estimatedRoundTripGasUsdt)
     : currentGasEstimate(config, state).gasUsdt;
@@ -1498,7 +1503,7 @@ async function evaluateEntry(config, state, statePath, emergencyStopPath, approv
   }
 
   const usdtBefore = await tokenBalance(USDT_ADDRESS);
-  if (usdtBefore < config.maxTradeUsdt) throw new Error(`Insufficient USDT: ${usdtBefore}`);
+  if (Number(usdtBefore) < config.maxTradeUsdt) throw new Error(`Insufficient USDT: ${usdtBefore}`);
   const freshBuyQuote = await quote(config.maxTradeUsdt, USDT_ADDRESS, selected.address, config.slippagePct);
   assertQuoteFresh({
     quotedAt: freshBuyQuote.quotedAt,
@@ -1701,8 +1706,8 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
   if (!position) return;
   const gasEstimate = currentGasEstimate(config, state);
 
-  const quantity = position.shadow ? Number(position.quantity) : await tokenBalance(position.address);
-  if (!(quantity > 0)) throw new Error(`Position balance missing for ${position.symbol}`);
+  const quantity = position.shadow ? String(position.quantity) : await tokenBalance(position.address);
+  if (!isPositiveTokenAmount(quantity)) throw new Error(`Position balance missing for ${position.symbol}`);
   if (!(Number(position.initialRiskPct) > 0)) {
     throw new Error(`Position risk metadata missing for ${position.symbol}`);
   }
@@ -1751,7 +1756,7 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
     ? Number(dynamic.stockInfo?.price) * Number(dynamic.tokenInfo?.sharesMultiplier)
     : null;
   if (!reason.type && basisExitReached({
-    executableSellPrice: proceedsUsdt / quantity,
+    executableSellPrice: proceedsUsdt / Number(quantity),
     fairTokenPrice,
     exitBasisPct: config.basisExitPct
   })) {
@@ -1809,7 +1814,7 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, approve
     profitFloorPct
   });
   if (!confirmedReason.type && basisExitReached({
-    executableSellPrice: confirmedProceedsUsdt / quantity,
+    executableSellPrice: confirmedProceedsUsdt / Number(quantity),
     fairTokenPrice,
     exitBasisPct: config.basisExitPct
   })) {

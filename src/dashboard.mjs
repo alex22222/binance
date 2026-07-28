@@ -111,6 +111,10 @@ export function buildDashboardSnapshot({
     nowMs <= approvalExpiresAtMs
   );
   const automaticallyApproved = approvalIsFresh && approvalControl?.enabled === true;
+  const orderReviewRequired = state.pendingOrder?.status === "REVIEW_REQUIRED";
+  const orderReviewError = orderReviewRequired
+    ? state.pendingOrder.lastError || `Order review required: ${state.pendingOrder.reviewReason || "unknown reason"}`
+    : null;
   const approvalRequest = state.approvalRequest
     ? {
         ...state.approvalRequest,
@@ -138,6 +142,8 @@ export function buildDashboardSnapshot({
         ? "HALTED"
         : state.walletSession?.status === "EXPIRED"
           ? "AUTH_REQUIRED"
+        : orderReviewRequired
+          ? "HALTED"
         : heartbeatAgeMs == null
           ? "WAITING"
           : heartbeatAgeMs > staleAfterMs
@@ -147,7 +153,7 @@ export function buildDashboardSnapshot({
               : "RUNNING",
       updatedAt: state.updatedAt || null,
       heartbeatAgeMs,
-      lastError: state.lastError || null,
+      lastError: orderReviewError || state.lastError || null,
       walletSession: state.walletSession || null,
       emergencyStop: state.emergencyStop || null
     },

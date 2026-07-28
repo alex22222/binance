@@ -378,6 +378,31 @@ test("marks a recent heartbeat as degraded when the latest cycle failed", () => 
   assert.equal(snapshot.health.status, "DEGRADED");
 });
 
+test("marks a review-required order as halted even when later cycles succeed", () => {
+  const snapshot = buildDashboardSnapshot({
+    config,
+    state: {
+      date: "2026-07-28",
+      realizedPnlUsdt: 0,
+      updatedAt: "2026-07-28T01:50:39.748Z",
+      lastError: null,
+      position: { symbol: "CRCL" },
+      pendingOrder: {
+        status: "REVIEW_REQUIRED",
+        side: "SELL",
+        symbol: "CRCL",
+        reviewReason: "NO_MATCHING_ORDER",
+        lastError: "ORDER_API_ERROR: insufficient balance"
+      }
+    },
+    traceRecords: [],
+    nowMs: Date.parse("2026-07-28T01:50:40.000Z")
+  });
+
+  assert.equal(snapshot.health.status, "HALTED");
+  assert.equal(snapshot.health.lastError, "ORDER_API_ERROR: insufficient balance");
+});
+
 test("distinguishes a required wallet login from a service degradation", () => {
   const snapshot = buildDashboardSnapshot({
     config,

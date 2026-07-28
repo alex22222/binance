@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { sameTokenAmount } from "./token-amount.mjs";
 
 const transientNetworkCodes = new Set([
   "ECONNRESET",
@@ -86,7 +87,7 @@ export function matchingOrdersForIntent(orders, pendingOrder) {
   return orders.filter((order) => (
     order.fromToken?.toLowerCase() === pendingOrder.fromToken.toLowerCase() &&
     order.toToken?.toLowerCase() === pendingOrder.toToken.toLowerCase() &&
-    Math.abs(Number(order.fromTokenQty) - Number(pendingOrder.fromTokenQty)) < 1e-12
+    sameTokenAmount(order.fromTokenQty, pendingOrder.fromTokenQty)
   ));
 }
 
