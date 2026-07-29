@@ -98,8 +98,11 @@ sudo systemctl enable --now binance-agentic-strategy-validation.timer
 systemctl list-timers binance-agentic-strategy-validation.timer
 ```
 
-The latest report is `state/strategy-validation/latest.json`. The timer runs
-after the U.S. regular session and incrementally keeps already downloaded days.
+The latest reports are `state/strategy-validation/latest.json` and
+`state/shadow-outcomes/latest.json`. The timer runs after the U.S. regular
+session, incrementally keeps already downloaded days, and then refreshes the
+non-executing adaptive-momentum versus trend-pullback comparison from recorded
+market scans.
 
 ## Explicit live cutover
 

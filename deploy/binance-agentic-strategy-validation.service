@@ -11,6 +11,7 @@ WorkingDirectory=/opt/binance-agentic-stock-bot
 Environment=HOME=/var/lib/binance-agentic-stock-bot
 UnsetEnvironment=HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 ExecStart=/usr/bin/node scripts/run-strategy-validation.mjs
+ExecStartPost=/usr/bin/node scripts/run-shadow-outcomes.mjs
 Nice=10
 NoNewPrivileges=true
 PrivateTmp=true
