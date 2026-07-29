@@ -21,7 +21,9 @@ test("strategy page keeps only operational comparison and switch controls", () =
   assert.match(html, /\/api\/shadow-outcomes/);
   assert.match(html, /WOULD_ALLOW/);
   assert.match(html, /WOULD_BLOCK/);
-  assert.match(html, /底层价格代理/);
+  assert.match(html, /trend-pullback-confirmation/);
+  assert.match(html, /趋势回撤/);
+  assert.match(html, /代币扫描收盘价代理/);
   assert.match(html, /\/api\/strategy/);
   assert.doesNotMatch(html, /15-minute tokenized equities/i);
   assert.doesNotMatch(html, /策略实验室/);

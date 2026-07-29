@@ -3,6 +3,16 @@ import { dirname } from "node:path";
 
 export const DEFAULT_STRATEGY_ID = "adaptive-momentum";
 
+export const SHADOW_MARKET_REGIME_FILTER = Object.freeze({
+  id: "shadow-market-regime-filter",
+  name: "市场状态过滤器",
+  mode: "SHADOW",
+  enforced: false,
+  rule: "SPY与QQQ的60分钟方向同时为负，且至少一个满足持续下跌条件时标记 WOULD_BLOCK",
+  evidence: "跨策略共同记录，尚未启用入场否决",
+  risk: "可能错过市场急跌后的V形反弹"
+});
+
 export const SHADOW_DOWNTREND_VETO = Object.freeze({
   id: "shadow-downtrend-veto",
   name: "单边下跌否决器",
@@ -25,6 +35,10 @@ export const SHADOW_ENTRY_FAILURE_STOP = Object.freeze({
 
 function shadowRiskOverlays(role) {
   return [
+    {
+      ...SHADOW_MARKET_REGIME_FILTER,
+      role: "为所有只做多策略标记共同市场逆风"
+    },
     { ...SHADOW_DOWNTREND_VETO, role },
     {
       ...SHADOW_ENTRY_FAILURE_STOP,
@@ -39,6 +53,7 @@ export const STRATEGIES = [
     name: "自适应动量",
     shortName: "动量",
     status: "ACTIVE",
+    direction: "LONG_ONLY",
     thesis: "15 分钟趋势超过波动门槛，方向一致且成本可覆盖时顺势进入。",
     entry: "≥ 0.75×ATR15，且 9/15 个一分钟变化上涨",
     exit: "-1R / +2R / ATR 移动保护",
@@ -47,10 +62,24 @@ export const STRATEGIES = [
     subStrategies: shadowRiskOverlays("识别大级别持续下跌中的短周期反弹")
   },
   {
+    id: "trend-pullback-confirmation",
+    name: "趋势回撤再确认",
+    shortName: "回撤确认",
+    status: "SHADOW",
+    direction: "LONG_ONLY",
+    thesis: "先确认60分钟上升趋势，再等待0.3–0.8×ATR回撤和一分钟重新转强。",
+    entry: "60分钟≥0.75×ATR15；回撤0.3–0.8×ATR15；1分钟突破此前3分钟收盘高点",
+    exit: "仅记录15/30/60/120分钟反事实结果，不下单",
+    evidence: "针对追高和盈亏不对称的前向实验",
+    risk: "强趋势中可能等不到回撤，或把下跌中继误判为回撤",
+    subStrategies: shadowRiskOverlays("区分健康回撤与大级别持续下跌")
+  },
+  {
     id: "executable-basis-reversion",
     name: "可执行折价回归",
     shortName: "折价回归",
     status: "ACTIVE",
+    direction: "LONG_ONLY",
     thesis: "用真实买入报价与底层美股×sharesMultiplier 比较，只买入足以覆盖全部成本的折价。",
     entry: "可执行折价净覆盖成本与最小边际",
     exit: "折价收敛，或触发统一 ATR 风控",
@@ -63,6 +92,7 @@ export const STRATEGIES = [
     name: "市场残差反转",
     shortName: "残差反转",
     status: "RESEARCH",
+    direction: "LONG_ONLY",
     thesis: "剔除 SPY/QQQ 因子后捕捉个股临时流动性冲击。",
     entry: "显著负残差且无公司行动",
     exit: "残差回归零轴",
@@ -75,6 +105,7 @@ export const STRATEGIES = [
     name: "开收盘时段动量",
     shortName: "时段动量",
     status: "RESEARCH",
+    direction: "LONG_ONLY",
     thesis: "用开盘前半小时方向筛选收盘前半小时机会。",
     entry: "限定 SPY/QQQ 与美股特定时段",
     exit: "收盘前退出",

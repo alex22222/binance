@@ -60,15 +60,20 @@ test("compares realized returns by strategy without inventing missing results", 
 test("attaches the same non-enforcing shadow risk overlays to every strategy", () => {
   const comparison = buildStrategyComparison("adaptive-momentum", []);
 
-  assert.equal(comparison.length, 4);
+  assert.equal(comparison.length, 5);
+  const pullback = comparison.find((strategy) => strategy.id === "trend-pullback-confirmation");
+  assert.equal(pullback.status, "SHADOW");
+  assert.equal(pullback.switchable, false);
   for (const strategy of comparison) {
-    assert.equal(strategy.subStrategies.length, 2);
-    assert.equal(strategy.subStrategies[0].id, "shadow-downtrend-veto");
+    assert.equal(strategy.direction, "LONG_ONLY");
+    assert.equal(strategy.subStrategies.length, 3);
+    assert.equal(strategy.subStrategies[0].id, "shadow-market-regime-filter");
     assert.equal(strategy.subStrategies[0].mode, "SHADOW");
     assert.equal(strategy.subStrategies[0].enforced, false);
     assert.ok(strategy.subStrategies[0].role.length > 0);
-    assert.equal(strategy.subStrategies[1].id, "shadow-entry-failure-stop");
-    assert.equal(strategy.subStrategies[1].mode, "SHADOW");
-    assert.equal(strategy.subStrategies[1].enforced, false);
+    assert.equal(strategy.subStrategies[1].id, "shadow-downtrend-veto");
+    assert.equal(strategy.subStrategies[2].id, "shadow-entry-failure-stop");
+    assert.equal(strategy.subStrategies[2].mode, "SHADOW");
+    assert.equal(strategy.subStrategies[2].enforced, false);
   }
 });

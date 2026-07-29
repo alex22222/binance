@@ -24,6 +24,8 @@ import {
   shadowConcentrationDecision,
   shadowDowntrendVetoDecision,
   shadowEntryFailureDecision,
+  shadowMarketRegimeDecision,
+  shadowTrendPullbackDecision,
   shadowTrendQualityDecision,
   simulateRoundTrip,
   uniqueSymbols,
@@ -660,6 +662,86 @@ test("shadow downtrend veto allows a recovery and reports insufficient evidence"
   );
   assert.equal(insufficient.decision, "INSUFFICIENT_DATA");
   assert.equal(insufficient.enforced, false);
+});
+
+function minuteCandles(closes) {
+  const start = Date.parse("2026-07-27T15:00:00.000Z");
+  return closes.map((close, index) => {
+    const openTime = start + index * 60_000;
+    return [openTime, close, close + 0.1, close - 0.1, close, 1, openTime + 60_000 - 1];
+  });
+}
+
+test("shadow trend pullback waits for an ATR-scaled pullback and minute recapture", () => {
+  const wouldEnter = shadowTrendPullbackDecision({
+    minuteCandles: minuteCandles([101.4, 101.2, 101.1, 101.25, 101.4, 101.5]),
+    atrCandles: fifteenMinuteCandles([100, 100.5, 101, 102, 101.4]),
+    atr15Pct: 1,
+    nowMs: Date.parse("2026-07-27T17:00:00.000Z")
+  });
+
+  assert.equal(wouldEnter.mode, "SHADOW");
+  assert.equal(wouldEnter.enforced, false);
+  assert.equal(wouldEnter.decision, "WOULD_ENTER");
+  assert.equal(wouldEnter.reason, "PULLBACK_RECONFIRMED");
+  assert.deepEqual(wouldEnter.conditions, {
+    establishedTrend: true,
+    controlledPullback: true,
+    minuteRecapture: true
+  });
+
+  const noPullback = shadowTrendPullbackDecision({
+    minuteCandles: minuteCandles([101, 101.2, 101.4, 101.6, 101.8]),
+    atrCandles: fifteenMinuteCandles([100, 100.5, 101, 101.5, 102]),
+    atr15Pct: 1,
+    nowMs: Date.parse("2026-07-27T17:00:00.000Z")
+  });
+  assert.equal(noPullback.decision, "WOULD_WAIT");
+  assert.equal(noPullback.reason, "WAITING_FOR_CONTROLLED_PULLBACK");
+});
+
+test("shadow market regime blocks only broad persistent benchmark weakness", () => {
+  const blocked = shadowMarketRegimeDecision([
+    {
+      symbol: "SPY",
+      shadowDowntrendVeto: {
+        decision: "WOULD_BLOCK",
+        return60mPct: -1.1,
+        return120mPct: -1.8
+      },
+      shadowTrendQuality: { highVolatility: true }
+    },
+    {
+      symbol: "QQQ",
+      shadowDowntrendVeto: {
+        decision: "WOULD_ALLOW",
+        return60mPct: -0.4,
+        return120mPct: -0.8
+      },
+      shadowTrendQuality: { highVolatility: false }
+    }
+  ]);
+
+  assert.equal(blocked.mode, "SHADOW");
+  assert.equal(blocked.enforced, false);
+  assert.equal(blocked.decision, "WOULD_BLOCK");
+  assert.equal(blocked.reason, "BROAD_PERSISTENT_MARKET_DOWNTREND");
+  assert.deepEqual(blocked.conditions, {
+    broadNegative60m: true,
+    persistentBenchmarkDowntrend: true
+  });
+
+  const mixed = shadowMarketRegimeDecision([
+    {
+      symbol: "SPY",
+      shadowDowntrendVeto: { decision: "WOULD_BLOCK", return60mPct: -1.1 }
+    },
+    {
+      symbol: "QQQ",
+      shadowDowntrendVeto: { decision: "WOULD_ALLOW", return60mPct: 0.2 }
+    }
+  ]);
+  assert.equal(mixed.decision, "WOULD_ALLOW");
 });
 
 test("shadow trend quality flags high-volatility chop without enforcing it", () => {

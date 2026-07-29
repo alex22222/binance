@@ -348,6 +348,16 @@ an ATR-scaled position-size suggestion. These fields are displayed on the
 Dashboard but do not change candidate ranking, approval, or the submitted
 amount.
 
+Every regular-session universe scan also compares the live adaptive-momentum
+signal with a non-executing trend-pullback confirmation. The Shadow signal
+requires a 60-minute move of at least `0.75 × ATR15`, a `0.3–0.8 × ATR15`
+pullback from the recent high, and a one-minute close above the preceding three
+minute closes. A common SPY/QQQ market-regime overlay labels all long-only
+strategies `WOULD_BLOCK` only when both benchmarks have negative 60-minute
+returns and at least one benchmark meets the persistent-downtrend rule. These
+labels request quotes for Shadow candidates and record forward comparisons, but
+never change ranking, approval, position size, or order submission.
+
 Open positions also emit a non-enforcing `shadow_exit_counterfactual` when the
 early entry-failure rule changes state. The trace includes executable return,
 MFE, R multiples, signal validity, and the exact conditions, allowing later

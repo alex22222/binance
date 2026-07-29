@@ -27,6 +27,8 @@ import {
   shadowConcentrationDecision,
   shadowDowntrendVetoDecision,
   shadowEntryFailureDecision,
+  shadowMarketRegimeDecision,
+  shadowTrendPullbackDecision,
   shadowTrendQualityDecision,
   simulateRoundTrip,
   uniqueSymbols,
@@ -65,7 +67,8 @@ import {
   basisExitReached,
   DEFAULT_STRATEGY_ID,
   executableBasisDecision,
-  readStrategyControl
+  readStrategyControl,
+  STRATEGIES
 } from "./strategy-lab.mjs";
 import {
   summarizeWalletBalances,
@@ -1157,6 +1160,11 @@ async function buildCandidate(
   const signal = analyzeCandles(minuteKline);
   const atr = calculateAtrPct(atrKline, config.atrPeriod);
   const shadowDowntrendVeto = shadowDowntrendVetoDecision(atrKline, atr?.atrPct);
+  const shadowTrendPullback = shadowTrendPullbackDecision({
+    minuteCandles: minuteKline,
+    atrCandles: atrKline,
+    atr15Pct: atr?.atrPct
+  });
   const shadowTrendQuality = shadowTrendQualityDecision(atrKline, atr?.atrPct);
   const requiredTrend15mPct = atr ? atr.atrPct * config.entryAtrMultiplier : null;
   const trendPassed = signal && atr
@@ -1174,6 +1182,7 @@ async function buildCandidate(
     signal,
     atr,
     shadowDowntrendVeto,
+    shadowTrendPullback,
     shadowTrendQuality,
     thresholds: {
       entryAtrMultiplier: config.entryAtrMultiplier,
@@ -1197,6 +1206,19 @@ async function buildCandidate(
     return120mPct: shadowDowntrendVeto.return120mPct,
     ema8SlopePct: shadowDowntrendVeto.ema8SlopePct,
     atr15Pct: shadowDowntrendVeto.atr15Pct
+  }, currentCycleId);
+  await traceAction("shadow_sub_strategy", "observed", {
+    strategyId,
+    symbol,
+    subStrategyId: shadowTrendPullback.id,
+    decision: shadowTrendPullback.decision,
+    reason: shadowTrendPullback.reason,
+    enforced: shadowTrendPullback.enforced,
+    return60mPct: shadowTrendPullback.return60mPct,
+    pullbackDepthPct: shadowTrendPullback.pullbackDepthPct,
+    pullbackDepthAtr: shadowTrendPullback.pullbackDepthAtr,
+    minuteRecapture: shadowTrendPullback.conditions?.minuteRecapture,
+    atr15Pct: shadowTrendPullback.atr15Pct
   }, currentCycleId);
   await traceAction("shadow_sub_strategy", "observed", {
     strategyId,
@@ -1227,6 +1249,7 @@ async function buildCandidate(
   }
 
   const candidate = {
+    scanId,
     symbol,
     address: asset.contractAddress,
     asset,
@@ -1235,9 +1258,11 @@ async function buildCandidate(
     ...signal,
     atr15Pct: atr.atrPct,
     shadowDowntrendVeto,
+    shadowTrendPullback,
     shadowTrendQuality
   };
-  if (!marketOpen || (strategyId === DEFAULT_STRATEGY_ID && !trendPassed)) {
+  const pullbackNeedsQuote = shadowTrendPullback.decision === "WOULD_ENTER";
+  if (!marketOpen || (strategyId === DEFAULT_STRATEGY_ID && !trendPassed && !pullbackNeedsQuote)) {
     await traceAction("candidate_rejected", "skipped", {
       symbol,
       dataFetchedAt,
@@ -1298,12 +1323,31 @@ async function buildCandidate(
         reason: initialRisk.reason,
         ...executionCost
       };
+  const shadowTrendPullbackCostCoverage = (
+    shadowTrendPullback.decision === "WOULD_ENTER" && initialRisk.allowed
+  )
+    ? costCoverageDecision({
+        tradeUsdt: config.maxTradeUsdt,
+        grossEdgeProxyPct: finalTakeProfitPct,
+        takeProfitPct: finalTakeProfitPct,
+        quotedRoundTripCostPct,
+        executionBufferPct: config.executionBufferPct,
+        estimatedRoundTripGasUsdt,
+        minNetEdgePct: config.minNetEdgePct
+      })
+    : {
+        allowed: false,
+        reason: shadowTrendPullback.decision === "WOULD_ENTER"
+          ? initialRisk.reason
+          : "SHADOW_SIGNAL_NOT_ENTER"
+      };
   const completed = {
     ...candidate,
     buyQuantity: buyQuote.toCoinAmount,
     buyQuotedAt: buyQuote.quotedAt,
     roundTripCostPct: quotedRoundTripCostPct,
     costCoverage,
+    shadowTrendPullbackCostCoverage,
     initialRisk,
     initialRiskPct: initialRisk.initialRiskPct,
     finalTakeProfitPct
@@ -1332,6 +1376,7 @@ async function buildCandidate(
     executionCost,
     initialRisk,
     costCoverage,
+    shadowTrendPullbackCostCoverage,
     finalTakeProfitPct
   });
   await traceAction("candidate_evaluated", "succeeded", {
@@ -1353,6 +1398,9 @@ async function buildCandidate(
     executionBufferPct: costCoverage.executionBufferPct,
     shadowDowntrendDecision: completed.shadowDowntrendVeto.decision,
     shadowDowntrendEnforced: completed.shadowDowntrendVeto.enforced,
+    shadowTrendPullbackDecision: completed.shadowTrendPullback.decision,
+    shadowTrendPullbackCostAllowed: completed.shadowTrendPullbackCostCoverage.allowed,
+    shadowPullbackDepthAtr: completed.shadowTrendPullback.pullbackDepthAtr,
     shadowTrendQualityDecision: completed.shadowTrendQuality.decision,
     shadowTrendEfficiency: completed.shadowTrendQuality.trendEfficiency
   }, currentCycleId);
@@ -1547,6 +1595,53 @@ async function evaluateEntry(
       }
     })
   )).filter(Boolean);
+
+  const shadowMarketRegime = shadowMarketRegimeDecision(candidates);
+  const longOnlyStrategyIds = STRATEGIES
+    .filter(({ direction }) => direction === "LONG_ONLY")
+    .map(({ id }) => id);
+  await recordMarketData("shadow_market_regime", {
+    cycleId: currentCycleId,
+    decision: shadowMarketRegime.decision,
+    reason: shadowMarketRegime.reason,
+    enforced: shadowMarketRegime.enforced,
+    appliesToStrategyIds: longOnlyStrategyIds,
+    conditions: shadowMarketRegime.conditions,
+    benchmarkStates: shadowMarketRegime.benchmarkStates
+  });
+  await traceAction("shadow_market_regime", "observed", {
+    decision: shadowMarketRegime.decision,
+    reason: shadowMarketRegime.reason,
+    enforced: shadowMarketRegime.enforced,
+    appliesToStrategyIds: longOnlyStrategyIds,
+    conditions: shadowMarketRegime.conditions,
+    benchmarkStates: shadowMarketRegime.benchmarkStates
+  }, currentCycleId);
+  await Promise.all(candidates.map(async (candidate) => {
+    candidate.shadowMarketRegime = shadowMarketRegime;
+    await recordMarketData("shadow_candidate_comparison", {
+      cycleId: currentCycleId,
+      scanId: candidate.scanId,
+      symbol: candidate.symbol,
+      adaptiveMomentum: {
+        decision: (
+          candidate.trend15mPct + 1e-9 >= candidate.atr15Pct * config.entryAtrMultiplier &&
+          candidate.upMinutes >= config.minDirectionalMinutes
+        ) ? "SIGNAL" : "NO_SIGNAL",
+        costAllowed: candidate.costCoverage?.allowed === true
+      },
+      trendPullbackConfirmation: {
+        decision: candidate.shadowTrendPullback.decision,
+        reason: candidate.shadowTrendPullback.reason,
+        costAllowed: candidate.shadowTrendPullbackCostCoverage?.allowed === true
+      },
+      marketRegime: {
+        decision: shadowMarketRegime.decision,
+        reason: shadowMarketRegime.reason,
+        enforced: false
+      }
+    });
+  }));
 
   if (scanOnly) {
     await traceAction("signal_refresh", "succeeded", {

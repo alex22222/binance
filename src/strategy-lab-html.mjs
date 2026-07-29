@@ -194,16 +194,31 @@ export function strategyLabHtml() {
       root.append(el(
         "p",
         "validation-meta",
-        "WOULD_ALLOW 与 WOULD_BLOCK 使用底层价格代理并扣除入场全成本；不是可执行卖价，不参与交易。已带 Shadow 判定 " +
-          report.shadowLabeledCandidates + " / " + report.candidates + " 个。"
+        "A/B 使用代币扫描收盘价代理并扣除入场全成本；不是可执行卖价，不参与交易。个股 Shadow 已标记 " +
+          report.shadowLabeledCandidates + " / " + report.candidates + " 个，市场状态已标记 " +
+          (report.marketRegimeLabeledCandidates || 0) + " / " + report.candidates + " 个。"
       ));
       report.horizons.forEach((horizon) => {
         const allow = horizon.cohorts.WOULD_ALLOW;
         const block = horizon.cohorts.WOULD_BLOCK;
+        const adaptive = horizon.strategyCohorts?.["adaptive-momentum"];
+        const pullback = horizon.strategyCohorts?.["trend-pullback-confirmation"];
+        const marketAllow = horizon.marketRegimeCohorts?.WOULD_ALLOW;
+        const marketBlock = horizon.marketRegimeCohorts?.WOULD_BLOCK;
         const row = el("div", "return-row");
         row.append(
           el("div", "return-name", horizon.horizonMinutes + " 分钟 · " + horizon.labeled + " 个"),
-          el("div", "validation-meta", "WOULD_ALLOW " + allow.samples + " 个 / 胜率 " + pct(allow.winRatePct) +
+          el("div", "validation-meta", adaptive && pullback
+            ? "当前动量 " + adaptive.samples + " 个 / 胜率 " + pct(adaptive.winRatePct) +
+              " / 均值 " + pct(adaptive.averageNetReturnPct) + " · 趋势回撤 " +
+              pullback.samples + " 个 / 胜率 " + pct(pullback.winRatePct) +
+              " / 均值 " + pct(pullback.averageNetReturnPct) +
+              (marketAllow && marketBlock
+                ? " · 市场允许 " + marketAllow.samples + " 个 / 均值 " +
+                  pct(marketAllow.averageNetReturnPct) + " · 市场阻止 " +
+                  marketBlock.samples + " 个 / 均值 " + pct(marketBlock.averageNetReturnPct)
+                : "")
+            : "WOULD_ALLOW " + allow.samples + " 个 / 胜率 " + pct(allow.winRatePct) +
             " / 均值 " + pct(allow.averageNetReturnPct) + " · WOULD_BLOCK " + block.samples +
             " 个 / 胜率 " + pct(block.winRatePct) + " / 均值 " + pct(block.averageNetReturnPct)),
           el("div", "return-value", "")

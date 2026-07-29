@@ -506,6 +506,143 @@ export function shadowDowntrendVetoDecision(candles, atr15Pct, nowMs = Date.now(
   };
 }
 
+export function shadowTrendPullbackDecision({
+  minuteCandles,
+  atrCandles,
+  atr15Pct,
+  nowMs = Date.now()
+}) {
+  const base = {
+    id: "shadow-trend-pullback-confirmation",
+    mode: "SHADOW",
+    enforced: false,
+    source: "TOKEN_1M_AND_15M_CLOSED_CANDLES",
+    thresholds: {
+      minTrend60mAtr: 0.75,
+      minPullbackAtr: 0.3,
+      maxPullbackAtr: 0.8,
+      recaptureLookbackMinutes: 3
+    }
+  };
+  if (!(Number.isFinite(atr15Pct) && atr15Pct > 0)) {
+    return { ...base, decision: "INSUFFICIENT_DATA", reason: "INVALID_ATR" };
+  }
+
+  const fifteenMinuteCloses = atrCandles
+    .filter((candle) => Number(candle[6]) < nowMs)
+    .slice(-5)
+    .map((candle) => Number(candle[4]));
+  const minuteCloses = minuteCandles
+    .filter((candle) => Number(candle[6]) < nowMs)
+    .slice(-(base.thresholds.recaptureLookbackMinutes + 1))
+    .map((candle) => Number(candle[4]));
+  if (
+    fifteenMinuteCloses.length < 5 ||
+    minuteCloses.length < base.thresholds.recaptureLookbackMinutes + 1 ||
+    [...fifteenMinuteCloses, ...minuteCloses].some((close) => !Number.isFinite(close) || close <= 0)
+  ) {
+    return {
+      ...base,
+      decision: "INSUFFICIENT_DATA",
+      reason: "INSUFFICIENT_CLOSED_CANDLES",
+      fifteenMinuteCandles: fifteenMinuteCloses.length,
+      minuteCandles: minuteCloses.length
+    };
+  }
+
+  const lastPrice = fifteenMinuteCloses.at(-1);
+  const recentHigh = Math.max(...fifteenMinuteCloses);
+  const return60mPct = ((lastPrice / fifteenMinuteCloses[0]) - 1) * 100;
+  const pullbackDepthPct = ((recentHigh - lastPrice) / recentHigh) * 100;
+  const pullbackDepthAtr = pullbackDepthPct / atr15Pct;
+  const priorMinuteHigh = Math.max(...minuteCloses.slice(0, -1));
+  const conditions = {
+    establishedTrend: return60mPct >= base.thresholds.minTrend60mAtr * atr15Pct,
+    controlledPullback: (
+      pullbackDepthAtr >= base.thresholds.minPullbackAtr &&
+      pullbackDepthAtr <= base.thresholds.maxPullbackAtr
+    ),
+    minuteRecapture: minuteCloses.at(-1) > priorMinuteHigh
+  };
+  let decision = "WOULD_ENTER";
+  let reason = "PULLBACK_RECONFIRMED";
+  if (!conditions.establishedTrend) {
+    decision = "WOULD_SKIP";
+    reason = "NO_ESTABLISHED_UPTREND";
+  } else if (pullbackDepthAtr > base.thresholds.maxPullbackAtr) {
+    decision = "WOULD_SKIP";
+    reason = "PULLBACK_TOO_DEEP";
+  } else if (!conditions.controlledPullback) {
+    decision = "WOULD_WAIT";
+    reason = "WAITING_FOR_CONTROLLED_PULLBACK";
+  } else if (!conditions.minuteRecapture) {
+    decision = "WOULD_WAIT";
+    reason = "WAITING_FOR_MINUTE_RECAPTURE";
+  }
+
+  return {
+    ...base,
+    decision,
+    reason,
+    lastPrice,
+    recentHigh,
+    return60mPct,
+    pullbackDepthPct,
+    pullbackDepthAtr,
+    priorMinuteHigh,
+    atr15Pct,
+    conditions
+  };
+}
+
+export function shadowMarketRegimeDecision(candidates) {
+  const base = {
+    id: "shadow-market-regime-filter",
+    mode: "SHADOW",
+    enforced: false,
+    source: "SPY_QQQ_TOKEN_15M_CLOSED_CANDLES",
+    benchmarks: ["SPY", "QQQ"]
+  };
+  const benchmarkStates = base.benchmarks.map((symbol) => {
+    const candidate = candidates.find((entry) => entry.symbol === symbol);
+    return candidate ? {
+      symbol,
+      return60mPct: candidate.shadowDowntrendVeto?.return60mPct,
+      return120mPct: candidate.shadowDowntrendVeto?.return120mPct,
+      downtrendDecision: candidate.shadowDowntrendVeto?.decision,
+      highVolatility: candidate.shadowTrendQuality?.highVolatility === true
+    } : null;
+  }).filter(Boolean);
+  if (
+    benchmarkStates.length < base.benchmarks.length ||
+    benchmarkStates.some(({ return60mPct }) => !Number.isFinite(return60mPct))
+  ) {
+    return {
+      ...base,
+      decision: "INSUFFICIENT_DATA",
+      reason: "BENCHMARK_DATA_UNAVAILABLE",
+      benchmarkStates
+    };
+  }
+
+  const conditions = {
+    broadNegative60m: benchmarkStates.every(({ return60mPct }) => return60mPct < 0),
+    persistentBenchmarkDowntrend: benchmarkStates.some(
+      ({ downtrendDecision }) => downtrendDecision === "WOULD_BLOCK"
+    )
+  };
+  const wouldBlock = Object.values(conditions).every(Boolean);
+  return {
+    ...base,
+    decision: wouldBlock ? "WOULD_BLOCK" : "WOULD_ALLOW",
+    reason: wouldBlock
+      ? "BROAD_PERSISTENT_MARKET_DOWNTREND"
+      : "NO_BROAD_PERSISTENT_MARKET_DOWNTREND",
+    conditions,
+    benchmarkStates
+  };
+}
+
 export function shadowTrendQualityDecision(candles, atr15Pct, nowMs = Date.now()) {
   const base = {
     id: "shadow-trend-quality",
