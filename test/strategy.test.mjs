@@ -9,8 +9,10 @@ import {
   dynamicExitDecision,
   entryMarketAllowed,
   entrySessionDecision,
+  entrySymbolPolicyDecision,
   entryStatusCheckDecision,
   expectedUsRegularWindow,
+  initialStopPolicyUpdate,
   initialRiskDecision,
   isStopLossExit,
   pendingOrderAction,
@@ -21,6 +23,7 @@ import {
   shadowAtrPositionSizeDecision,
   shadowConcentrationDecision,
   shadowDowntrendVetoDecision,
+  shadowEntryFailureDecision,
   shadowTrendQualityDecision,
   simulateRoundTrip,
   uniqueSymbols,
@@ -55,6 +58,8 @@ const config = {
   estimatedRoundTripGasUsdt: 0.1,
   minNetEdgePct: 0.1,
   regularOnlyEntries: true,
+  entryCutoffMinutes: 45,
+  entryBlockedSymbols: [],
   quoteMaxAgeSeconds: 10,
   maxQuoteDriftPct: 0.5,
   allowUnsupportedAuditForOfficialRwa: true,
@@ -99,6 +104,8 @@ test("requires a bounded per-trade approval gate", () => {
 
 test("requires regular-session-only entries", () => {
   assert.throws(() => validateConfig({ ...config, regularOnlyEntries: false }), /regularOnlyEntries/);
+  assert.throws(() => validateConfig({ ...config, entryCutoffMinutes: 0 }), /entryCutoffMinutes/);
+  assert.throws(() => validateConfig({ ...config, entryBlockedSymbols: "CRCL" }), /entryBlockedSymbols/);
   assert.throws(() => validateConfig({ ...config, pollSeconds: 61 }), /pollSeconds/);
 });
 
@@ -119,6 +126,97 @@ test("allows new entries only during the regular market session", () => {
     reasonCode: "WEEKEND_HOLIDAY",
     marketStatus: "closed"
   }, true, regularSessionMs), false);
+});
+
+test("stops new entries 45 minutes before the regular or early close", () => {
+  const status = {
+    openState: true,
+    reasonCode: "TRADING",
+    marketStatus: "regular"
+  };
+  assert.equal(entryMarketAllowed(
+    status,
+    true,
+    Date.parse("2026-07-27T19:14:59.000Z"),
+    45
+  ), true);
+  assert.equal(entryMarketAllowed(
+    status,
+    true,
+    Date.parse("2026-07-27T19:15:00.000Z"),
+    45
+  ), false);
+  assert.equal(entryMarketAllowed(
+    status,
+    true,
+    Date.parse("2026-11-27T17:15:00.000Z"),
+    45
+  ), false);
+});
+
+test("blocks configured symbols and same-day initial-stop re-entry", () => {
+  const nowMs = Date.parse("2026-07-28T15:00:00.000Z");
+  assert.deepEqual(entrySymbolPolicyDecision({
+    symbol: "CRCL",
+    blockedSymbols: ["CRCL"],
+    nowMs
+  }), {
+    allowed: false,
+    reason: "CONFIGURED_SYMBOL_BLOCK"
+  });
+  assert.deepEqual(entrySymbolPolicyDecision({
+    symbol: "NVDA",
+    initialStopHistory: [{
+      symbol: "NVDA",
+      nyseDate: "2026-07-28",
+      timestamp: "2026-07-28T14:00:00.000Z"
+    }],
+    nowMs
+  }), {
+    allowed: false,
+    reason: "INITIAL_STOP_SAME_SESSION"
+  });
+});
+
+test("quarantines a symbol for five trading days after a second recent initial stop", () => {
+  const first = initialStopPolicyUpdate({
+    symbol: "NVDA",
+    nowMs: Date.parse("2026-07-27T15:00:00.000Z")
+  });
+  const second = initialStopPolicyUpdate({
+    symbol: "NVDA",
+    initialStopHistory: first.initialStopHistory,
+    quarantineUntilBySymbol: first.quarantineUntilBySymbol,
+    nowMs: Date.parse("2026-07-29T15:00:00.000Z")
+  });
+
+  assert.equal(second.quarantineUntilBySymbol.NVDA, "2026-08-05");
+  assert.equal(entrySymbolPolicyDecision({
+    symbol: "NVDA",
+    initialStopHistory: second.initialStopHistory,
+    quarantineUntilBySymbol: second.quarantineUntilBySymbol,
+    nowMs: Date.parse("2026-08-05T15:00:00.000Z")
+  }).reason, "INITIAL_STOP_QUARANTINE");
+  assert.equal(entrySymbolPolicyDecision({
+    symbol: "NVDA",
+    initialStopHistory: second.initialStopHistory,
+    quarantineUntilBySymbol: second.quarantineUntilBySymbol,
+    nowMs: Date.parse("2026-08-06T15:00:00.000Z")
+  }).allowed, true);
+});
+
+test("calculates initial-stop policy across the start of the calendar horizon", () => {
+  const result = initialStopPolicyUpdate({
+    symbol: "NVDA",
+    initialStopHistory: [{
+      symbol: "NVDA",
+      nyseDate: "2025-12-31",
+      timestamp: "2025-12-31T15:00:00.000Z"
+    }],
+    nowMs: Date.parse("2026-01-02T15:00:00.000Z")
+  });
+
+  assert.equal(result.quarantineUntilBySymbol.NVDA, "2026-01-09");
 });
 
 test("skips heavy entry scans when every eligible symbol is outside regular hours", () => {
@@ -583,6 +681,30 @@ test("shadow trend quality flags high-volatility chop without enforcing it", () 
   );
   assert.equal(trending.decision, "WOULD_ALLOW");
   assert.equal(trending.reason, "TREND_QUALITY_ACCEPTABLE");
+});
+
+test("shadow entry-failure records an early failed breakout without exiting", () => {
+  const result = shadowEntryFailureDecision({
+    heldMs: 20 * 60_000,
+    signalValid: false,
+    peakReturnPct: 0.1,
+    returnPct: -1.2,
+    initialRiskPct: 2
+  });
+
+  assert.equal(result.mode, "SHADOW");
+  assert.equal(result.enforced, false);
+  assert.equal(result.decision, "WOULD_EXIT");
+  assert.equal(result.reason, "EARLY_BREAKOUT_FAILED");
+  assert.equal(result.returnR, -0.6);
+  assert.equal(result.mfeR, 0.05);
+  assert.equal(shadowEntryFailureDecision({
+    heldMs: 10 * 60_000,
+    signalValid: false,
+    peakReturnPct: 0,
+    returnPct: -1.2,
+    initialRiskPct: 2
+  }).decision, "PENDING_WINDOW");
 });
 
 test("shadow concentration observes a second same-day entry without blocking it", () => {

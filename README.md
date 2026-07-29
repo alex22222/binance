@@ -5,6 +5,7 @@ Automated BSC tokenized-stock monitor and trader for Binance Agentic Wallet.
 The bot:
 
 - checks market status every 15 minutes while entry capacity is available, and only runs the full entry scan during the regular session;
+- stops new entries 45 minutes before the published NYSE close, including 13:00 early-close sessions;
 - from the expected 09:30 New York open, checks every 60 seconds until Binance reports `marketStatus: regular`, then starts the full scan in that same cycle;
 - applies the published 2026-2028 U.S. cash-equity holiday and 13:00 early-close calendar before trusting Binance's live status;
 - checks every open position each minute using executable sell quotes;
@@ -28,6 +29,7 @@ The X post used 15 minutes as a monitoring interval for an existing multi-positi
 Entry gates:
 
 - market and asset status are `TRADING`, and `marketStatus` is exactly `regular`;
+- the symbol is not temporarily isolated by `entryBlockedSymbols`, a same-session initial stop, or the five-trading-day repeated-stop quarantine;
 - 15-minute return is at least `0.75 × ATR15`;
 - at least 9 of the last 15 one-minute moves are positive;
 - quoted round-trip cost is at most 0.7%;
@@ -97,7 +99,23 @@ sell quote:
   and the executable return is below `+0.5R`;
 - `-8%` remains an independent catastrophe protection line.
 
-After an exit, the same symbol has a 30-minute cooldown and must pass all entry gates again.
+After any exit, the same symbol has a 30-minute cooldown and must pass all entry
+gates again. An `INITIAL_STOP` blocks that symbol for the rest of the same NYSE
+session. A second `INITIAL_STOP` within five NYSE trading days quarantines the
+symbol for the next five trading days. `entryBlockedSymbols` provides an
+operator-controlled temporary isolation without removing the symbol from
+monitoring data.
+
+New entries stop 45 minutes before the planned NYSE close. This cutoff is
+rechecked after approval, so a delayed approval cannot submit a new position
+near or after the close. Existing positions continue to receive one-minute exit
+monitoring.
+
+During the first 15–30 minutes of each position, a non-enforcing
+`shadow-entry-failure-stop` records `WOULD_EXIT` when the original signal is
+invalid, maximum favorable excursion is at most `+0.2R`, and executable return
+has fallen to `-0.5R`. This observation never submits a sell and does not bypass
+the existing no-loss floor or protective stops.
 
 ## Setup
 
@@ -329,6 +347,11 @@ It records same-day symbol concentration, high-volatility trend efficiency, and
 an ATR-scaled position-size suggestion. These fields are displayed on the
 Dashboard but do not change candidate ranking, approval, or the submitted
 amount.
+
+Open positions also emit a non-enforcing `shadow_exit_counterfactual` when the
+early entry-failure rule changes state. The trace includes executable return,
+MFE, R multiples, signal validity, and the exact conditions, allowing later
+comparison against the unchanged production exit path.
 
 ## Strategy validation
 

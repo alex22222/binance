@@ -82,18 +82,37 @@ export function nyseSessionPlan(nowMs = Date.now()) {
   };
 }
 
-export function entryMarketAllowed(status, regularOnlyEntries = true, nowMs = Date.now()) {
+export function entryMarketAllowed(
+  status,
+  regularOnlyEntries = true,
+  nowMs = Date.now(),
+  entryCutoffMinutes = 0
+) {
   const tradable = status?.openState === true && status?.reasonCode === "TRADING";
   if (!tradable) return false;
-  return !regularOnlyEntries || (
-    status?.marketStatus?.toLowerCase() === "regular" &&
-    nyseSessionPlan(nowMs).regularOpen
-  );
+  if (!regularOnlyEntries) return true;
+  const plan = nyseSessionPlan(nowMs);
+  if (status?.marketStatus?.toLowerCase() !== "regular" || !plan.regularOpen) return false;
+  const parts = newYorkTimeParts(nowMs);
+  const closeHour = Number(plan.closeTime?.slice(0, 2));
+  const closeMinute = Number(plan.closeTime?.slice(3, 5));
+  const minuteOfDay = Number(parts.hour) * 60 + Number(parts.minute);
+  return minuteOfDay < closeHour * 60 + closeMinute - entryCutoffMinutes;
 }
 
-export function entrySessionDecision(entries, regularOnlyEntries = true, nowMs = Date.now()) {
+export function entrySessionDecision(
+  entries,
+  regularOnlyEntries = true,
+  nowMs = Date.now(),
+  entryCutoffMinutes = 0
+) {
   const symbols = entries
-    .filter(({ status }) => entryMarketAllowed(status, regularOnlyEntries, nowMs))
+    .filter(({ status }) => entryMarketAllowed(
+      status,
+      regularOnlyEntries,
+      nowMs,
+      entryCutoffMinutes
+    ))
     .map(({ symbol }) => symbol);
   return {
     shouldScan: symbols.length > 0,
@@ -104,6 +123,90 @@ export function entrySessionDecision(entries, regularOnlyEntries = true, nowMs =
 
 export function expectedUsRegularWindow(nowMs = Date.now()) {
   return nyseSessionPlan(nowMs).regularOpen;
+}
+
+function shiftDate(date, days) {
+  const shifted = new Date(`${date}T12:00:00.000Z`);
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  return shifted.toISOString().slice(0, 10);
+}
+
+function isNyseTradingDate(date) {
+  if (NYSE_HOLIDAYS.has(date)) return false;
+  const day = new Date(`${date}T12:00:00.000Z`).getUTCDay();
+  return day !== 0 && day !== 6;
+}
+
+function recentNyseTradingDates(date, count) {
+  const dates = [];
+  let cursor = date;
+  while (dates.length < count) {
+    if (isNyseTradingDate(cursor)) dates.push(cursor);
+    cursor = shiftDate(cursor, -1);
+  }
+  return dates;
+}
+
+function nyseTradingDateAfter(date, count) {
+  let cursor = date;
+  let remaining = count;
+  while (remaining > 0) {
+    cursor = shiftDate(cursor, 1);
+    if (isNyseTradingDate(cursor)) remaining -= 1;
+  }
+  return cursor;
+}
+
+export function initialStopPolicyUpdate({
+  symbol,
+  initialStopHistory = [],
+  quarantineUntilBySymbol = {},
+  nowMs = Date.now()
+}) {
+  const nyseDate = nyseSessionPlan(nowMs).date;
+  const recentDates = new Set(recentNyseTradingDates(nyseDate, 5));
+  const previousRecentStops = initialStopHistory.filter(
+    (entry) => entry.symbol === symbol && recentDates.has(entry.nyseDate)
+  );
+  const nextHistory = [
+    ...initialStopHistory,
+    {
+      symbol,
+      nyseDate,
+      timestamp: new Date(nowMs).toISOString()
+    }
+  ].slice(-100);
+  const nextQuarantine = { ...quarantineUntilBySymbol };
+  if (previousRecentStops.length >= 1) {
+    nextQuarantine[symbol] = nyseTradingDateAfter(nyseDate, 5);
+  }
+  return {
+    initialStopHistory: nextHistory,
+    quarantineUntilBySymbol: nextQuarantine
+  };
+}
+
+export function entrySymbolPolicyDecision({
+  symbol,
+  blockedSymbols = [],
+  initialStopHistory = [],
+  quarantineUntilBySymbol = {},
+  nowMs = Date.now()
+}) {
+  if (blockedSymbols.includes(symbol)) {
+    return { allowed: false, reason: "CONFIGURED_SYMBOL_BLOCK" };
+  }
+  const nyseDate = nyseSessionPlan(nowMs).date;
+  if (initialStopHistory.some(
+    (entry) => entry.symbol === symbol && entry.nyseDate === nyseDate
+  )) {
+    return { allowed: false, reason: "INITIAL_STOP_SAME_SESSION" };
+  }
+  const quarantineUntil = quarantineUntilBySymbol[symbol];
+  if (quarantineUntil && nyseDate <= quarantineUntil) {
+    return { allowed: false, reason: "INITIAL_STOP_QUARANTINE" };
+  }
+  return { allowed: true, reason: "SYMBOL_POLICY_ALLOWED" };
 }
 
 export function entryStatusCheckDecision({
@@ -211,6 +314,19 @@ export function validateConfig(config) {
   }
   if (config.regularOnlyEntries !== true) {
     errors.push("regularOnlyEntries must be true");
+  }
+  if (!(
+    Number.isInteger(config.entryCutoffMinutes) &&
+    config.entryCutoffMinutes >= 1 &&
+    config.entryCutoffMinutes <= 120
+  )) {
+    errors.push("entryCutoffMinutes must be an integer between 1 and 120");
+  }
+  if (
+    !Array.isArray(config.entryBlockedSymbols) ||
+    config.entryBlockedSymbols.some((symbol) => typeof symbol !== "string" || symbol !== symbol.trim().toUpperCase())
+  ) {
+    errors.push("entryBlockedSymbols must be an array of uppercase symbols");
   }
   if (typeof config.emergencyStopFile !== "string" || !config.emergencyStopFile.trim()) {
     errors.push("emergencyStopFile must not be empty");
@@ -439,6 +555,70 @@ export function shadowTrendQualityDecision(candles, atr15Pct, nowMs = Date.now()
     trendEfficiency,
     highVolatility,
     lowEfficiency
+  };
+}
+
+export function shadowEntryFailureDecision({
+  heldMs,
+  signalValid,
+  peakReturnPct,
+  returnPct,
+  initialRiskPct
+}) {
+  const base = {
+    id: "shadow-entry-failure-stop",
+    mode: "SHADOW",
+    enforced: false,
+    thresholds: {
+      minHeldMinutes: 15,
+      maxHeldMinutes: 30,
+      maxMfeR: 0.2,
+      stopR: -0.5
+    }
+  };
+  if (
+    ![heldMs, peakReturnPct, returnPct, initialRiskPct].every(Number.isFinite) ||
+    !(initialRiskPct > 0)
+  ) {
+    return { ...base, decision: "INSUFFICIENT_DATA", reason: "INVALID_INPUT" };
+  }
+  const heldMinutes = heldMs / 60_000;
+  const mfeR = peakReturnPct / initialRiskPct;
+  const returnR = returnPct / initialRiskPct;
+  if (heldMinutes < base.thresholds.minHeldMinutes) {
+    return {
+      ...base,
+      decision: "PENDING_WINDOW",
+      reason: "ENTRY_FAILURE_WINDOW_NOT_OPEN",
+      heldMinutes,
+      mfeR,
+      returnR
+    };
+  }
+  if (heldMinutes > base.thresholds.maxHeldMinutes) {
+    return {
+      ...base,
+      decision: "WINDOW_CLOSED",
+      reason: "ENTRY_FAILURE_WINDOW_CLOSED",
+      heldMinutes,
+      mfeR,
+      returnR
+    };
+  }
+  const conditions = {
+    signalInvalid: signalValid === false,
+    noMeaningfulMfe: mfeR <= base.thresholds.maxMfeR,
+    lossReached: returnR <= base.thresholds.stopR
+  };
+  const wouldExit = Object.values(conditions).every(Boolean);
+  return {
+    ...base,
+    decision: wouldExit ? "WOULD_EXIT" : "WOULD_HOLD",
+    reason: wouldExit ? "EARLY_BREAKOUT_FAILED" : "ENTRY_FAILURE_NOT_CONFIRMED",
+    heldMinutes,
+    mfeR,
+    returnR,
+    conditions
   };
 }
 

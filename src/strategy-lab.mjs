@@ -13,8 +13,24 @@ export const SHADOW_DOWNTREND_VETO = Object.freeze({
   risk: "可能把V形反转误判为不可买"
 });
 
-function downtrendVeto(role) {
-  return [{ ...SHADOW_DOWNTREND_VETO, role }];
+export const SHADOW_ENTRY_FAILURE_STOP = Object.freeze({
+  id: "shadow-entry-failure-stop",
+  name: "早期入场失败保护",
+  mode: "SHADOW",
+  enforced: false,
+  rule: "持仓15–30分钟内：原信号失效、最大浮盈≤+0.2R，且可执行收益≤-0.5R",
+  evidence: "仅记录反事实退出，尚未证明能改善成本后收益",
+  risk: "过早退出可能把正常回撤误判为突破失败"
+});
+
+function shadowRiskOverlays(role) {
+  return [
+    { ...SHADOW_DOWNTREND_VETO, role },
+    {
+      ...SHADOW_ENTRY_FAILURE_STOP,
+      role: "记录入场后立即失效且没有形成有效浮盈的机会"
+    }
+  ];
 }
 
 export const STRATEGIES = [
@@ -28,7 +44,7 @@ export const STRATEGIES = [
     exit: "-1R / +2R / ATR 移动保护",
     evidence: "启发式，待样本外验证",
     risk: "追涨与趋势反转",
-    subStrategies: downtrendVeto("识别大级别持续下跌中的短周期反弹")
+    subStrategies: shadowRiskOverlays("识别大级别持续下跌中的短周期反弹")
   },
   {
     id: "executable-basis-reversion",
@@ -40,7 +56,7 @@ export const STRATEGIES = [
     exit: "折价收敛，或触发统一 ATR 风控",
     evidence: "产品结构驱动，研究优先",
     risk: "底层报价延迟、盘外跳空与无对冲方向风险",
-    subStrategies: downtrendVeto("区分可回归折价与趋势性下跌造成的折价")
+    subStrategies: shadowRiskOverlays("区分可回归折价与趋势性下跌造成的折价")
   },
   {
     id: "residual-reversal",
@@ -52,7 +68,7 @@ export const STRATEGIES = [
     exit: "残差回归零轴",
     evidence: "学术证据较强，尚缺可执行报价验证",
     risk: "市场单边与交易成本",
-    subStrategies: downtrendVeto("避免把持续下跌误识别为临时负残差")
+    subStrategies: shadowRiskOverlays("避免把持续下跌误识别为临时负残差")
   },
   {
     id: "session-momentum",
@@ -64,7 +80,7 @@ export const STRATEGIES = [
     exit: "收盘前退出",
     evidence: "样本外研究支持，但不是任意 15 分钟动量",
     risk: "尾盘价差与事件日跳变",
-    subStrategies: downtrendVeto("标记开盘方向性下跌中的假动量机会")
+    subStrategies: shadowRiskOverlays("标记开盘方向性下跌中的假动量机会")
   }
 ];
 

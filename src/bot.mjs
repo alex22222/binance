@@ -12,9 +12,11 @@ import {
   dynamicExitDecision,
   entryMarketAllowed,
   entrySessionDecision,
+  entrySymbolPolicyDecision,
   entryStatusCheckDecision,
   executionCostEstimate,
   initialRiskDecision,
+  initialStopPolicyUpdate,
   isStopLossExit,
   nyseSessionPlan,
   pendingOrderAction,
@@ -24,6 +26,7 @@ import {
   shadowAtrPositionSizeDecision,
   shadowConcentrationDecision,
   shadowDowntrendVetoDecision,
+  shadowEntryFailureDecision,
   shadowTrendQualityDecision,
   simulateRoundTrip,
   uniqueSymbols,
@@ -164,6 +167,8 @@ function freshState() {
     pendingOrder: null,
     approvalRequest: null,
     cooldownUntil: {},
+    initialStopHistory: [],
+    quarantineUntilBySymbol: {},
     lastEntryDecisionAt: 0,
     lastSignalRefreshAt: 0,
     lastMarketStatusCheckAt: 0,
@@ -188,7 +193,9 @@ async function loadState(path) {
       pendingOrder: state.pendingOrder,
       approvalRequest: state.approvalRequest,
       walletBalance: state.walletBalance || null,
-      roundTripGasHistoryUsdt: state.roundTripGasHistoryUsdt || []
+      roundTripGasHistoryUsdt: state.roundTripGasHistoryUsdt || [],
+      initialStopHistory: state.initialStopHistory || [],
+      quarantineUntilBySymbol: state.quarantineUntilBySymbol || {}
     };
   } catch (error) {
     if (error.code === "ENOENT") return freshState();
@@ -1053,7 +1060,18 @@ async function finalizePendingOrder(config, state, statePath) {
       pnl.gasCostUsdt
     ].slice(-100);
   }
-  state.cooldownUntil[submitted.symbol] = Date.now() + config.reentryCooldownMinutes * 60_000;
+  const completedAtMs = Date.now();
+  state.cooldownUntil[submitted.symbol] = completedAtMs + config.reentryCooldownMinutes * 60_000;
+  if (submitted.reason === "INITIAL_STOP") {
+    const policy = initialStopPolicyUpdate({
+      symbol: submitted.symbol,
+      initialStopHistory: state.initialStopHistory,
+      quarantineUntilBySymbol: state.quarantineUntilBySymbol,
+      nowMs: completedAtMs
+    });
+    state.initialStopHistory = policy.initialStopHistory;
+    state.quarantineUntilBySymbol = policy.quarantineUntilBySymbol;
+  }
   removeOpenPosition(state, submitted);
   state.pendingOrder = null;
   await traceAction("pending_order", "finished", {
@@ -1101,7 +1119,12 @@ async function buildCandidate(
   const scanId = randomUUID();
   const status = knownStatus || await assetStatus(asset.contractAddress);
   let dataFetchedAt = new Date().toISOString();
-  const marketOpen = entryMarketAllowed(status, config.regularOnlyEntries, Date.now());
+  const marketOpen = entryMarketAllowed(
+    status,
+    config.regularOnlyEntries,
+    Date.now(),
+    config.entryCutoffMinutes
+  );
   if (!marketOpen) {
     await recordMarketData("market_scan", {
       cycleId: currentCycleId,
@@ -1400,10 +1423,23 @@ async function evaluateEntry(
   const heldSymbols = heldPositionSymbols(state);
   const eligibleSymbols = [];
   for (const symbol of symbols) {
+    const symbolPolicy = entrySymbolPolicyDecision({
+      symbol,
+      blockedSymbols: config.entryBlockedSymbols,
+      initialStopHistory: state.initialStopHistory,
+      quarantineUntilBySymbol: state.quarantineUntilBySymbol,
+      nowMs: now
+    });
     if (!scanOnly && heldSymbols.has(symbol)) {
       await traceAction("candidate_rejected", "skipped", { symbol, reason: "already_held" }, currentCycleId);
     } else if (!scanOnly && (state.cooldownUntil[symbol] || 0) > now) {
       await traceAction("candidate_rejected", "skipped", { symbol, reason: "cooldown" }, currentCycleId);
+    } else if (!scanOnly && !symbolPolicy.allowed) {
+      await traceAction("candidate_rejected", "skipped", {
+        symbol,
+        reason: symbolPolicy.reason,
+        quarantineUntil: state.quarantineUntilBySymbol?.[symbol] || null
+      }, currentCycleId);
     } else {
       eligibleSymbols.push(symbol);
     }
@@ -1443,7 +1479,12 @@ async function evaluateEntry(
     })
   )).filter(Boolean);
   const nysePlan = nyseSessionPlan(now);
-  const sessionDecision = entrySessionDecision(statusEntries, config.regularOnlyEntries, now);
+  const sessionDecision = entrySessionDecision(
+    statusEntries,
+    config.regularOnlyEntries,
+    now,
+    config.entryCutoffMinutes
+  );
   const observedMarketSession = sessionDecision.shouldScan
     ? "regular"
     : statusEntries.some(({ status }) => status.marketStatus === "offhours")
@@ -1473,6 +1514,7 @@ async function evaluateEntry(
     await traceAction(scanOnly ? "signal_refresh" : "entry_decision", "skipped", {
       reason,
       regularOnlyEntries: config.regularOnlyEntries,
+      entryCutoffMinutes: config.entryCutoffMinutes,
       statusCount: statusEntries.length,
       nysePlan
     }, currentCycleId);
@@ -1824,6 +1866,39 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
   position.lastSignalValid = signalValid;
   position.lastSignalTrend15mPct = signal?.trend15mPct ?? null;
   position.profitFloorPct = profitFloorPct;
+  const heldMs = Math.max(0, Date.now() - Date.parse(position.openedAt));
+  const shadowEntryFailure = shadowEntryFailureDecision({
+    heldMs,
+    signalValid,
+    peakReturnPct: excursion.peakReturnPct,
+    returnPct,
+    initialRiskPct: Number(position.initialRiskPct)
+  });
+  const previousShadowDecision = position.shadowEntryFailure?.decision;
+  if (
+    shadowEntryFailure.decision !== previousShadowDecision &&
+    ["WOULD_EXIT", "WOULD_HOLD"].includes(shadowEntryFailure.decision)
+  ) {
+    position.shadowEntryFailure = {
+      ...shadowEntryFailure,
+      observedAt: new Date().toISOString()
+    };
+    await traceAction("shadow_exit_counterfactual", "observed", {
+      symbol: position.symbol,
+      strategyId: position.strategyId || DEFAULT_STRATEGY_ID,
+      subStrategyId: shadowEntryFailure.id,
+      decision: shadowEntryFailure.decision,
+      reason: shadowEntryFailure.reason,
+      enforced: false,
+      heldMinutes: shadowEntryFailure.heldMinutes,
+      returnPct,
+      returnR: shadowEntryFailure.returnR,
+      peakReturnPct: excursion.peakReturnPct,
+      mfeR: shadowEntryFailure.mfeR,
+      signalValid,
+      conditions: shadowEntryFailure.conditions
+    }, currentCycleId);
+  }
   let reason = dynamicExitDecision({
     returnPct,
     initialRiskPct: Number(position.initialRiskPct),
@@ -2043,7 +2118,18 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
     state.realizedGrossPnlUsdt = Number(state.realizedGrossPnlUsdt || 0) + pnl.grossPnlUsdt;
     state.gasCostUsdt = Number(state.gasCostUsdt || 0) + pnl.gasCostUsdt;
     state.realizedPnlUsdt += pnl.netPnlUsdt;
-    state.cooldownUntil[position.symbol] = Date.now() + config.reentryCooldownMinutes * 60_000;
+    const completedAtMs = Date.now();
+    state.cooldownUntil[position.symbol] = completedAtMs + config.reentryCooldownMinutes * 60_000;
+    if (confirmedReason.type === "INITIAL_STOP") {
+      const policy = initialStopPolicyUpdate({
+        symbol: position.symbol,
+        initialStopHistory: state.initialStopHistory,
+        quarantineUntilBySymbol: state.quarantineUntilBySymbol,
+        nowMs: completedAtMs
+      });
+      state.initialStopHistory = policy.initialStopHistory;
+      state.quarantineUntilBySymbol = policy.quarantineUntilBySymbol;
+    }
     removeOpenPosition(state, position);
   }
   await traceAction("sell_submission", result.shadow ? "simulated" : "submitted", {
@@ -2447,6 +2533,8 @@ async function main() {
       estimatedRoundTripGasUsdt: config.estimatedRoundTripGasUsdt,
       minNetEdgePct: config.minNetEdgePct,
       regularOnlyEntries: config.regularOnlyEntries,
+      entryCutoffMinutes: config.entryCutoffMinutes,
+      entryBlockedSymbols: config.entryBlockedSymbols,
       nysePlan: nyseSessionPlan(Date.now()),
       atrPeriod: config.atrPeriod,
       entryAtrMultiplier: config.entryAtrMultiplier,

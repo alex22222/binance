@@ -39,6 +39,8 @@
   "estimatedRoundTripGasUsdt": 0.1,
   "minNetEdgePct": 0.1,
   "regularOnlyEntries": true,
+  "entryCutoffMinutes": 45,
+  "entryBlockedSymbols": [],
   "quoteMaxAgeSeconds": 10,
   "maxQuoteDriftPct": 0.5,
   "allowUnsupportedAuditForOfficialRwa": true,
