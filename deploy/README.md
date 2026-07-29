@@ -85,10 +85,10 @@ journalctl -u binance-agentic-stock-bot -u binance-agentic-dashboard
 ## Strategy validation
 
 The validation job is research-only. It downloads public one-minute token and
-underlying-stock candles, runs all four library strategies with the same 50
-USDT notional and conservative cost assumption, and writes only under
-`state/strategy-validation/`. It does not use the wallet, change the active
-strategy, approve an order, or submit a transaction.
+underlying-stock candles, runs the strategy library plus market-filtered A/B
+variants with the same 50 USDT notional and conservative cost assumption, and
+writes only under `state/strategy-validation/`. It does not use the wallet,
+change the active strategy, approve an order, or submit a transaction.
 
 Run the initial history load manually, then enable the daily post-close timer:
 

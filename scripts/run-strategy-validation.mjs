@@ -237,7 +237,7 @@ function stateMarkdown(state, downloadSummary, report) {
 
 ## Goal
 
-Compare all four strategies over the 30-day forward window ending ${state.targetAt}.
+Compare all ${report.forward.strategies.length} historical strategy variants over the 30-day forward window ending ${state.targetAt}.
 
 ## Current
 
@@ -282,7 +282,9 @@ const assumptions = {
   signalReviewHours: config.signalReviewHours,
   signalReviewMinR: config.signalReviewMinR,
   minNetEdgePct: config.minNetEdgePct,
-  disasterStopLossPct: config.disasterStopLossPct
+  disasterStopLossPct: config.disasterStopLossPct,
+  entryCutoffMinutes: config.entryCutoffMinutes,
+  entryBlockedSymbols: config.entryBlockedSymbols
 };
 const forwardStartMs = Date.parse(validationState.startedAt);
 const historical = backtestStrategyLibrary(filterDataset(dataset, (timestamp) => timestamp < forwardStartMs), assumptions);
@@ -299,7 +301,8 @@ const report = {
   limitations: [
     "Historical basis results use reference prices and the current shares multiplier, not archived amount-specific executable quotes.",
     "All historical strategies use a conservative fixed round-trip cost assumption.",
-    "The simulator matches production position count and configured exits, but candle closes remain proxies for executable quotes and intrabar fills.",
+    "The simulator matches production position count, configured exits, pre-close cutoff, symbol blocks, and initial-stop reentry policy, but candle closes remain proxies for executable quotes and intrabar fills.",
+    "Market-filtered variants suppress only explicit WOULD_BLOCK states; insufficient benchmark history remains eligible and is not counted as a successful filter.",
     "Research strategies are validation-only and are not enabled in production."
   ],
   historical,

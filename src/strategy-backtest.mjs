@@ -1,3 +1,13 @@
+import {
+  entrySymbolPolicyDecision,
+  initialStopPolicyUpdate,
+  nyseSessionPlan,
+  shadowDowntrendVetoDecision,
+  shadowMarketRegimeDecision,
+  shadowTrendPullbackDecision,
+  shadowTrendQualityDecision
+} from "./strategy.mjs";
+
 const DEFAULT_NOTIONAL_USDT = 50;
 const DEFAULT_ROUND_TRIP_COST_PCT = 1;
 
@@ -7,6 +17,28 @@ const definitions = [
     name: "自适应动量",
     evidenceLevel: "historical-reference",
     rule: "15分钟涨幅≥0.75×ATR15、至少9/15根上涨，且信号幅度覆盖成本"
+  },
+  {
+    id: "adaptive-momentum-market-filtered",
+    baseStrategyId: "adaptive-momentum",
+    name: "自适应动量＋市场过滤",
+    evidenceLevel: "historical-shadow",
+    marketFilter: true,
+    rule: "自适应动量信号，仅排除SPY/QQQ共同弱势且至少一个持续下跌的时点"
+  },
+  {
+    id: "trend-pullback-confirmation",
+    name: "趋势回撤再确认",
+    evidenceLevel: "historical-shadow",
+    rule: "60分钟≥0.75×ATR15、从近期高点回撤0.3–0.8×ATR15、最后1分钟突破此前3分钟收盘高点"
+  },
+  {
+    id: "trend-pullback-market-filtered",
+    baseStrategyId: "trend-pullback-confirmation",
+    name: "趋势回撤＋市场过滤",
+    evidenceLevel: "historical-shadow",
+    marketFilter: true,
+    rule: "趋势回撤再确认信号，仅排除SPY/QQQ共同弱势且至少一个持续下跌的时点"
   },
   {
     id: "executable-basis-reversion",
@@ -59,6 +91,14 @@ export function performanceMetrics(trades, notionalUsdt = DEFAULT_NOTIONAL_USDT)
     maxDrawdownUsdt,
     maxDrawdownPct: maxDrawdownUsdt / notionalUsdt * 100
   };
+}
+
+function performanceBySymbol(trades, notionalUsdt) {
+  const symbols = [...new Set(trades.map(({ ticker }) => ticker).filter(Boolean))].sort();
+  return Object.fromEntries(symbols.map((ticker) => [
+    ticker,
+    performanceMetrics(trades.filter((trade) => trade.ticker === ticker), notionalUsdt)
+  ]));
 }
 
 function newYorkParts(timestamp) {
@@ -183,8 +223,27 @@ function sessionMinute(timestamp) {
   return Number(parts.hour) * 60 + Number(parts.minute);
 }
 
-function adaptiveEntry(market, timestamp, costPct, minNetEdgePct) {
-  return Object.keys(market).map((ticker) => {
+function rawCandle(candle) {
+  return [
+    candle.openTime,
+    candle.open,
+    candle.high,
+    candle.low,
+    candle.close,
+    candle.volume || 0,
+    candle.closeTime
+  ];
+}
+
+function entryCutoffAllows(timestamp, entryCutoffMinutes) {
+  const closeTime = nyseSessionPlan(timestamp).closeTime;
+  if (!closeTime) return false;
+  const [hour, minute] = closeTime.split(":").map(Number);
+  return sessionMinute(timestamp) < hour * 60 + minute - entryCutoffMinutes;
+}
+
+function adaptiveEntry(market, timestamp, costPct, minNetEdgePct, eligible = () => true) {
+  return Object.keys(market).filter(eligible).map((ticker) => {
     const feature = momentumFeature(market, ticker, timestamp);
     return feature ? { ticker, feature } : null;
   }).filter(Boolean).filter(({ feature }) => (
@@ -193,6 +252,74 @@ function adaptiveEntry(market, timestamp, costPct, minNetEdgePct) {
     feature.upMinutes >= 9 &&
     feature.trend15mPct >= costPct + minNetEdgePct
   )).sort((left, right) => right.feature.trend15mPct - left.feature.trend15mPct)[0] || null;
+}
+
+function trendPullbackFeature(market, ticker, timestamp) {
+  const item = market[ticker];
+  if (!item) return null;
+  const currentAtrPct = atrPct(item.fifteenMinute, timestamp);
+  if (!Number.isFinite(currentAtrPct)) return null;
+  const decision = shadowTrendPullbackDecision({
+    minuteCandles: item.candles
+      .filter(({ closeTime }) => closeTime < timestamp)
+      .slice(-4)
+      .map(rawCandle),
+    atrCandles: item.fifteenMinute
+      .filter(({ closeTime }) => closeTime < timestamp)
+      .slice(-5)
+      .map(rawCandle),
+    atr15Pct: currentAtrPct,
+    nowMs: timestamp
+  });
+  return {
+    ...decision,
+    atr15Pct: currentAtrPct,
+    price: item.candles.filter(({ closeTime }) => closeTime < timestamp).at(-1)?.close
+  };
+}
+
+function trendPullbackEntry(
+  market,
+  timestamp,
+  costPct,
+  minNetEdgePct,
+  options,
+  eligible = () => true
+) {
+  return Object.keys(market).filter(eligible).map((ticker) => {
+    const feature = trendPullbackFeature(market, ticker, timestamp);
+    return feature ? { ticker, feature } : null;
+  }).filter(Boolean).filter(({ feature }) => {
+    const initialRiskPct = Math.min(
+      options.maxInitialStopPct,
+      Math.max(options.minInitialStopPct, feature.atr15Pct * options.atrStopMultiplier)
+    );
+    return (
+      feature.decision === "WOULD_ENTER" &&
+      initialRiskPct * options.finalTakeProfitR >= costPct + minNetEdgePct
+    );
+  }).sort((left, right) => (
+    right.feature.return60mPct - left.feature.return60mPct ||
+    left.feature.pullbackDepthAtr - right.feature.pullbackDepthAtr
+  ))[0] || null;
+}
+
+function marketRegimeFeature(market, timestamp) {
+  const candidates = ["SPY", "QQQ"].map((ticker) => {
+    const item = market[ticker];
+    const currentAtrPct = item ? atrPct(item.fifteenMinute, timestamp) : null;
+    if (!item || !Number.isFinite(currentAtrPct)) return null;
+    const candles = item.fifteenMinute
+      .filter(({ closeTime }) => closeTime < timestamp)
+      .slice(-13)
+      .map(rawCandle);
+    return {
+      symbol: ticker,
+      shadowDowntrendVeto: shadowDowntrendVetoDecision(candles, currentAtrPct, timestamp),
+      shadowTrendQuality: shadowTrendQualityDecision(candles, currentAtrPct, timestamp)
+    };
+  }).filter(Boolean);
+  return shadowMarketRegimeDecision(candidates);
 }
 
 function basisFeature(market, ticker, timestamp) {
@@ -206,16 +333,18 @@ function basisFeature(market, ticker, timestamp) {
   };
 }
 
-function basisEntry(market, timestamp, costPct, minNetEdgePct) {
-  return Object.keys(market).map((ticker) => {
+function basisEntry(market, timestamp, costPct, minNetEdgePct, eligible = () => true) {
+  return Object.keys(market).filter(eligible).map((ticker) => {
     const feature = basisFeature(market, ticker, timestamp);
     return feature ? { ticker, feature } : null;
   }).filter(Boolean).filter(({ feature }) => -feature.basisPct >= costPct + minNetEdgePct)
     .sort((left, right) => left.feature.basisPct - right.feature.basisPct)[0] || null;
 }
 
-function residualEntry(market, timestamp, costPct, minNetEdgePct) {
-  return Object.keys(market).filter((ticker) => !["SPY", "QQQ"].includes(ticker)).map((ticker) => {
+function residualEntry(market, timestamp, costPct, minNetEdgePct, eligible = () => true) {
+  return Object.keys(market).filter((ticker) => (
+    !["SPY", "QQQ"].includes(ticker) && eligible(ticker)
+  )).map((ticker) => {
     const feature = residualFeature(market, ticker, timestamp);
     const momentum = momentumFeature(market, ticker, timestamp);
     return feature && momentum ? { ticker, feature: { ...feature, ...momentum } } : null;
@@ -224,9 +353,9 @@ function residualEntry(market, timestamp, costPct, minNetEdgePct) {
   )).sort((left, right) => left.feature.zScore - right.feature.zScore)[0] || null;
 }
 
-function sessionEntry(market, timestamp) {
+function sessionEntry(market, timestamp, eligible = () => true) {
   if (sessionMinute(timestamp) !== 10 * 60) return null;
-  return ["SPY", "QQQ"].map((ticker) => {
+  return ["SPY", "QQQ"].filter(eligible).map((ticker) => {
     const item = market[ticker];
     const index = item?.index.get(timestamp);
     if (index == null || index < 30) return null;
@@ -241,27 +370,54 @@ function sessionEntry(market, timestamp) {
     .sort((left, right) => right.feature.openingReturnPct - left.feature.openingReturnPct)[0] || null;
 }
 
-function strategySignal(strategyId, market, timestamp, costPct, minNetEdgePct) {
-  if (strategyId === "adaptive-momentum") return adaptiveEntry(market, timestamp, costPct, minNetEdgePct);
-  if (strategyId === "executable-basis-reversion") return basisEntry(market, timestamp, costPct, minNetEdgePct);
-  if (strategyId === "residual-reversal") return residualEntry(market, timestamp, costPct, minNetEdgePct);
-  return sessionEntry(market, timestamp);
+function strategySignal(definition, market, timestamp, options, eligible) {
+  const strategyId = definition.baseStrategyId || definition.id;
+  const marketRegime = definition.marketFilter
+    ? marketRegimeFeature(market, timestamp)
+    : null;
+  if (marketRegime?.decision === "WOULD_BLOCK") {
+    return { signal: null, marketBlocked: true, marketRegime };
+  }
+  const { roundTripCostPct, minNetEdgePct } = options;
+  const signal = strategyId === "adaptive-momentum"
+    ? adaptiveEntry(market, timestamp, roundTripCostPct, minNetEdgePct, eligible)
+    : strategyId === "trend-pullback-confirmation"
+      ? trendPullbackEntry(
+          market,
+          timestamp,
+          roundTripCostPct,
+          minNetEdgePct,
+          options,
+          eligible
+        )
+      : strategyId === "executable-basis-reversion"
+        ? basisEntry(market, timestamp, roundTripCostPct, minNetEdgePct, eligible)
+        : strategyId === "residual-reversal"
+          ? residualEntry(market, timestamp, roundTripCostPct, minNetEdgePct, eligible)
+          : sessionEntry(market, timestamp, eligible);
+  return { signal, marketBlocked: false, marketRegime };
 }
 
 function signalStillValid(strategyId, market, position, timestamp, costPct, minNetEdgePct) {
-  if (strategyId === "adaptive-momentum") {
+  const baseStrategyId = definitions.find(({ id }) => id === strategyId)?.baseStrategyId || strategyId;
+  if (baseStrategyId === "adaptive-momentum") {
     return adaptiveEntry(market, timestamp, costPct, minNetEdgePct)?.ticker === position.ticker;
   }
-  if (strategyId === "executable-basis-reversion") {
+  if (baseStrategyId === "trend-pullback-confirmation") {
+    return trendPullbackFeature(market, position.ticker, timestamp)?.conditions?.establishedTrend === true;
+  }
+  if (baseStrategyId === "executable-basis-reversion") {
     return (basisFeature(market, position.ticker, timestamp)?.basisPct ?? 0) < -0.1;
   }
-  if (strategyId === "residual-reversal") {
+  if (baseStrategyId === "residual-reversal") {
     return (residualFeature(market, position.ticker, timestamp)?.zScore ?? 0) < 0;
   }
   return sessionMinute(timestamp) < 15 * 60 + 50;
 }
 
-function simulateStrategy(strategyId, market, timestamps, options) {
+function simulateStrategy(definition, market, timestamps, options) {
+  const strategyId = definition.id;
+  const baseStrategyId = definition.baseStrategyId || strategyId;
   const {
     notionalUsdt,
     roundTripCostPct,
@@ -275,9 +431,20 @@ function simulateStrategy(strategyId, market, timestamps, options) {
     signalReviewHours,
     signalReviewMinR,
     minNetEdgePct,
-    disasterStopLossPct
+    disasterStopLossPct,
+    entryCutoffMinutes,
+    entryBlockedSymbols
   } = options;
   const trades = [];
+  const entryDiagnostics = {
+    cadenceChecks: 0,
+    signals: 0,
+    marketBlocked: 0,
+    cutoffBlocked: 0,
+    symbolPolicyBlocked: 0
+  };
+  let initialStopHistory = [];
+  let quarantineUntilBySymbol = {};
   let positions = [];
   let pending = null;
   for (const timestamp of timestamps) {
@@ -326,11 +493,12 @@ function simulateStrategy(strategyId, market, timestamps, options) {
         roundTripCostPct,
         minNetEdgePct
       );
-      const basisNormalized = strategyId === "executable-basis-reversion" &&
+      const basisNormalized = baseStrategyId === "executable-basis-reversion" &&
         (basisFeature(market, position.ticker, timestamp)?.basisPct ?? -Infinity) >= -0.1;
-      const residualNormalized = strategyId === "residual-reversal" &&
+      const residualNormalized = baseStrategyId === "residual-reversal" &&
         (residualFeature(market, position.ticker, timestamp)?.zScore ?? -Infinity) >= 0;
-      const sessionClose = strategyId === "session-momentum" && sessionMinute(timestamp) >= 15 * 60 + 50;
+      const sessionClose = baseStrategyId === "session-momentum" &&
+        sessionMinute(timestamp) >= 15 * 60 + 50;
       const heldMs = timestamp - position.entryTime;
       const rawReason = grossReturnPct <= -disasterStopLossPct ? "DISASTER_STOP"
         : grossReturnPct <= -position.initialRiskPct ? "INITIAL_STOP"
@@ -364,17 +532,49 @@ function simulateStrategy(strategyId, market, timestamps, options) {
           realizedR: returnPct / position.initialRiskPct,
           reason
         });
+        if (reason === "INITIAL_STOP") {
+          const updated = initialStopPolicyUpdate({
+            symbol: position.ticker,
+            initialStopHistory,
+            quarantineUntilBySymbol,
+            nowMs: timestamp
+          });
+          initialStopHistory = updated.initialStopHistory;
+          quarantineUntilBySymbol = updated.quarantineUntilBySymbol;
+        }
       } else {
         retained.push(position);
       }
     }
     positions = retained;
     if (cadence(timestamp) && positions.length < maxOpenPositions && !pending) {
-      const signal = strategySignal(strategyId, market, timestamp, roundTripCostPct, minNetEdgePct);
-      if (signal && !positions.some(({ ticker }) => ticker === signal.ticker)) pending = signal;
+      entryDiagnostics.cadenceChecks += 1;
+      if (!entryCutoffAllows(timestamp, entryCutoffMinutes)) {
+        entryDiagnostics.cutoffBlocked += 1;
+        continue;
+      }
+      const eligible = (ticker) => {
+        const decision = entrySymbolPolicyDecision({
+          symbol: ticker,
+          blockedSymbols: entryBlockedSymbols,
+          initialStopHistory,
+          quarantineUntilBySymbol,
+          nowMs: timestamp
+        });
+        if (!decision.allowed) entryDiagnostics.symbolPolicyBlocked += 1;
+        return decision.allowed;
+      };
+      const result = strategySignal(definition, market, timestamp, options, eligible);
+      if (result.marketBlocked) entryDiagnostics.marketBlocked += 1;
+      if (result.signal) {
+        entryDiagnostics.signals += 1;
+        if (!positions.some(({ ticker }) => ticker === result.signal.ticker)) {
+          pending = result.signal;
+        }
+      }
     }
   }
-  return trades;
+  return { trades, entryDiagnostics };
 }
 
 export function backtestStrategyLibrary(dataset, options = {}) {
@@ -392,18 +592,29 @@ export function backtestStrategyLibrary(dataset, options = {}) {
     finalTakeProfitR: Number(options.finalTakeProfitR || 2),
     signalReviewHours: Number(options.signalReviewHours || 4),
     signalReviewMinR: Number(options.signalReviewMinR || 0.5),
-    minNetEdgePct: Number(options.minNetEdgePct || 0.1),
-    disasterStopLossPct: Number(options.disasterStopLossPct || 8)
+    minNetEdgePct: Number(options.minNetEdgePct ?? 0.1),
+    disasterStopLossPct: Number(options.disasterStopLossPct || 8),
+    entryCutoffMinutes: Number(options.entryCutoffMinutes ?? 45),
+    entryBlockedSymbols: Array.isArray(options.entryBlockedSymbols)
+      ? [...options.entryBlockedSymbols]
+      : []
   };
   const market = marketView(dataset);
   const timestamps = [...new Set(Object.values(market).flatMap(({ candles }) => (
     candles.map(({ openTime }) => openTime)
   )))].sort((left, right) => left - right);
   const strategies = definitions.map((definition) => {
-    const trades = simulateStrategy(definition.id, market, timestamps, simulationOptions);
+    const { trades, entryDiagnostics } = simulateStrategy(
+      definition,
+      market,
+      timestamps,
+      simulationOptions
+    );
     return {
       ...definition,
       performance: performanceMetrics(trades, notionalUsdt),
+      performanceBySymbol: performanceBySymbol(trades, notionalUsdt),
+      entryDiagnostics,
       trades
     };
   });
@@ -419,6 +630,12 @@ export function backtestStrategyLibrary(dataset, options = {}) {
       onePositionAtATime: simulationOptions.maxOpenPositions === 1,
       signalExecutionDelayMinutes: 1,
       basisUsesCurrentMultiplier: true,
+      entryPolicy: {
+        entryCutoffMinutes: simulationOptions.entryCutoffMinutes,
+        entryBlockedSymbols: simulationOptions.entryBlockedSymbols,
+        sameSessionInitialStopReentryBlocked: true,
+        secondInitialStopQuarantineTradingDays: 5
+      },
       exitParameters: {
         atrStopMultiplier: simulationOptions.atrStopMultiplier,
         minInitialStopPct: simulationOptions.minInitialStopPct,
