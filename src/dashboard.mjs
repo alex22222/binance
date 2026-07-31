@@ -13,6 +13,10 @@ function finiteNumber(value, fallback = 0) {
 
 function buildPositionSnapshot(position, gasEstimate) {
   const costBasisUsdt = finiteNumber(position.costBasisUsdt);
+  const quantity = finiteNumber(position.quantity);
+  const lastQuoteProceedsUsdt = position.lastQuoteProceedsUsdt == null
+    ? null
+    : finiteNumber(position.lastQuoteProceedsUsdt, null);
   const initialRiskPct = finiteNumber(position.initialRiskPct, null);
   const worstReturnPct = position.worstReturnPct == null
     ? null
@@ -21,8 +25,12 @@ function buildPositionSnapshot(position, gasEstimate) {
   const riskUsdt = initialRiskPct > 0 ? costBasisUsdt * initialRiskPct / 100 : null;
   return {
     ...position,
-    quantity: finiteNumber(position.quantity),
+    quantity,
     costBasisUsdt,
+    averageEntryPriceUsdt: quantity > 0 ? costBasisUsdt / quantity : null,
+    executableMarketPriceUsdt: quantity > 0 && lastQuoteProceedsUsdt != null
+      ? lastQuoteProceedsUsdt / quantity
+      : null,
     initialRiskPct,
     profitFloorPct: finiteNumber(position.profitFloorPct, null),
     entryAtr15Pct: finiteNumber(position.entryAtr15Pct, null),
@@ -33,7 +41,7 @@ function buildPositionSnapshot(position, gasEstimate) {
     maeR: initialRiskPct > 0 && worstReturnPct != null ? worstReturnPct / initialRiskPct : null,
     mfeR: initialRiskPct > 0 ? peakReturnPct / initialRiskPct : null,
     trailingStopPct: finiteNumber(position.trailingStopPct, null),
-    lastQuoteProceedsUsdt: finiteNumber(position.lastQuoteProceedsUsdt, null),
+    lastQuoteProceedsUsdt,
     entryGasUsdt: finiteNumber(position.entryGasUsdt, gasEstimate.gasUsdt / 2),
     estimatedExitGasUsdt: gasEstimate.gasUsdt / 2,
     grossUnrealizedPnlUsdt: position.lastQuoteProceedsUsdt == null
@@ -99,12 +107,108 @@ function latestSignals(traceRecords) {
   return signals;
 }
 
+const DECISION_STAGE_BY_EVENT = new Map([
+  ["candidate_evaluated", 2],
+  ["candidate_evaluation", 2],
+  ["candidate_rejected", 2],
+  ["candidate_selected", 2],
+  ["cost_coverage_decision", 2],
+  ["entry_decision", 2],
+  ["token_audit_decision", 2],
+  ["order_intent", 3],
+  ["order_submission", 3],
+  ["trade_approval", 4],
+  ["buy_submission", 5],
+  ["order_recovery", 5],
+  ["pending_order", 5],
+  ["position_change", 5],
+  ["sell_submission", 5]
+]);
+
+const FAILED_DECISION_STATUSES = new Set([
+  "ambiguous",
+  "closed",
+  "failed",
+  "halted",
+  "invalidated",
+  "skipped"
+]);
+
+const PENDING_DECISION_STATUSES = new Set([
+  "requested",
+  "scheduled",
+  "started",
+  "waiting"
+]);
+
+function newYorkDateKey(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function decisionStageStatus(record) {
+  if (record.event === "candidate_rejected") return "failed";
+  if (
+    ["candidate_evaluated", "candidate_evaluation"].includes(record.event) &&
+    (
+      record.details?.costCoverageAllowed === false ||
+      record.details?.initialRiskAllowed === false
+    )
+  ) return "failed";
+  if (FAILED_DECISION_STATUSES.has(record.status)) return "failed";
+  if (PENDING_DECISION_STATUSES.has(record.status)) return "pending";
+  return "passed";
+}
+
+function buildSignalDecisionStages(traceRecords, nowMs) {
+  const today = newYorkDateKey(nowMs);
+  const stagesBySymbol = {};
+  for (const record of traceRecords) {
+    const stage = DECISION_STAGE_BY_EVENT.get(record.event);
+    const symbol = record.details?.symbol;
+    if (!stage || !symbol || newYorkDateKey(record.timestamp) !== today) continue;
+    const stages = stagesBySymbol[symbol] || new Map();
+    const previous = stages.get(stage);
+    const timestampMs = Date.parse(record.timestamp || "");
+    const previousTimestampMs = Date.parse(previous?.timestamp || "");
+    const latest = previous && Number.isFinite(previousTimestampMs) && (
+      !Number.isFinite(timestampMs) || previousTimestampMs > timestampMs
+    )
+      ? previous
+      : {
+          stage,
+          status: decisionStageStatus(record),
+          event: record.event,
+          timestamp: record.timestamp,
+          reason: record.details.reason || record.details.error || record.details.outcome || null,
+          count: 0
+        };
+    latest.count = (previous?.count || 0) + 1;
+    stages.set(stage, latest);
+    stagesBySymbol[symbol] = stages;
+  }
+  return Object.fromEntries(Object.entries(stagesBySymbol).map(([symbol, stages]) => [
+    symbol,
+    [...stages.values()].sort((left, right) => left.stage - right.stage)
+  ]));
+}
+
 export function buildDashboardSnapshot({
   config,
   state,
   traceRecords,
   signalHistoryRecords = [],
   walletBalanceHistory = [],
+  walletAvailableBalance = null,
+  marketIndex = null,
   approvalControl = null,
   strategyControl = null,
   nowMs = Date.now()
@@ -180,17 +284,25 @@ export function buildDashboardSnapshot({
       walletSession: state.walletSession || null,
       emergencyStop: state.emergencyStop || null
     },
-    walletBalance: state.walletBalance
+    walletBalance: state.walletBalance || walletAvailableBalance
       ? {
-          totalUsd: state.walletBalance.totalUsd == null
+          totalUsd: state.walletBalance?.totalUsd == null
             ? null
             : finiteNumber(state.walletBalance.totalUsd, null),
-          assetCount: finiteNumber(state.walletBalance.assetCount),
-          checkedAt: state.walletBalance.checkedAt || null,
-          lastCheckFailedAt: state.walletBalance.lastCheckFailedAt || null
+          availableUsdt: walletAvailableBalance?.availableUsdt == null
+            ? state.walletBalance?.availableUsdt == null
+              ? null
+              : finiteNumber(state.walletBalance.availableUsdt, null)
+            : finiteNumber(walletAvailableBalance.availableUsdt, null),
+          availableUsdtCheckedAt: walletAvailableBalance?.checkedAt || state.walletBalance?.checkedAt || null,
+          availableUsdtStale: walletAvailableBalance?.stale === true,
+          assetCount: finiteNumber(state.walletBalance?.assetCount),
+          checkedAt: state.walletBalance?.checkedAt || null,
+          lastCheckFailedAt: state.walletBalance?.lastCheckFailedAt || null
         }
       : null,
     assetTrend: buildAssetTrend(walletBalanceHistory, state.walletBalance, 30),
+    marketIndex,
     risk: {
       maxTradeUsdt: finiteNumber(config.maxTradeUsdt),
       dailyLossLimitUsdt,
@@ -238,6 +350,7 @@ export function buildDashboardSnapshot({
     approvalRequest,
     pendingOrder: state.pendingOrder || null,
     signals: latestSignals([...signalHistoryRecords, ...traceRecords]),
+    signalDecisionStages: buildSignalDecisionStages(traceRecords, nowMs),
     recentActions: traceRecords.slice(-80).reverse()
   };
 }
@@ -247,6 +360,8 @@ export async function loadDashboardSnapshot({
   statePath,
   tracePath,
   signalHistoryPath = null,
+  walletAvailableBalance = null,
+  marketIndex = null,
   approvalControlPath = null,
   emergencyStopPath,
   strategyControlPath,
@@ -287,6 +402,8 @@ export async function loadDashboardSnapshot({
     traceRecords,
     signalHistoryRecords,
     walletBalanceHistory,
+    walletAvailableBalance,
+    marketIndex,
     approvalControl,
     strategyControl,
     nowMs

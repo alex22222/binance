@@ -14,6 +14,21 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.doesNotMatch(html, /实时持仓，一眼看清/);
   assert.doesNotMatch(html, /Local only · Safety control dashboard/);
   assert.match(html, /class="top-stats"/);
+  assert.match(html, /grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
+  assert.match(html, /id="marketIndexStatus"/);
+  assert.match(html, /id="nasdaqIndex"/);
+  assert.equal(html.match(/id="nasdaqIndex"/g)?.length, 1);
+  assert.ok(html.indexOf('id="marketIndexStatus"') < html.indexOf('id="walletStatus"'));
+  assert.doesNotMatch(html, /class="top-stat market-index"/);
+  assert.match(html, /纳斯达克/);
+  assert.match(html, /function renderMarketIndex\(marketIndex\)/);
+  assert.match(html, /renderMarketIndex\(data\.marketIndex\)/);
+  assert.match(html, /NASDAQ_OFFICIAL/);
+  assert.match(html, /Nasdaq 官方延迟行情/);
+  assert.match(html, /钱包总资产/);
+  assert.match(html, /id="walletAvailableBalance"/);
+  assert.match(html, /data\.walletBalance\?\.availableUsdt/);
+  assert.match(html, /0x55d398326f99059fF775485246999027B3197955/);
   assert.match(html, /id="walletBalance"/);
   assert.match(html, /id="assetTrendChart"/);
   assert.match(html, /id="assetTrendSummary"/);
@@ -25,6 +40,18 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.match(html, /id="realizedPnl"/);
   assert.match(html, /当前显示净盈亏/);
   assert.match(html, /预估净盈亏/);
+  assert.match(html, /id="positionRefresh"/);
+  assert.match(html, /positionRefresh\.addEventListener\("click"/);
+  assert.match(html, /刷新中…/);
+  assert.match(html, /position\.averageEntryPriceUsdt/);
+  assert.match(html, /position\.executableMarketPriceUsdt/);
+  assert.match(html, /position\.lastQuoteAt/);
+  assert.match(html, /平均买入价/);
+  assert.match(html, /市场实时价（可卖）/);
+  assert.match(html, /盈利达到约/);
+  assert.match(html, /普通卖出至少需要/);
+  assert.doesNotMatch(html, /报价 MAE/);
+  assert.doesNotMatch(html, /MFE/);
   assert.match(html, /const positions = Array\.isArray\(data\.positions\)/);
   assert.match(html, /positions\.forEach\(\(position\) =>/);
   assert.match(html, /实际 P90/);
@@ -50,10 +77,12 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.match(html, /\/api\/wallet-login\/status/);
   assert.doesNotMatch(html, /id="metrics"/);
   assert.match(html, /class="dashboard-grid"/);
-  assert.match(html, /\.dashboard-grid \{ display: grid; grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
-  assert.match(html, /\.signals-section \{ grid-column: 1 \/ -1; \}/);
+  assert.match(html, /\.dashboard-grid \{ display: grid; grid-template-columns: minmax\(0, 1\.35fr\) minmax\(340px, \.85fr\);/);
+  assert.doesNotMatch(html, /\.positions-section \{ grid-column: 1 \/ -1; \}/);
   assert.match(html, /class="actions-section"/);
-  assert.match(html, /\.actions-section \{ margin-top: 24px; \}/);
+  assert.match(html, /\.actions-section \{ grid-column: 1 \/ -1; \}/);
+  assert.match(html, /\.actions-section \.timeline \{ max-height: 560px;/);
+  assert.match(html, /\.risk-section \{ margin-top: 24px; \}/);
   assert.match(html, /id="timelineDecisionFilter"/);
   assert.match(html, />决策判断 <span id="timelineDecisionCount">0<\/span><\/button>/);
   assert.match(html, /id="timelineTradeFilter"/);
@@ -84,14 +113,14 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.match(html, /\.event \{ grid-template-columns: 54px minmax\(0, 1fr\);/);
   assert.match(html, /id="strategyRisk"/);
   assert.match(html, /id="workflow"/);
-  assert.ok(html.indexOf('class="actions-section"') > html.indexOf('id="workflow"'));
+  assert.ok(html.indexOf('id="position"') > html.indexOf('id="signals"'));
+  assert.ok(html.indexOf('class="actions-section"') > html.indexOf('id="position"'));
+  assert.ok(html.indexOf('id="strategyRisk"') > html.indexOf('class="actions-section"'));
   assert.match(html, /function renderStrategyRisk\(data\)/);
   assert.match(html, /Shadow 风控/);
   assert.match(html, /仅观测，不改变下单/);
   assert.match(html, /开放风险/);
   assert.match(html, /日亏损额度使用/);
-  assert.match(html, /MAE/);
-  assert.match(html, /MFE/);
   assert.match(html, /shadowSuggestedTradeUsdt/);
   assert.match(html, /shadowTrendQualityDecision/);
   assert.match(html, /function renderWorkflow\(data\)/);
@@ -133,4 +162,59 @@ test("live dashboard provides an approval-first iPhone layout and compact signal
   assert.match(html, /\.approval-button \{[^}]*min-height: 52px;/);
   assert.match(html, /@media \(max-width: 600px\)/);
   assert.match(html, /\.signal-table-head, \.signal \{ display: grid; grid-template-columns: 1\.05fr \.65fr 1\.15fr \.9fr \.85fr;/);
+});
+
+test("live dashboard embeds collapsed approvals in workflow stage four", () => {
+  const html = liveDashboardHtml();
+
+  assert.match(html, /class="top-asset-trend"/);
+  assert.ok(html.indexOf('class="top-asset-trend"') < html.indexOf("</header>"));
+  assert.doesNotMatch(html, /class="asset-trend-section"/);
+  assert.match(html, /class="panel workflow-rail" id="workflowRail"/);
+  assert.match(html, /id="workflow"[\s\S]*class="workflow-approval approval-section" id="approvalSection"/);
+  assert.match(html, /阶段 4 · 逐笔确认/);
+  assert.match(html, /id="approvalToggle"/);
+  assert.match(html, /id="approvalSection"[^>]*data-expanded="false"/);
+  assert.match(html, /aria-controls="approval"/);
+  assert.match(html, /id="approvalCount">0<\/span>/);
+  assert.match(html, /function setApprovalExpanded\(expanded\)/);
+  assert.match(html, /approvalSection\.classList\.toggle\("has-approval", Boolean\(request\)\)/);
+  assert.match(html, /const approvalStageCopy = data\.approvalRequest/);
+  assert.match(html, /el\("small", "workflow-stage-status", approvalStageCopy\)/);
+  assert.match(html, /approvalToggle\.addEventListener\("click"/);
+  assert.ok(html.indexOf('id="signals"') < html.indexOf('id="position"'));
+  assert.ok(html.indexOf('id="position"') < html.indexOf('class="actions-section"'));
+  assert.ok(html.indexOf('class="actions-section"') < html.indexOf('id="strategyRisk"'));
+});
+
+test("live dashboard pulses only live executable strong signals and clears the style on refresh", () => {
+  const html = liveDashboardHtml();
+
+  assert.match(html, /@keyframes strong-signal-pulse/);
+  assert.match(html, /\.signal\.strong-signal \{[^}]*animation: strong-signal-pulse/);
+  assert.match(html, /const strongSignal = Boolean\(signalPassed && costsCovered && !historical && !marketClosed\)/);
+  assert.match(html, /" strong-signal" : ""/);
+  assert.match(html, /el\("small", "signal-strong", "强信号"\)/);
+  assert.match(html, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.signal\.strong-signal \{ animation: none;/);
+  assert.match(html, /root\.replaceChildren\(\)/);
+});
+
+test("live dashboard shows today's execution stages two through five on every signal row", () => {
+  const html = liveDashboardHtml();
+
+  assert.match(html, /function renderSignalDecisionStages\(symbol, stages\)/);
+  assert.match(html, /\[2, 3, 4, 5\]\.forEach\(\(stage\) =>/);
+  assert.match(html, /2: "风控"/);
+  assert.match(html, /3: "创建订单"/);
+  assert.match(html, /4: "逐笔确认"/);
+  assert.match(html, /5: "执行"/);
+  assert.match(html, /data\.signalDecisionStages\?\.\[symbol\]/);
+  assert.match(html, /\.signal-journey \{ grid-column: 1 \/ -1;/);
+  assert.match(html, /\.signal-stage\.failed \{[^}]*color: var\(--red\)/);
+  assert.match(html, /\.signal-stage\.pending \{[^}]*color: var\(--gold\)/);
+  assert.match(html, /\.signal-stage\.passed \{[^}]*color: var\(--green\)/);
+  assert.match(html, /\.signal-stage\.idle \{/);
+  assert.match(html, /今日 " \+ decision\.count \+ " 次/);
+  assert.match(html, /renderSignalDecisionStages\(symbol, data\.signalDecisionStages\?\.\[symbol\]\)/);
+  assert.match(html, /\.signal-journey \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
 });

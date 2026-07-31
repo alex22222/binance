@@ -37,8 +37,8 @@ export function liveDashboardHtml() {
       backdrop-filter: blur(18px);
     }
     .brand { grid-column: 1; grid-row: 1; display: flex; align-items: center; gap: 11px; font-weight: 750; white-space: nowrap; }
-    .nav-info { display: contents; }
-    .top-stats { grid-column: 1 / -1; grid-row: 2; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; padding-top: 10px; border-top: 1px solid var(--line); background: var(--line); }
+    .top-command { grid-column: 1 / -1; grid-row: 2; display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 1px; padding-top: 10px; border-top: 1px solid var(--line); background: var(--line); }
+    .top-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; background: var(--line); }
     .mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 12px; background: var(--gold); color: #171108; font-weight: 900; box-shadow: 0 0 24px rgba(245,193,79,.18); }
     .nav-link { margin-left: 6px; padding: 8px 11px; border: 1px solid rgba(120,169,255,.35); border-radius: 9px; color: #d8e5ff; background: rgba(120,169,255,.08); text-decoration: none; font-size: 12px; transition: background-color .2s, border-color .2s; }
     .nav-link:hover { border-color: rgba(120,169,255,.65); background: rgba(120,169,255,.16); }
@@ -48,19 +48,55 @@ export function liveDashboardHtml() {
     .top-stat strong { font-size: 14px; letter-spacing: -.02em; }
     .badges { grid-column: 2; grid-row: 1; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
     .badge { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: rgba(255,255,255,.018); font: 700 11px ui-monospace, SFMono-Regular, monospace; }
+    .market-index-badge strong { font: inherit; }
     .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 10px currentColor; }
-    main { padding: 22px 0 56px; }
+    .top-asset-trend { position: relative; min-width: 0; height: 58px; padding: 6px 10px 4px; overflow: hidden; background: #0f1319; }
+    .top-asset-trend-head { position: absolute; z-index: 2; inset: 6px 10px auto; display: flex; justify-content: space-between; gap: 8px; pointer-events: none; }
+    .top-asset-trend-head span:first-child { color: var(--muted); font-size: 10px; }
+    .asset-trend-summary { color: var(--muted); font-size: 10px; text-align: right; }
+    .asset-trend-chart { display: block; width: 100%; height: 48px; margin-top: 6px; touch-action: pan-y; }
+    .asset-trend-empty { position: absolute; inset: 23px 10px 4px; display: grid; place-items: center; color: var(--muted); font-size: 10px; pointer-events: none; }
+    .asset-trend-empty[hidden] { display: none; }
+    .asset-trend-tooltip { position: absolute; z-index: 3; min-width: 104px; padding: 8px 10px; border: 1px solid rgba(120,169,255,.32); border-radius: 9px; color: var(--text); background: rgba(7,9,13,.94); box-shadow: 0 10px 30px rgba(0,0,0,.3); pointer-events: none; transform: translateY(-50%); font-size: 11px; }
+    .asset-trend-tooltip[hidden] { display: none; }
+    .asset-trend-tooltip strong { display: block; margin-top: 4px; color: var(--blue); font-size: 13px; }
+    main { padding: 18px 0 56px; }
     .eyebrow { color: var(--gold); font: 700 12px ui-monospace, SFMono-Regular, monospace; letter-spacing: .13em; text-transform: uppercase; }
     h1 { margin: 13px 0 12px; font-size: clamp(42px, 7vw, 74px); line-height: 1; letter-spacing: -.06em; }
     .lead { margin: 0; color: #aab3bf; max-width: 720px; font-size: 17px; line-height: 1.65; }
     .control-actions { display: flex; gap: 8px; flex-shrink: 0; }
     .control-button { padding: 9px 13px; border: 1px solid var(--line); border-radius: 10px; color: var(--text); background: var(--panel-2); cursor: pointer; font-weight: 720; transition: background-color .2s, border-color .2s, color .2s; }
     .control-button:hover { border-color: #465365; background: #1c2430; }
-    .control-button:focus-visible, .approval-button:focus-visible, .signal-toggle:focus-visible, .wallet-login a:focus-visible, .wallet-login button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+    .control-button:focus-visible, .approval-button:focus-visible, .section-refresh:focus-visible, .signal-toggle:focus-visible, .wallet-login a:focus-visible, .wallet-login button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
     .control-button.stop { border-color: rgba(255,108,120,.4); color: #ffadb4; background: rgba(255,108,120,.08); }
     .control-button.resume { border-color: rgba(81,214,163,.35); color: var(--green); background: rgba(81,214,163,.07); }
     .control-button.auto-on { border-color: rgba(255,108,120,.55); color: #ffadb4; background: rgba(255,108,120,.12); }
     .control-button[hidden] { display: none; }
+    .workflow-section { margin-bottom: 14px; }
+    .workflow-rail { overflow: hidden; box-shadow: none; }
+    .workflow { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; padding: 0; background: var(--line); }
+    .workflow-step { position: relative; min-height: 68px; padding: 11px 12px; color: var(--muted); background: #10151c; }
+    .workflow-step.active { color: var(--gold); background: linear-gradient(135deg, rgba(245,193,79,.11), #12171e 72%); box-shadow: inset 0 0 0 1px rgba(245,193,79,.38); }
+    .workflow-step strong { display: block; margin-top: 7px; color: inherit; font-size: 11px; line-height: 1.35; }
+    .workflow-step .label { display: inline-grid; width: 21px; height: 21px; place-items: center; border: 1px solid currentColor; border-radius: 50%; color: inherit; font-size: 9px; }
+    .workflow-stage-status { display: block; margin-top: 4px; color: inherit; font-size: 9px; line-height: 1.35; }
+    .approval-section { margin-bottom: 18px; border-radius: 15px; transition: box-shadow .2s; }
+    .approval-section.has-approval { box-shadow: 0 0 0 1px rgba(245,193,79,.38), 0 14px 36px rgba(245,193,79,.08); }
+    .workflow-approval { margin: 0; border-top: 1px solid var(--line); border-radius: 0; }
+    .workflow-approval .approval-summary { border: 0; border-radius: 0; }
+    .workflow-approval[data-expanded="true"] .approval-summary { border-radius: 0; }
+    .workflow-approval .approval-body { border-radius: 0; }
+    .approval-summary { width: 100%; min-height: 54px; display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 10px 14px; border: 1px solid rgba(255,255,255,.085); border-radius: 15px; color: var(--text); background: linear-gradient(145deg, rgba(19,24,32,.96), rgba(13,17,23,.96)); cursor: pointer; text-align: left; }
+    .approval-section[data-expanded="true"] .approval-summary { border-radius: 15px 15px 0 0; border-bottom-color: var(--line); }
+    .approval-summary:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+    .approval-summary-title { display: flex; align-items: center; gap: 8px; font-weight: 760; }
+    .approval-count { min-width: 21px; height: 21px; display: inline-grid; place-items: center; border-radius: 999px; color: var(--muted); background: rgba(255,255,255,.06); font: 700 10px ui-monospace, SFMono-Regular, monospace; }
+    .has-approval .approval-count { color: #171108; background: var(--gold); }
+    .approval-summary-text { min-width: 0; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+    .has-approval .approval-summary-text { color: var(--gold); }
+    .approval-toggle-label { color: var(--muted); font-size: 11px; font-weight: 720; }
+    .approval-body { border-radius: 0 0 15px 15px; box-shadow: none; }
+    .approval-body[hidden] { display: none; }
     .approval { padding: 16px; }
     .approval-head { display: flex; justify-content: space-between; gap: 18px; align-items: start; }
     .approval-title { font-size: 27px; font-weight: 780; letter-spacing: -.04em; }
@@ -88,21 +124,16 @@ export function liveDashboardHtml() {
     .label { color: var(--muted); font-size: 11px; letter-spacing: .11em; text-transform: uppercase; }
     .value { display: block; margin-top: 12px; font-size: 25px; letter-spacing: -.04em; }
     .green { color: var(--green); } .red { color: var(--red); } .gold { color: var(--gold); }
-    .asset-trend-section { margin-bottom: 20px; }
-    .asset-trend-head::after { display: none; }
-    .asset-trend-summary { margin-left: auto; color: var(--muted); font-size: 12px; text-align: right; }
-    .asset-trend-card { position: relative; min-height: 276px; padding: 12px 14px 8px; overflow: hidden; }
-    .asset-trend-chart { display: block; width: 100%; height: 252px; touch-action: pan-y; }
-    .asset-trend-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; pointer-events: none; }
-    .asset-trend-empty[hidden] { display: none; }
-    .asset-trend-tooltip { position: absolute; z-index: 2; min-width: 104px; padding: 8px 10px; border: 1px solid rgba(120,169,255,.32); border-radius: 9px; color: var(--text); background: rgba(7,9,13,.94); box-shadow: 0 10px 30px rgba(0,0,0,.3); pointer-events: none; transform: translateY(-50%); font-size: 11px; }
-    .asset-trend-tooltip[hidden] { display: none; }
-    .asset-trend-tooltip strong { display: block; margin-top: 4px; color: var(--blue); font-size: 13px; }
-    .dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: start; }
-    .insight-grid { display: grid; grid-template-columns: 1.25fr 1fr; gap: 18px; margin-top: 20px; }
+    .dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(340px, .85fr); gap: 18px; align-items: start; }
     section { margin: 0; min-width: 0; }
-    .signals-section { grid-column: 1 / -1; }
-    .actions-section { margin-top: 24px; }
+    .actions-section { grid-column: 1 / -1; }
+    .actions-section .action-section-head { align-items: flex-start; flex-wrap: wrap; }
+    .actions-section .action-section-head::after { display: none; }
+    .actions-section .action-head-tools { width: 100%; align-items: stretch; flex-direction: column; gap: 6px; }
+    .actions-section .timeline-filters { width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .actions-section .timeline { max-height: 560px; }
+    .risk-section { margin-top: 24px; }
+    .risk-section .policy-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; margin-bottom: 10px; }
     .section-head::after { content: ""; height: 1px; flex: 1; margin-left: 4px; background: linear-gradient(90deg, rgba(255,255,255,.12), transparent); }
     .section-head > :last-child:not(:first-child) { order: 2; }
@@ -114,6 +145,11 @@ export function liveDashboardHtml() {
     .position > :first-child { grid-column: 1 / -1; }
     .contract { margin-top: 7px; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, monospace; word-break: break-all; }
     .position-cell strong { display: block; margin-top: 7px; font-size: 19px; }
+    .position-cell.risk { grid-column: 1 / -1; }
+    .position-cell.risk strong { font-size: 14px; line-height: 1.55; letter-spacing: 0; }
+    .section-refresh { min-height: 32px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); background: rgba(255,255,255,.025); cursor: pointer; font-size: 11px; font-weight: 720; }
+    .section-refresh:hover { color: var(--text); border-color: #465365; }
+    .section-refresh:disabled { cursor: wait; opacity: .55; }
     .empty { min-height: 118px; display: grid; place-items: center; padding: 22px; text-align: center; color: var(--muted); background: radial-gradient(circle at 50% 50%, rgba(120,169,255,.04), transparent 55%); }
     .signals { overflow: hidden; }
     .signal-table-head, .signal { display: grid; grid-template-columns: 1.05fr .65fr 1.15fr .9fr .85fr; gap: 10px; align-items: center; }
@@ -122,16 +158,27 @@ export function liveDashboardHtml() {
     .signal:hover { background: rgba(120,169,255,.035); }
     .signal:last-child { border-bottom: 0; }
     .signal.historical { background: rgba(245,193,79,.025); }
+    .signal.strong-signal { animation: strong-signal-pulse 1.5s ease-in-out infinite; box-shadow: inset 3px 0 0 rgba(245,193,79,.72); }
     .signal-code { display: flex; flex-direction: column; gap: 3px; font-weight: 780; }
     .signal-symbol-link { width: max-content; color: var(--text); text-decoration-color: rgba(120,169,255,.45); text-underline-offset: 3px; }
     .signal-symbol-link:hover { color: var(--blue); text-decoration-color: currentColor; }
     .signal-symbol-link:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-radius: 3px; }
     .signal-source { color: var(--gold); font-size: 9px; font-weight: 700; }
     .signal-shadow { color: var(--gold); font-size: 9px; font-weight: 700; }
+    .signal-strong { width: max-content; padding: 2px 5px; border-radius: 5px; color: #171108; background: var(--gold); font-size: 9px; font-weight: 800; letter-spacing: .04em; }
     .signal-context { color: var(--muted); font-size: 11px; }
     .signal-direction { font-size: 18px; }
     .signal-strength, .signal-time { color: var(--muted); font-size: 11px; }
     .signal-change { font-size: 14px; letter-spacing: -.02em; }
+    .signal-journey { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.045); }
+    .signal-stage { min-width: 0; padding: 7px 8px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.018); }
+    .signal-stage strong, .signal-stage small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .signal-stage strong { font-size: 10px; }
+    .signal-stage small { margin-top: 4px; color: currentColor; opacity: .76; font-size: 9px; }
+    .signal-stage.failed { color: var(--red); border-color: rgba(255,108,120,.42); background: rgba(255,108,120,.07); }
+    .signal-stage.pending { color: var(--gold); border-color: rgba(245,193,79,.38); background: rgba(245,193,79,.06); }
+    .signal-stage.passed { color: var(--green); border-color: rgba(81,214,163,.32); background: rgba(81,214,163,.055); }
+    .signal-stage.idle { color: var(--muted); }
     .signal-toggle { display: none; width: 100%; min-height: 44px; border: 0; border-top: 1px solid var(--line); color: var(--muted); background: transparent; cursor: pointer; font-weight: 700; }
     .action-head-tools { display: flex; align-items: center; gap: 10px; }
     .timeline-filters { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.02); }
@@ -159,18 +206,22 @@ export function liveDashboardHtml() {
     .policy-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
     .policy-item { min-height: 92px; padding: 13px; border: 1px solid rgba(255,255,255,.075); border-radius: 14px; background: linear-gradient(145deg, rgba(20,25,33,.96), rgba(14,18,24,.96)); box-shadow: 0 10px 28px rgba(0,0,0,.16); }
     .policy-item strong { display: block; margin-top: 7px; font-size: 13px; line-height: 1.45; }
-    .workflow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 14px; }
-    .workflow-step { min-height: 92px; padding: 12px 10px; border: 1px solid var(--line); border-radius: 12px; color: var(--muted); background: rgba(255,255,255,.015); }
-    .workflow-step.active { border-color: rgba(81,214,163,.45); color: var(--green); background: rgba(81,214,163,.06); }
-    .workflow-step strong { display: block; margin-top: 8px; color: inherit; font-size: 12px; }
-    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
+    @keyframes strong-signal-pulse {
+      0%, 100% { background: rgba(245,193,79,.055); box-shadow: inset 3px 0 0 rgba(245,193,79,.62); }
+      50% { background: rgba(245,193,79,.17); box-shadow: inset 3px 0 0 var(--gold), 0 0 24px rgba(245,193,79,.1); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+      .signal.strong-signal { animation: none; background: rgba(245,193,79,.11); box-shadow: inset 3px 0 0 var(--gold); }
+    }
     @media (max-width: 900px) {
       .nav { display: flex; align-items: stretch; flex-direction: column; }
-      .nav-info { display: flex; justify-content: space-between; }
-      .top-stats { width: 100%; }
-      .dashboard-grid { grid-template-columns: 1fr 1fr; }
-      .signals-section { grid-column: 1 / -1; }
-      .insight-grid { grid-template-columns: 1fr; }
+      .badges { justify-content: flex-start; }
+      .top-command { width: 100%; grid-template-columns: 1fr; }
+      .top-asset-trend { height: 68px; }
+      .asset-trend-chart { height: 58px; }
+      .dashboard-grid { grid-template-columns: 1fr; }
+      .positions-section { grid-column: auto; }
       .position { grid-template-columns: 1fr 1fr; }
       .position > :first-child { grid-column: 1 / -1; }
     }
@@ -178,15 +229,11 @@ export function liveDashboardHtml() {
       .shell { width: min(100% - 24px, 480px); }
       header { position: static; padding-top: calc(8px + env(safe-area-inset-top)); }
       main { padding-top: 16px; padding-bottom: calc(36px + env(safe-area-inset-bottom)); }
-      .asset-trend-section { margin-bottom: 18px; }
-      .asset-trend-head { align-items: flex-end; }
-      .asset-trend-summary { max-width: 62%; font-size: 10px; line-height: 1.35; }
-      .asset-trend-card { min-height: 218px; padding: 8px 8px 4px; }
-      .asset-trend-chart { height: 204px; }
       .dashboard-grid { grid-template-columns: 1fr; gap: 18px; }
-      .signals-section { grid-column: auto; }
-      .policy-grid { grid-template-columns: 1fr 1fr; }
-      .workflow { grid-template-columns: repeat(3, 1fr); }
+      .policy-grid, .risk-section .policy-grid { grid-template-columns: 1fr; }
+      .workflow-rail { overflow-x: auto; }
+      .workflow { min-width: 690px; grid-template-columns: repeat(6, minmax(114px, 1fr)); }
+      .workflow-step { min-height: 64px; }
       .section-head { align-items: center; margin-bottom: 10px; }
       h2 { font-size: 19px; }
       .action-section-head { align-items: flex-start; flex-wrap: wrap; }
@@ -200,16 +247,19 @@ export function liveDashboardHtml() {
       .nav { align-items: stretch; flex-direction: column; gap: 12px; padding: 12px; border-radius: 16px; }
       .brand { min-height: 44px; }
       .nav-link { min-height: 40px; display: inline-flex; align-items: center; }
-      .nav-info { width: 100%; flex-direction: column-reverse; align-items: stretch; gap: 12px; }
-      .top-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0; padding: 12px 0 0; border-top: 1px solid var(--line); }
+      .top-command { display: grid; grid-template-columns: 1fr; gap: 1px; padding-top: 0; border-top: 0; }
+      .top-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0; }
       .top-stat { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 8px 6px; text-align: center; }
       .top-stat + .top-stat { border-left: 1px solid var(--line); }
       .top-stat:nth-child(odd) { border-left: 0; }
       .top-stat:nth-child(n+3) { border-top: 1px solid var(--line); }
       .top-stat strong { font-size: 15px; }
+      .top-asset-trend { height: 72px; }
+      .asset-trend-chart { height: 62px; }
       .badges { justify-content: flex-start; align-items: center; }
       .control-actions { width: 100%; margin-left: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
       .control-button { min-width: 0; }
+      .approval-summary { grid-template-columns: auto minmax(0, 1fr) auto; }
       .approval { padding: 16px; }
       .approval-title { font-size: 25px; }
       .approval-grid { grid-template-columns: 1fr 1fr; }
@@ -223,11 +273,12 @@ export function liveDashboardHtml() {
       .signal-code, .signal-change { font-size: 12px; }
       .signal-direction { font-size: 16px; }
       .signal-strength, .signal-time { font-size: 10px; }
+      .signal-journey { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
       #signals:not(.expanded) .signal:nth-child(n+6) { display: none; }
       .signal-toggle { display: block; }
       .timeline { max-height: 300px; }
-      .insight-grid { gap: 18px; margin-top: 18px; }
-      .actions-section { margin-top: 18px; }
+      .actions-section .timeline { max-height: 300px; }
+      .risk-section { margin-top: 18px; }
     }
   </style>
 </head>
@@ -235,7 +286,16 @@ export function liveDashboardHtml() {
   <header>
     <div class="shell nav">
       <div class="brand"><span class="mark">A</span><span>Agentic Wallet</span><a class="nav-link" href="/strategies">策略</a><a class="nav-link" href="/reviews">复盘</a></div>
-      <div class="nav-info"><div class="top-stats"><span class="top-stat"><span>钱包余额</span><strong id="walletBalance">—</strong></span><span class="top-stat"><span>盈亏</span><strong class="green" id="realizedPnl">—</strong></span><span class="top-stat"><span>日亏余量</span><strong id="dailyLossRemaining">—</strong></span><span class="top-stat"><span>单笔上限</span><strong id="maxTrade">—</strong></span></div><div class="badges"><span class="badge" id="walletStatus" aria-live="polite"><span class="dot"></span><span>钱包 未检测</span></span><span class="badge" id="mode"><span class="dot"></span><span></span></span><span class="badge" id="health"><span class="dot"></span><span></span></span><div class="control-actions"><button class="control-button" id="autoApprovalToggle" type="button" role="switch" aria-checked="false">自动审批：关</button><button class="control-button stop" id="stopButton" type="button">停机</button><button class="control-button resume" id="resumeButton" type="button" hidden>恢复</button></div></div></div>
+      <div class="badges"><span class="badge market-index-badge" id="marketIndexStatus"><span>纳斯达克</span><strong id="nasdaqIndex">—</strong></span><span class="badge" id="walletStatus" aria-live="polite"><span class="dot"></span><span>钱包 未检测</span></span><span class="badge" id="mode"><span class="dot"></span><span></span></span><span class="badge" id="health"><span class="dot"></span><span></span></span><div class="control-actions"><button class="control-button" id="autoApprovalToggle" type="button" role="switch" aria-checked="false">自动审批：关</button><button class="control-button stop" id="stopButton" type="button">停机</button><button class="control-button resume" id="resumeButton" type="button" hidden>恢复</button></div></div>
+      <div class="top-command">
+        <div class="top-stats"><span class="top-stat"><span>钱包总资产</span><strong id="walletBalance">—</strong></span><span class="top-stat"><span>可用余额</span><strong id="walletAvailableBalance">—</strong></span><span class="top-stat"><span>盈亏</span><strong class="green" id="realizedPnl">—</strong></span><span class="top-stat"><span>日亏余量</span><strong id="dailyLossRemaining">—</strong></span><span class="top-stat"><span>单笔上限</span><strong id="maxTrade">—</strong></span></div>
+        <div class="top-asset-trend">
+          <div class="top-asset-trend-head"><span>资产趋势</span><span class="asset-trend-summary" id="assetTrendSummary">读取资产快照…</span></div>
+          <canvas class="asset-trend-chart" id="assetTrendChart" role="img" aria-label="每日钱包总资产趋势"></canvas>
+          <div class="asset-trend-empty" id="assetTrendEmpty">等待首次资产快照</div>
+          <div class="asset-trend-tooltip" id="assetTrendTooltip" hidden></div>
+        </div>
+      </div>
     </div>
   </header>
   <main class="shell">
@@ -248,25 +308,22 @@ export function liveDashboardHtml() {
       </div>
       <div class="approval-result" id="walletLoginStatus"></div>
     </section>
-    <section class="asset-trend-section">
-      <div class="section-head asset-trend-head"><h2>资产趋势</h2><span class="asset-trend-summary" id="assetTrendSummary">读取资产快照…</span></div>
-      <div class="panel asset-trend-card" id="assetTrendCard">
-        <canvas class="asset-trend-chart" id="assetTrendChart" role="img" aria-label="每日钱包总资产趋势"></canvas>
-        <div class="asset-trend-empty" id="assetTrendEmpty">等待首次资产快照</div>
-        <div class="asset-trend-tooltip" id="assetTrendTooltip" hidden></div>
+    <section class="workflow-section">
+      <div class="section-head"><h2>执行流程</h2><span class="signal-context" id="workflowStatus">读取当前阶段…</span></div>
+      <div class="panel workflow-rail" id="workflowRail">
+        <div id="workflow"></div>
+        <section class="workflow-approval approval-section" id="approvalSection" data-expanded="false">
+          <button class="approval-summary" id="approvalToggle" type="button" aria-expanded="false" aria-controls="approval">
+            <span class="approval-summary-title">阶段 4 · 逐笔确认 <span class="approval-count" id="approvalCount">0</span></span>
+            <span class="approval-summary-text" id="approvalSummary">暂无待确认订单</span>
+            <span class="approval-toggle-label" id="approvalToggleLabel">展开</span>
+          </button>
+          <div class="approval-body" id="approval" hidden></div>
+        </section>
       </div>
     </section>
+
     <div class="dashboard-grid">
-    <section>
-      <div class="section-head"><h2>待确认订单</h2></div>
-      <div class="panel" id="approval"></div>
-    </section>
-
-    <section>
-      <div class="section-head"><h2>持仓</h2></div>
-      <div class="panel" id="position"></div>
-    </section>
-
     <section class="signals-section">
       <div class="section-head"><h2>信号</h2><span class="signal-context" id="signalContext">读取市场状态…</span></div>
       <div class="panel signals">
@@ -276,20 +333,19 @@ export function liveDashboardHtml() {
       </div>
     </section>
 
-    </div>
-    <div class="insight-grid">
-      <section>
-        <div class="section-head"><h2>策略与风控</h2></div>
-        <div id="strategyRisk"></div>
-      </section>
-      <section>
-        <div class="section-head"><h2>执行流程</h2></div>
-        <div class="panel" id="workflow"></div>
-      </section>
-    </div>
+    <section class="positions-section">
+      <div class="section-head"><h2>持仓</h2><button class="section-refresh" id="positionRefresh" type="button" title="读取 Bot 最新可执行卖出报价">刷新</button></div>
+      <div class="panel" id="position"></div>
+    </section>
+
     <section class="actions-section">
-      <div class="section-head action-section-head"><h2>动作</h2><div class="action-head-tools"><span class="muted" id="lastError"></span><div class="timeline-filters" role="group" aria-label="动作日志筛选"><button class="timeline-filter active" id="timelineDecisionFilter" type="button" aria-pressed="true">决策判断 <span id="timelineDecisionCount">0</span></button><button class="timeline-filter" id="timelineTradeFilter" type="button" aria-pressed="false">交易动作 <span id="timelineTradeCount">0</span></button><button class="timeline-filter" id="timelineSystemFilter" type="button" aria-pressed="false">系统日志 <span id="timelineSystemCount">0</span></button></div></div></div>
+      <div class="section-head action-section-head"><h2>动作记录</h2><div class="action-head-tools"><span class="muted" id="lastError"></span><div class="timeline-filters" role="group" aria-label="动作日志筛选"><button class="timeline-filter active" id="timelineDecisionFilter" type="button" aria-pressed="true">决策判断 <span id="timelineDecisionCount">0</span></button><button class="timeline-filter" id="timelineTradeFilter" type="button" aria-pressed="false">交易动作 <span id="timelineTradeCount">0</span></button><button class="timeline-filter" id="timelineSystemFilter" type="button" aria-pressed="false">系统日志 <span id="timelineSystemCount">0</span></button></div></div></div>
       <div class="panel timeline" id="timeline"></div>
+    </section>
+    </div>
+    <section class="risk-section">
+      <div class="section-head"><h2>策略与风控</h2></div>
+      <div id="strategyRisk"></div>
     </section>
   </main>
   <script>
@@ -566,6 +622,8 @@ export function liveDashboardHtml() {
     let timelineFilter = "decision";
     let recentActionRecords = [];
     let submittedApprovalId = null;
+    let approvalExpanded = false;
+    let currentApprovalId = null;
     let autoApprovalEnabled = false;
     let walletLoginPoll = null;
     let assetTrendPoints = [];
@@ -589,7 +647,8 @@ export function liveDashboardHtml() {
       const canvas = document.getElementById("assetTrendChart");
       const context = canvas.getContext("2d");
       const width = Math.max(280, canvas.clientWidth);
-      const height = Math.max(180, canvas.clientHeight);
+      const compact = canvas.closest(".top-asset-trend") != null;
+      const height = Math.max(compact ? 48 : 180, canvas.clientHeight);
       const ratio = Math.min(2, window.devicePixelRatio || 1);
       canvas.width = Math.round(width * ratio);
       canvas.height = Math.round(height * ratio);
@@ -598,8 +657,9 @@ export function liveDashboardHtml() {
       assetTrendGeometry = [];
       if (!assetTrendPoints.length) return;
 
-      const compact = width < 520;
-      const padding = { top: 18, right: compact ? 12 : 20, bottom: 30, left: compact ? 42 : 54 };
+      const padding = compact
+        ? { top: 16, right: 4, bottom: 4, left: 4 }
+        : { top: 18, right: width < 520 ? 12 : 20, bottom: 30, left: width < 520 ? 42 : 54 };
       const plotWidth = width - padding.left - padding.right;
       const plotHeight = height - padding.top - padding.bottom;
       const values = assetTrendPoints.map((point) => Number(point.totalUsd));
@@ -616,29 +676,31 @@ export function liveDashboardHtml() {
         y: padding.top + ((maximum - Number(point.totalUsd)) / range) * plotHeight
       }));
 
-      context.lineWidth = 1;
-      context.font = (compact ? "10px" : "11px") + " ui-monospace, SFMono-Regular, monospace";
-      context.fillStyle = "#7f8b9a";
-      context.strokeStyle = "rgba(143,155,170,.18)";
-      context.textAlign = "right";
-      context.textBaseline = "middle";
-      for (let index = 0; index < 4; index += 1) {
-        const y = padding.top + (index / 3) * plotHeight;
-        const value = maximum - (index / 3) * range;
-        context.beginPath();
-        context.moveTo(padding.left, y);
-        context.lineTo(width - padding.right, y);
-        context.stroke();
-        context.fillText("$" + money(value), padding.left - 8, y);
-      }
+      if (!compact) {
+        context.lineWidth = 1;
+        context.font = (width < 520 ? "10px" : "11px") + " ui-monospace, SFMono-Regular, monospace";
+        context.fillStyle = "#7f8b9a";
+        context.strokeStyle = "rgba(143,155,170,.18)";
+        context.textAlign = "right";
+        context.textBaseline = "middle";
+        for (let index = 0; index < 4; index += 1) {
+          const y = padding.top + (index / 3) * plotHeight;
+          const value = maximum - (index / 3) * range;
+          context.beginPath();
+          context.moveTo(padding.left, y);
+          context.lineTo(width - padding.right, y);
+          context.stroke();
+          context.fillText("$" + money(value), padding.left - 8, y);
+        }
 
-      const labelEvery = Math.max(1, Math.ceil(assetTrendPoints.length / (compact ? 4 : 8)));
-      context.textAlign = "center";
-      context.textBaseline = "top";
-      assetTrendPoints.forEach((point, index) => {
-        if (index % labelEvery !== 0 && index !== assetTrendPoints.length - 1) return;
-        context.fillText(assetTrendDateLabel(point.date), assetTrendGeometry[index].x, height - padding.bottom + 10);
-      });
+        const labelEvery = Math.max(1, Math.ceil(assetTrendPoints.length / (width < 520 ? 4 : 8)));
+        context.textAlign = "center";
+        context.textBaseline = "top";
+        assetTrendPoints.forEach((point, index) => {
+          if (index % labelEvery !== 0 && index !== assetTrendPoints.length - 1) return;
+          context.fillText(assetTrendDateLabel(point.date), assetTrendGeometry[index].x, height - padding.bottom + 10);
+        });
+      }
 
       const fill = context.createLinearGradient(0, padding.top, 0, height - padding.bottom);
       fill.addColorStop(0, "rgba(120,169,255,.24)");
@@ -654,15 +716,15 @@ export function liveDashboardHtml() {
       context.beginPath();
       traceAssetTrendPath(context, assetTrendGeometry);
       context.strokeStyle = "#78a9ff";
-      context.lineWidth = 3;
+      context.lineWidth = compact ? 2 : 3;
       context.lineCap = "round";
       context.lineJoin = "round";
       context.stroke();
 
       assetTrendGeometry.forEach((point, index) => {
-        if (assetTrendPoints.length > 16 && index !== assetTrendHoverIndex && index !== assetTrendPoints.length - 1) return;
+        if ((compact || assetTrendPoints.length > 16) && index !== assetTrendHoverIndex && index !== assetTrendPoints.length - 1) return;
         context.beginPath();
-        context.arc(point.x, point.y, index === assetTrendHoverIndex ? 5 : 3.5, 0, Math.PI * 2);
+        context.arc(point.x, point.y, index === assetTrendHoverIndex ? 4 : compact ? 2.5 : 3.5, 0, Math.PI * 2);
         context.fillStyle = "#11151c";
         context.fill();
         context.strokeStyle = index === assetTrendHoverIndex ? "#f5c14f" : "#78a9ff";
@@ -733,6 +795,16 @@ export function liveDashboardHtml() {
       clearInterval(walletLoginPoll);
       walletLoginPoll = setInterval(pollWalletLogin, 2000);
     }
+    function setApprovalExpanded(expanded) {
+      approvalExpanded = Boolean(expanded);
+      const approvalSection = document.getElementById("approvalSection");
+      const approvalToggle = document.getElementById("approvalToggle");
+      const approval = document.getElementById("approval");
+      approvalSection.dataset.expanded = String(approvalExpanded);
+      approvalToggle.setAttribute("aria-expanded", String(approvalExpanded));
+      document.getElementById("approvalToggleLabel").textContent = approvalExpanded ? "收起" : "展开";
+      approval.hidden = !approvalExpanded;
+    }
     function renderPosition(data) {
       const root = document.getElementById("position");
       root.replaceChildren();
@@ -759,24 +831,29 @@ export function liveDashboardHtml() {
           : (position.unrealizedPnlUsdt >= 0 ? "+" : "") + money(position.unrealizedPnlUsdt) + " USDT · " + pct(position.returnPct);
         const gasText = money(position.entryGasUsdt) + " 已计入场 · " +
           money(position.estimatedExitGasUsdt) + " 预估出场";
+        const protectionTriggerPct = position.initialRiskPct == null
+          ? null
+          : position.initialRiskPct * data.risk.profitProtectionR;
         const riskText = position.initialRiskPct == null
           ? "等待风险参数"
-          : "1R " + money(position.riskUsdt) + " USDT · 报价 MAE " +
-            (position.maeR == null ? "待采集" : position.maeR.toFixed(2) + "R") +
-            " · MFE " + (position.mfeR == null ? "待采集" : position.mfeR.toFixed(2) + "R") +
-            " · 峰值 " + pct(position.peakReturnPct) +
-            " · 成本下限 " + pct(position.profitFloorPct) +
-            " · 保护 " + (position.trailingStopPct == null ? "未启用" : pct(position.trailingStopPct));
+          : "初始止损：下跌 " + Math.abs(position.initialRiskPct).toFixed(2) + "% 时优先退出（约 " + money(position.riskUsdt) + " USDT） · " +
+            (position.trailingStopPct == null
+              ? "盈利达到约 +" + protectionTriggerPct.toFixed(2) + "% 后启动移动保护"
+              : "盈利保护已启动，收益回落到 " + pct(position.trailingStopPct) + " 附近时退出") +
+            " · 持仓后最好 " + pct(position.peakReturnPct) +
+            (position.worstReturnPct == null ? "" : "，最差 " + pct(position.worstReturnPct)) +
+            " · 普通卖出至少需要 " + pct(position.profitFloorPct) + " 才能覆盖手续费和 Gas；触发止损时不受此限制";
         [
           ["数量", String(position.quantity)],
-          ["成本", money(position.costBasisUsdt) + " USDT"],
-          ["可执行卖出值", money(position.lastQuoteProceedsUsdt) + " USDT"],
+          ["平均买入价", money(position.averageEntryPriceUsdt) + " USDT"],
+          ["市场实时价（可卖）", money(position.executableMarketPriceUsdt) + " USDT · " + shortTime(position.lastQuoteAt)],
+          ["当前可卖总值", money(position.lastQuoteProceedsUsdt) + " USDT"],
           ["预估净盈亏", pnlText],
           ["Gas", gasText],
-          ["动态风控", riskText]
-        ].forEach(([label, value], index) => {
-          const cell = el("div", "position-cell");
-          cell.append(el("span", "label", label), el("strong", index === 3 ? (position.unrealizedPnlUsdt >= 0 ? "green" : "red") : "", value));
+          ["动态风险", riskText, "risk"]
+        ].forEach(([label, value, className]) => {
+          const cell = el("div", "position-cell" + (className ? " " + className : ""));
+          cell.append(el("span", "label", label), el("strong", label === "预估净盈亏" ? (position.unrealizedPnlUsdt >= 0 ? "green" : "red") : "", value));
           row.append(cell);
         });
         root.append(row);
@@ -784,19 +861,34 @@ export function liveDashboardHtml() {
     }
     function renderApproval(data) {
       const root = document.getElementById("approval");
+      const approvalSection = document.getElementById("approvalSection");
+      const approvalCount = document.getElementById("approvalCount");
+      const approvalSummary = document.getElementById("approvalSummary");
       root.replaceChildren();
       const request = data.approvalRequest;
+      approvalSection.classList.toggle("has-approval", Boolean(request));
+      approvalCount.textContent = request ? "1" : "0";
       if (!request) {
+        if (currentApprovalId) setApprovalExpanded(false);
+        currentApprovalId = null;
         const shadowPosition = (data.positions || []).find((position) => position.shadow) || data.position;
         const copy = data.mode === "shadow"
           ? shadowPosition?.shadow
             ? "当前为 SHADOW 模拟：" + shadowPosition.symbol + " 等模拟仓位不会扣除钱包资产，不能确认。切换 Live 后，新的合格候选才会在这里出现真实确认按钮。"
             : "当前为 SHADOW 模拟：候选即使通过也只会模拟，不会生成真实确认按钮。"
           : "暂无待确认订单";
+        approvalSummary.textContent = copy;
         root.append(el("div", "empty", copy));
         submittedApprovalId = null;
         return;
       }
+      currentApprovalId = request.approvalId;
+      const summaryStatus = request.automaticallyApproved
+        ? "自动复核中"
+        : request.canDecide
+          ? "等待逐笔确认"
+          : request.displayStatus;
+      approvalSummary.textContent = request.side + " " + request.symbol + " · " + summaryStatus;
       const panel = el("div", "approval");
       const head = el("div", "approval-head");
       const identity = el("div");
@@ -912,6 +1004,35 @@ export function liveDashboardHtml() {
       submittedApprovalId = request.approvalId;
       await refresh();
     }
+    function renderSignalDecisionStages(symbol, stages) {
+      const journey = el("div", "signal-journey");
+      const stageLabels = {
+        2: "风控",
+        3: "创建订单",
+        4: "逐笔确认",
+        5: "执行"
+      };
+      const decisionsByStage = new Map((stages || []).map((decision) => [decision.stage, decision]));
+      [2, 3, 4, 5].forEach((stage) => {
+        const decision = decisionsByStage.get(stage);
+        const status = ["failed", "pending", "passed"].includes(decision?.status) ? decision.status : "idle";
+        const chip = el("div", "signal-stage " + status);
+        const eventLabel = decision ? actionEventLabels[decision.event] || decision.event : "无事件";
+        const summary = decision
+          ? eventLabel + " · " + shortTime(decision.timestamp) + (decision.count > 1 ? " · " + decision.count + "次" : "")
+          : "今日无事件";
+        chip.append(
+          el("strong", "", stage + " · " + stageLabels[stage]),
+          el("small", "", summary)
+        );
+        chip.title = decision
+          ? symbol + " · " + stageLabels[stage] + " · 今日 " + decision.count + " 次" +
+            (decision.reason ? " · " + (actionReasonLabels[decision.reason] || decision.reason) : "")
+          : symbol + " · " + stageLabels[stage] + " · 今日无事件";
+        journey.append(chip);
+      });
+      return journey;
+    }
     function renderSignals(data) {
       const root = document.getElementById("signals");
       root.replaceChildren();
@@ -935,8 +1056,9 @@ export function liveDashboardHtml() {
         const historical = signal?.source === "local-history";
         const costsCovered = signal?.costCoverageAllowed === true;
         const signalPassed = signal && signal.trend15mPct >= signal.atr15Pct * data.strategy.entryAtrMultiplier && signal.upMinutes >= data.strategy.minDirectionalMinutes;
+        const strongSignal = Boolean(signalPassed && costsCovered && !historical && !marketClosed);
         const direction = !signal ? "—" : signal.trend15mPct > 0 ? "↑" : signal.trend15mPct < 0 ? "↓" : "—";
-        const row = el("article", "signal" + (historical ? " historical" : ""));
+        const row = el("article", "signal" + (historical ? " historical" : "") + (strongSignal ? " strong-signal" : ""));
         const code = el("span", "signal-code");
         const chartUrl = stockChartUrl(symbol);
         if (chartUrl) {
@@ -951,6 +1073,7 @@ export function liveDashboardHtml() {
           code.append(el("strong", "", symbol));
         }
         if (historical) code.append(el("small", "signal-source", "本地历史"));
+        if (strongSignal) code.append(el("small", "signal-strong", "强信号"));
         if (signal && !historical) {
           const shadowObservations = [];
           if (signal.shadowTrendQualityDecision === "WOULD_BLOCK") shadowObservations.push("高波动震荡");
@@ -977,7 +1100,8 @@ export function liveDashboardHtml() {
           el("span", "signal-direction " + (!signal ? "muted" : signal.trend15mPct >= 0 ? "green" : "red"), direction),
           el("span", "signal-strength", signal ? (signal.upMinutes ?? "—") + "/15 ↑" : "—"),
           el("span", "signal-change " + (signalPassed ? "green" : signal ? "red" : "muted"), signal ? pct(signal.trend15mPct) : "—"),
-          fetchedTime
+          fetchedTime,
+          renderSignalDecisionStages(symbol, data.signalDecisionStages?.[symbol])
         );
         root.append(row);
       });
@@ -1075,12 +1199,19 @@ export function liveDashboardHtml() {
             ? 3
             : data.positions?.length || data.position
               ? 5
-              : 1;
+              : 0;
       const steps = ["15分钟扫描", "趋势/成本/审计", "创建订单", "逐笔确认", "复核并执行", "60秒退出检查"];
+      const approvalStageCopy = data.approvalRequest
+        ? "1 笔待确认"
+        : "暂无待确认";
+      const workflowStatus = document.getElementById("workflowStatus");
+      workflowStatus.textContent = stage < 0 ? "交易守护未运行" : "当前：" + steps[stage];
+      workflowStatus.className = "signal-context" + (stage < 0 ? " red" : " gold");
       const workflow = el("div", "workflow");
       steps.forEach((label, index) => {
         const item = el("div", "workflow-step" + (index === stage ? " active" : ""));
         item.append(el("span", "label", String(index + 1)), el("strong", "", label));
+        if (index === 3) item.append(el("small", "workflow-stage-status", approvalStageCopy));
         workflow.append(item);
       });
       root.append(workflow);
@@ -1106,6 +1237,27 @@ export function liveDashboardHtml() {
       const normalized = String(value || "shadow").toLowerCase();
       mode.className = "badge" + (normalized === "live" ? " green" : "");
       mode.querySelector("span:last-child").textContent = normalized.toUpperCase();
+    }
+    function renderMarketIndex(marketIndex) {
+      const node = document.getElementById("nasdaqIndex");
+      const value = Number(marketIndex?.value);
+      const changePct = Number(marketIndex?.changePct);
+      if (!Number.isFinite(value) || !Number.isFinite(changePct)) {
+        node.textContent = "—";
+        node.className = "muted";
+        node.title = "等待纳斯达克指数行情";
+        return;
+      }
+      node.textContent = money(value) + " · " + pct(changePct);
+      node.className = changePct >= 0 ? "green" : "red";
+      const source = marketIndex.source === "NASDAQ_OFFICIAL"
+        ? marketIndex.isRealTime
+          ? "Nasdaq 官方行情"
+          : "Nasdaq 官方延迟行情"
+        : "指数行情";
+      node.title = source +
+        (marketIndex.providerTimestamp ? " · " + marketIndex.providerTimestamp : "") +
+        (marketIndex.stale ? " · 当前显示上次成功值" : "");
     }
     async function refresh() {
       try {
@@ -1133,6 +1285,15 @@ export function liveDashboardHtml() {
         walletBalance.title = data.walletBalance?.checkedAt
           ? data.walletBalance.assetCount + " 项资产 · 更新于 " + new Date(data.walletBalance.checkedAt).toLocaleString("zh-CN", { hour12: false })
           : "等待 Bot 获取钱包余额";
+        const walletAvailableBalance = document.getElementById("walletAvailableBalance");
+        walletAvailableBalance.textContent = data.walletBalance?.availableUsdt == null
+          ? "—"
+          : money(data.walletBalance.availableUsdt) + " USDT";
+        walletAvailableBalance.title = "BSC USDT · 0x55d398326f99059fF775485246999027B3197955" +
+          (data.walletBalance?.availableUsdtCheckedAt
+            ? " · 更新于 " + new Date(data.walletBalance.availableUsdtCheckedAt).toLocaleString("zh-CN", { hour12: false })
+            : "") +
+          (data.walletBalance?.availableUsdtStale ? " · 当前显示上次成功值" : "");
         const realizedPnl = document.getElementById("realizedPnl");
         realizedPnl.textContent = (data.risk.realizedPnlUsdt >= 0 ? "+" : "") + money(data.risk.realizedPnlUsdt) + " USDT";
         realizedPnl.className = data.risk.realizedPnlUsdt >= 0 ? "green" : "red";
@@ -1140,6 +1301,7 @@ export function liveDashboardHtml() {
           " USDT · Gas -" + money(data.risk.gasCostUsdt) + " USDT · 当前显示净盈亏";
         document.getElementById("dailyLossRemaining").textContent = money(data.risk.dailyLossRemainingUsdt) + " USDT";
         document.getElementById("maxTrade").textContent = money(data.risk.maxTradeUsdt) + " USDT";
+        renderMarketIndex(data.marketIndex);
         renderAssetTrend(data.assetTrend);
         renderApproval(data);
         renderPosition(data);
@@ -1160,6 +1322,17 @@ export function liveDashboardHtml() {
       await refresh();
     });
     document.getElementById("walletLoginStart").addEventListener("click", startWalletLogin);
+    const positionRefresh = document.getElementById("positionRefresh");
+    positionRefresh.addEventListener("click", async () => {
+      positionRefresh.disabled = true;
+      positionRefresh.textContent = "刷新中…";
+      try {
+        await refresh();
+      } finally {
+        positionRefresh.textContent = "刷新";
+        positionRefresh.disabled = false;
+      }
+    });
     document.getElementById("autoApprovalToggle").addEventListener("click", async () => {
       const enabled = !autoApprovalEnabled;
       if (enabled && !window.confirm("开启后，未来合格订单可在复核后自动执行真实交易。确认开启自动审批？")) return;
@@ -1191,6 +1364,10 @@ export function liveDashboardHtml() {
       const expanded = signals.classList.toggle("expanded");
       event.currentTarget.setAttribute("aria-expanded", String(expanded));
       event.currentTarget.textContent = expanded ? "收起" : "查看全部";
+    });
+    const approvalToggle = document.getElementById("approvalToggle");
+    approvalToggle.addEventListener("click", () => {
+      setApprovalExpanded(!approvalExpanded);
     });
     document.getElementById("timelineDecisionFilter").addEventListener("click", () => {
       timelineFilter = "decision";

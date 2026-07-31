@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { buildBawEnvironment } from "../src/baw-runtime.mjs";
 import { loadDashboardSnapshot } from "../src/dashboard.mjs";
+import { loadNasdaqCompositeIndex } from "../src/nasdaq-index.mjs";
+import { createAvailableUsdtLoader } from "../src/wallet-balance.mjs";
 import { liveDashboardHtml } from "../src/live-dashboard-html.mjs";
 import { dashboardLoginHtml } from "../src/dashboard-login-html.mjs";
 import { strategyLabHtml } from "../src/strategy-lab-html.mjs";
@@ -63,6 +65,16 @@ async function executeBaw(args) {
 }
 
 const walletLogin = createWalletLoginManager({ executeBaw });
+const loadAvailableUsdt = createAvailableUsdtLoader({
+  executeBalance: () => executeBaw([
+    "wallet",
+    "balance",
+    "--symbol",
+    "USDT",
+    "--binanceChainId",
+    "56"
+  ])
+});
 
 async function loadConfig() {
   return JSON.parse(await readFile(configPath, "utf8"));
@@ -224,11 +236,19 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "GET" && request.url === "/api/snapshot") {
       const config = await loadConfig();
+      const marketIndex = process.env.DASHBOARD_MARKET_INDEX_DISABLED === "1"
+        ? null
+        : await loadNasdaqCompositeIndex();
+      const walletAvailableBalance = process.env.DASHBOARD_WALLET_BALANCE_DISABLED === "1"
+        ? null
+        : await loadAvailableUsdt();
       const snapshot = await loadDashboardSnapshot({
         configPath,
         statePath: resolve(projectRoot, config.stateFile),
         tracePath: resolve(projectRoot, config.traceFile),
         signalHistoryPath: resolve(projectRoot, "state/dashboard-signal-history.jsonl"),
+        walletAvailableBalance,
+        marketIndex,
         approvalControlPath: approvalControlPath(config),
         emergencyStopPath: resolve(projectRoot, config.emergencyStopFile),
         strategyControlPath: resolve(projectRoot, config.strategyControlFile)

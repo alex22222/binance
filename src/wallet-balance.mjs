@@ -10,10 +10,54 @@ export function summarizeWalletBalances(balances, checkedAt = new Date().toISOSt
     const price = Number(balance?.price);
     return Number.isFinite(quantity) && Number.isFinite(price) ? total + quantity * price : total;
   }, 0);
+  const availableUsdt = balances.reduce((total, balance) => {
+    if (String(balance?.symbol || "").toUpperCase() !== "USDT") return total;
+    if (String(balance?.binanceChainId || "") !== "56") return total;
+    const quantity = Number(balance?.balance);
+    return Number.isFinite(quantity) ? total + quantity : total;
+  }, 0);
   return {
     totalUsd,
+    availableUsdt,
     assetCount: balances.length,
     checkedAt
+  };
+}
+
+export function createAvailableUsdtLoader({
+  executeBalance,
+  cacheTtlMs = 60_000
+} = {}) {
+  let cached = null;
+  let expiresAt = 0;
+  let pending = null;
+
+  return async function loadAvailableUsdt({ nowMs = Date.now() } = {}) {
+    if (nowMs < expiresAt) return cached;
+    if (pending) return pending;
+    pending = (async () => {
+      try {
+        const summary = summarizeWalletBalances(
+          await executeBalance(),
+          new Date(nowMs).toISOString()
+        );
+        cached = {
+          availableUsdt: summary.availableUsdt,
+          checkedAt: summary.checkedAt,
+          stale: false
+        };
+      } catch {
+        if (cached) cached = { ...cached, stale: true };
+      } finally {
+        expiresAt = nowMs + cacheTtlMs;
+      }
+      return cached;
+    })();
+    try {
+      return await pending;
+    } finally {
+      pending = null;
+    }
   };
 }
 

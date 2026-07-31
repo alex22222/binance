@@ -67,6 +67,18 @@ test("builds a live position snapshot from the latest executable sell quote", ()
       }
     },
     traceRecords: [],
+    walletAvailableBalance: {
+      availableUsdt: 88.25,
+      checkedAt: "2026-07-24T12:59:45.000Z",
+      stale: false
+    },
+    marketIndex: {
+      symbol: "COMP",
+      value: 25177.52,
+      changePct: 0.22,
+      isRealTime: false,
+      source: "NASDAQ_OFFICIAL"
+    },
     nowMs
   });
 
@@ -74,6 +86,9 @@ test("builds a live position snapshot from the latest executable sell quote", ()
   assert.equal(snapshot.position.grossUnrealizedPnlUsdt, 4);
   assert.equal(snapshot.position.unrealizedPnlUsdt, 3.91);
   assert.ok(Math.abs(snapshot.position.returnPct - 7.82) < 1e-9);
+  assert.equal(snapshot.position.averageEntryPriceUsdt, 100);
+  assert.equal(snapshot.position.executableMarketPriceUsdt, 108);
+  assert.equal(snapshot.position.lastQuoteAt, "2026-07-24T12:59:30.000Z");
   assert.equal(snapshot.position.entryGasUsdt, 0.04);
   assert.equal(snapshot.position.estimatedExitGasUsdt, 0.05);
   assert.equal(snapshot.risk.dailyLossRemainingUsdt, 9);
@@ -90,10 +105,19 @@ test("builds a live position snapshot from the latest executable sell quote", ()
   assert.equal(snapshot.strategy.gasEstimateSource, "CONFIGURED");
   assert.equal(snapshot.strategy.actualGasSampleCount, 0);
   assert.equal(snapshot.walletBalance.totalUsd, 449.67578352);
+  assert.equal(snapshot.walletBalance.availableUsdt, 88.25);
+  assert.equal(snapshot.walletBalance.availableUsdtCheckedAt, "2026-07-24T12:59:45.000Z");
   assert.equal(snapshot.walletBalance.assetCount, 2);
   assert.equal(snapshot.risk.dailyLossUsedUsdt, 1);
   assert.equal(snapshot.risk.dailyLossUsedPct, 10);
   assert.equal(snapshot.risk.openRiskUsdt, 1);
+  assert.deepEqual(snapshot.marketIndex, {
+    symbol: "COMP",
+    value: 25177.52,
+    changePct: 0.22,
+    isRealTime: false,
+    source: "NASDAQ_OFFICIAL"
+  });
 });
 
 test("builds separate executable PnL snapshots for every open position", () => {
@@ -193,6 +217,77 @@ test("shows pending orders and the latest signal for each symbol", () => {
   assert.equal(snapshot.signals.TSLA.shadowTrendEfficiency, 0.2);
   assert.equal(snapshot.signals.TSLA.shadowSuggestedTradeUsdt, 32.26);
   assert.equal(snapshot.signals.NVDA.upMinutes, 6);
+});
+
+test("groups today's New York decision events into execution stages two through five", () => {
+  const snapshot = buildDashboardSnapshot({
+    config,
+    state: {
+      date: "2026-07-24",
+      realizedPnlUsdt: 0,
+      updatedAt: "2026-07-24T16:00:00.000Z"
+    },
+    traceRecords: [
+      {
+        timestamp: "2026-07-23T14:00:00.000Z",
+        event: "pending_order",
+        status: "failed",
+        details: { symbol: "TSLA" }
+      },
+      {
+        timestamp: "2026-07-24T14:00:00.000Z",
+        event: "candidate_rejected",
+        status: "skipped",
+        details: { symbol: "NVDA", reason: "market_or_trend_gate" }
+      },
+      {
+        timestamp: "2026-07-24T14:10:00.000Z",
+        event: "candidate_selected",
+        status: "succeeded",
+        details: { symbol: "TSLA" }
+      },
+      {
+        timestamp: "2026-07-24T14:11:00.000Z",
+        event: "order_intent",
+        status: "persisted",
+        details: { symbol: "TSLA" }
+      },
+      {
+        timestamp: "2026-07-24T14:12:00.000Z",
+        event: "trade_approval",
+        status: "waiting",
+        details: { symbol: "TSLA" }
+      },
+      {
+        timestamp: "2026-07-24T14:13:00.000Z",
+        event: "order_submission",
+        status: "ambiguous",
+        details: { symbol: "TSLA", error: "timeout" }
+      },
+      {
+        timestamp: "2026-07-24T14:14:00.000Z",
+        event: "buy_submission",
+        status: "submitted",
+        details: { symbol: "TSLA" }
+      }
+    ],
+    nowMs: Date.parse("2026-07-24T16:00:00.000Z")
+  });
+
+  assert.deepEqual(snapshot.signalDecisionStages.NVDA[0], {
+    stage: 2,
+    status: "failed",
+    event: "candidate_rejected",
+    timestamp: "2026-07-24T14:00:00.000Z",
+    reason: "market_or_trend_gate",
+    count: 1
+  });
+  assert.deepEqual(snapshot.signalDecisionStages.TSLA.map(({ stage, status, count }) => ({ stage, status, count })), [
+    { stage: 2, status: "passed", count: 1 },
+    { stage: 3, status: "failed", count: 2 },
+    { stage: 4, status: "pending", count: 1 },
+    { stage: 5, status: "passed", count: 1 }
+  ]);
 });
 
 test("keeps an unavailable wallet balance distinct from a zero balance", () => {
