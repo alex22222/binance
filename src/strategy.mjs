@@ -1,3 +1,9 @@
+export {
+  analyzeCandles,
+  calculateAtrPct
+} from "./strategy-signals.mjs";
+export { dynamicExitDecision } from "./strategy-exit.mjs";
+
 export function uniqueSymbols(symbols) {
   return [...new Set(symbols.map((symbol) => symbol.trim().toUpperCase()))];
 }
@@ -19,6 +25,9 @@ const NYSE_EARLY_CLOSES = new Set([
   "2027-11-26",
   "2028-07-03", "2028-11-24"
 ]);
+
+const FOMC_ENTRY_BLACKOUT_START_MINUTE = 13 * 60 + 50;
+const FOMC_ENTRY_BLACKOUT_END_MINUTE = 15 * 60 + 15;
 
 function newYorkTimeParts(nowMs) {
   return Object.fromEntries(
@@ -123,6 +132,27 @@ export function entrySessionDecision(
 
 export function expectedUsRegularWindow(nowMs = Date.now()) {
   return nyseSessionPlan(nowMs).regularOpen;
+}
+
+export function fomcEntryBlackoutDecision({
+  nowMs = Date.now(),
+  dates = []
+}) {
+  const parts = newYorkTimeParts(nowMs);
+  const nyseDate = `${parts.year}-${parts.month}-${parts.day}`;
+  const minuteOfDay = Number(parts.hour) * 60 + Number(parts.minute);
+  const blocked = (
+    dates.includes(nyseDate) &&
+    minuteOfDay >= FOMC_ENTRY_BLACKOUT_START_MINUTE &&
+    minuteOfDay < FOMC_ENTRY_BLACKOUT_END_MINUTE
+  );
+  return {
+    allowed: !blocked,
+    reason: blocked ? "FOMC_ENTRY_BLACKOUT" : "OUTSIDE_FOMC_ENTRY_BLACKOUT",
+    nyseDate,
+    startTime: "13:50",
+    endTime: "15:15"
+  };
 }
 
 function shiftDate(date, days) {
@@ -328,6 +358,15 @@ export function validateConfig(config) {
   ) {
     errors.push("entryBlockedSymbols must be an array of uppercase symbols");
   }
+  if (
+    !Array.isArray(config.fomcEntryBlackoutDates) ||
+    config.fomcEntryBlackoutDates.some((date) => (
+      typeof date !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(date)
+    ))
+  ) {
+    errors.push("fomcEntryBlackoutDates must be an array of YYYY-MM-DD dates");
+  }
   if (typeof config.emergencyStopFile !== "string" || !config.emergencyStopFile.trim()) {
     errors.push("emergencyStopFile must not be empty");
   }
@@ -389,52 +428,6 @@ export function auditDecision({
 
 export function dailyLossReached(realizedPnlUsdt, limitUsdt) {
   return realizedPnlUsdt <= -Math.abs(limitUsdt);
-}
-
-export function analyzeCandles(candles, nowMs = Date.now()) {
-  const closed = candles.filter((candle) => Number(candle[6]) < nowMs);
-  const recent = closed.slice(-16);
-  if (recent.length < 16) return null;
-
-  const closes = recent.map((candle) => Number(candle[4]));
-  const changes = closes.slice(1).map((value, index) => value - closes[index]);
-  const upMinutes = changes.filter((change) => change > 0).length;
-  const downMinutes = changes.filter((change) => change < 0).length;
-  const trend15mPct = ((closes.at(-1) / closes[0]) - 1) * 100;
-
-  return {
-    trend15mPct,
-    upMinutes,
-    downMinutes,
-    lastPrice: closes.at(-1),
-    lastCandleTime: Number(recent.at(-1)[0])
-  };
-}
-
-export function calculateAtrPct(candles, period = 14, nowMs = Date.now()) {
-  const closed = candles.filter((candle) => Number(candle[6]) < nowMs);
-  const recent = closed.slice(-(period + 1));
-  if (recent.length < period + 1) return null;
-
-  const trueRanges = recent.slice(1).map((candle, index) => {
-    const high = Number(candle[2]);
-    const low = Number(candle[3]);
-    const previousClose = Number(recent[index][4]);
-    if (![high, low, previousClose].every(Number.isFinite)) return NaN;
-    return Math.max(high - low, Math.abs(high - previousClose), Math.abs(low - previousClose));
-  });
-  const lastPrice = Number(recent.at(-1)[4]);
-  if (!(lastPrice > 0) || trueRanges.some((value) => !Number.isFinite(value))) return null;
-
-  const atr = trueRanges.reduce((sum, value) => sum + value, 0) / period;
-  return {
-    atr,
-    atrPct: (atr / lastPrice) * 100,
-    period,
-    closedCandles: closed.length,
-    lastPrice,
-    lastCandleTime: Number(recent.at(-1)[0])
-  };
 }
 
 export function shadowDowntrendVetoDecision(candles, atr15Pct, nowMs = Date.now()) {
@@ -854,71 +847,6 @@ export function initialRiskDecision({
     atrRiskPct,
     requiredRiskPct,
     initialRiskPct
-  };
-}
-
-export function dynamicExitDecision({
-  returnPct,
-  initialRiskPct,
-  atr15Pct,
-  peakReturnPct = 0,
-  profitProtectionActive = false,
-  openedAtMs,
-  nowMs = Date.now(),
-  signalValid,
-  disasterStopLossPct,
-  profitProtectionR,
-  trailingAtrMultiplier,
-  finalTakeProfitR,
-  signalReviewHours,
-  signalReviewMinR,
-  profitFloorPct = 0
-}) {
-  const updatedPeakReturnPct = Math.max(Number.isFinite(peakReturnPct) ? peakReturnPct : 0, returnPct);
-  const protectionThresholdPct = initialRiskPct * profitProtectionR;
-  const protectionActive = profitProtectionActive || updatedPeakReturnPct >= protectionThresholdPct;
-  const trailingStopPct = protectionActive
-    ? Math.max(profitFloorPct, updatedPeakReturnPct - atr15Pct * trailingAtrMultiplier)
-    : null;
-  const common = {
-    returnPct,
-    peakReturnPct: updatedPeakReturnPct,
-    profitProtectionActive: protectionActive,
-    trailingStopPct,
-    protectionThresholdPct,
-    finalTakeProfitPct: initialRiskPct * finalTakeProfitR
-  };
-  const epsilon = 1e-9;
-
-  if (returnPct <= -Math.abs(disasterStopLossPct) + epsilon) {
-    return { type: "DISASTER_STOP", ...common };
-  }
-  if (returnPct <= -Math.abs(initialRiskPct) + epsilon) {
-    return { type: "INITIAL_STOP", ...common };
-  }
-  if (returnPct >= common.finalTakeProfitPct - epsilon) {
-    return { type: "TAKE_PROFIT_2R", ...common };
-  }
-  if (protectionActive && returnPct <= trailingStopPct + epsilon) {
-    return { type: "TRAILING_STOP", ...common };
-  }
-
-  const heldMs = Math.max(0, nowMs - openedAtMs);
-  const reviewAfterMs = signalReviewHours * 60 * 60_000;
-  const minimumProgressPct = initialRiskPct * signalReviewMinR;
-  if (heldMs >= reviewAfterMs && signalValid === false && returnPct < minimumProgressPct) {
-    return {
-      type: "SIGNAL_TIMEOUT",
-      ...common,
-      heldMs,
-      minimumProgressPct
-    };
-  }
-  return {
-    type: null,
-    ...common,
-    heldMs,
-    minimumProgressPct
   };
 }
 

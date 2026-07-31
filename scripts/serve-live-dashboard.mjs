@@ -10,6 +10,7 @@ import { loadDashboardSnapshot } from "../src/dashboard.mjs";
 import { liveDashboardHtml } from "../src/live-dashboard-html.mjs";
 import { dashboardLoginHtml } from "../src/dashboard-login-html.mjs";
 import { strategyLabHtml } from "../src/strategy-lab-html.mjs";
+import { tradeReviewHtml } from "../src/trade-review-html.mjs";
 import { activateEmergencyStop, clearEmergencyStop } from "../src/reliability.mjs";
 import { createTracer } from "../src/trace.mjs";
 import { approvalDecisionStatus, recordApprovalDecision } from "../src/approvals.mjs";
@@ -32,6 +33,10 @@ const port = Number(process.env.DASHBOARD_PORT || 4173);
 const authConfig = dashboardAuthConfig();
 const allowedOrigins = dashboardAllowedOrigins({ host, port });
 const execFileAsync = promisify(execFile);
+const tradeReviewDirectory = resolve(
+  projectRoot,
+  process.env.TRADE_REVIEW_DIR || "state/trade-reviews"
+);
 
 async function executeBaw(args) {
   let stdout;
@@ -114,7 +119,7 @@ function requireAllowedOrigin(request) {
 
 function requireAuthentication(request, response) {
   if (dashboardRequestAuthorized(request, authConfig)) return true;
-  if (request.method === "GET" && ["/", "/strategies"].includes(request.url)) {
+  if (request.method === "GET" && ["/", "/strategies", "/reviews"].includes(request.url)) {
     response.writeHead(303, {
       "Location": "/login",
       "Cache-Control": "no-store",
@@ -208,6 +213,15 @@ const server = createServer(async (request, response) => {
       response.end(strategyLabHtml());
       return;
     }
+    if (request.method === "GET" && request.url === "/reviews") {
+      response.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.end(tradeReviewHtml());
+      return;
+    }
     if (request.method === "GET" && request.url === "/api/snapshot") {
       const config = await loadConfig();
       const snapshot = await loadDashboardSnapshot({
@@ -249,6 +263,36 @@ const server = createServer(async (request, response) => {
         "X-Content-Type-Options": "nosniff"
       });
       response.end(JSON.stringify(report ? { available: true, ...report } : { available: false }));
+      return;
+    }
+    if (request.method === "GET" && request.url.startsWith("/api/trade-reviews")) {
+      const requestUrl = new URL(request.url, `http://${host}:${port}`);
+      const date = requestUrl.searchParams.get("date");
+      if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        response.writeHead(400, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store"
+        });
+        response.end(JSON.stringify({ available: false, error: "Invalid trading date" }));
+        return;
+      }
+      const reportPath = date
+        ? resolve(tradeReviewDirectory, "daily", `${date}.json`)
+        : resolve(tradeReviewDirectory, "latest.json");
+      const [report, index] = await Promise.all([
+        readFile(reportPath, "utf8").then(JSON.parse)
+          .catch((error) => error.code === "ENOENT" ? null : Promise.reject(error)),
+        readFile(resolve(tradeReviewDirectory, "index.json"), "utf8").then(JSON.parse)
+          .catch((error) => error.code === "ENOENT" ? { reports: [] } : Promise.reject(error))
+      ]);
+      response.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.end(JSON.stringify(report
+        ? { available: true, report, history: index.reports || [] }
+        : { available: false, history: index.reports || [] }));
       return;
     }
     if (request.method === "POST" && request.url === "/api/auto-approval") {

@@ -102,6 +102,7 @@ export function strategyLabHtml() {
       <div class="nav-actions">
         <span class="current-strategy"><span>当前</span><strong id="activeStrategy">读取中</strong></span>
         <span class="badge blue" id="mode">—</span>
+        <a class="back-link" href="/reviews">复盘</a>
         <a class="back-link" href="/">仪表盘</a>
       </div>
     </div>

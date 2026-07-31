@@ -148,6 +148,84 @@ passed
 
 ---
 
+## Action log decision, trade, and system filters
+
+- Source visual truth: `/var/folders/xx/1h1hmbcn1xvgs5_sft5jmpgc0000gp/T/codex-clipboard-3953b17d-4da1-4060-a7fa-2e223228d735.png`
+- Implementation decision view: `/Users/henry/projects/binance/artifacts/action-timeline-decision.png`
+- Implementation system view: `/Users/henry/projects/binance/artifacts/action-timeline-system.png`
+- Mobile action view: `/Users/henry/projects/binance/artifacts/action-timeline-mobile-viewport.png`
+- Normalized comparison: `/Users/henry/projects/binance/artifacts/action-timeline-comparison.png`
+- Source pixels: 2518 × 856
+- Browser viewport: 1280 × 720 CSS px
+- Mobile viewport: 390 × 844 CSS px
+- Focused implementation captures: 1220 × 350 pixels
+- State: local action history with 13 decision records, 0 trade records, and 67 system records
+
+### Full-view comparison evidence
+
+The original screenshot and both filtered implementation states were placed in
+one comparison image. The action section remains in the same page position,
+retains the dark panel, compact row density, border rhythm, time column, and
+status colors, and replaces the mixed English event stream with two explicit
+operational categories plus a separate user-facing trade stream.
+
+### Focused comparison evidence
+
+- The default decision view contains only decision events and shows localized
+  event names, reasons, schedules, durations, and statuses.
+- The system view contains cycle, persistence, wallet, API, notification, and
+  execution plumbing records with localized labels and summaries.
+- The trade view groups approval, buy/sell submission, order progress, Gas, and
+  position changes into user-facing summaries instead of low-level event names.
+- Raw JSON remains available through a collapsed `原始日志` disclosure and is
+  no longer the primary visible content.
+- All three filter buttons expose `aria-pressed`; their counts update from the same
+  bounded recent-action collection.
+
+### Required fidelity surfaces
+
+- Fonts and typography: existing system and monospace stacks, weights, compact
+  hierarchy, and time-column treatment are preserved.
+- Spacing and layout rhythm: existing section width, row grid, padding, borders,
+  radius, and 300 px scroll region are unchanged; the filter control occupies
+  the previous heading tool area.
+- Colors and visual tokens: existing dark panels and blue, gold, green, and red
+  semantic tokens are reused for system, decision, success, skipped, and failed
+  states.
+- Image quality and asset fidelity: the target contains no imagery or custom
+  icon asset; no replacement asset was introduced.
+- Copy and content: English event names, statuses, common reasons, scheduling
+  values, wallet operations, percentages, durations, and USDT values are
+  localized. Unmapped low-level fields remain accessible only in raw logs.
+
+### Primary interactions and accessibility
+
+- Verified the default `决策判断` state, then switched through `交易动作` and
+  `系统日志`.
+- Verified `aria-pressed` changes across decision, trade, and system; displayed
+  rows remain isolated by category and the empty trade state is explicit.
+- Verified raw log disclosures remain collapsed by default.
+- Desktop document and action section have no horizontal overflow.
+- At 390 px, the three filters form equal-width columns, event time contracts to
+  54 px, and document width equals scroll width with no horizontal overflow.
+- Browser console contains no errors.
+
+### Comparison history
+
+1. The first pass separated decision and system events and localized the main
+   event, status, and reason labels.
+2. Browser verification exposed untranslated schedule and wallet-operation
+   values. Added localized values for standard entry cadence, wallet status,
+   market-order operations, and common gate reasons.
+3. Added the trade stream and user-facing transaction summaries, then verified
+   its empty state against the current local history.
+4. Added and visually verified the compact mobile filter and event layout at
+   390 × 844; no actionable P0, P1, or P2 issue remains.
+
+final result: passed
+
+---
+
 # iPhone Dashboard Design QA
 
 - Source: `/Users/henry/.codex/generated_images/019f98f1-bb18-72b0-ae6a-a972861a6599/call_8jiZ3Bqb97dHOynpafJzNOr4.png`

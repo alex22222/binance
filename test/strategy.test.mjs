@@ -12,6 +12,7 @@ import {
   entrySymbolPolicyDecision,
   entryStatusCheckDecision,
   expectedUsRegularWindow,
+  fomcEntryBlackoutDecision,
   initialStopPolicyUpdate,
   initialRiskDecision,
   isStopLossExit,
@@ -62,6 +63,12 @@ const config = {
   regularOnlyEntries: true,
   entryCutoffMinutes: 45,
   entryBlockedSymbols: [],
+  fomcEntryBlackoutDates: [
+    "2026-07-29",
+    "2026-09-16",
+    "2026-10-28",
+    "2026-12-09"
+  ],
   quoteMaxAgeSeconds: 10,
   maxQuoteDriftPct: 0.5,
   allowUnsupportedAuditForOfficialRwa: true,
@@ -108,6 +115,7 @@ test("requires regular-session-only entries", () => {
   assert.throws(() => validateConfig({ ...config, regularOnlyEntries: false }), /regularOnlyEntries/);
   assert.throws(() => validateConfig({ ...config, entryCutoffMinutes: 0 }), /entryCutoffMinutes/);
   assert.throws(() => validateConfig({ ...config, entryBlockedSymbols: "CRCL" }), /entryBlockedSymbols/);
+  assert.throws(() => validateConfig({ ...config, fomcEntryBlackoutDates: "2026-07-29" }), /fomcEntryBlackoutDates/);
   assert.throws(() => validateConfig({ ...config, pollSeconds: 61 }), /pollSeconds/);
 });
 
@@ -154,6 +162,35 @@ test("stops new entries 45 minutes before the regular or early close", () => {
     Date.parse("2026-11-27T17:15:00.000Z"),
     45
   ), false);
+});
+
+test("blocks new entries from 13:50 through 15:15 ET on configured FOMC decision days", () => {
+  assert.deepEqual(fomcEntryBlackoutDecision({
+    nowMs: Date.parse("2026-07-29T17:49:59.000Z"),
+    dates: config.fomcEntryBlackoutDates
+  }), {
+    allowed: true,
+    reason: "OUTSIDE_FOMC_ENTRY_BLACKOUT",
+    nyseDate: "2026-07-29",
+    startTime: "13:50",
+    endTime: "15:15"
+  });
+  assert.equal(fomcEntryBlackoutDecision({
+    nowMs: Date.parse("2026-07-29T17:50:00.000Z"),
+    dates: config.fomcEntryBlackoutDates
+  }).allowed, false);
+  assert.equal(fomcEntryBlackoutDecision({
+    nowMs: Date.parse("2026-07-29T19:14:59.000Z"),
+    dates: config.fomcEntryBlackoutDates
+  }).allowed, false);
+  assert.equal(fomcEntryBlackoutDecision({
+    nowMs: Date.parse("2026-07-29T19:15:00.000Z"),
+    dates: config.fomcEntryBlackoutDates
+  }).allowed, true);
+  assert.equal(fomcEntryBlackoutDecision({
+    nowMs: Date.parse("2026-07-30T18:30:00.000Z"),
+    dates: config.fomcEntryBlackoutDates
+  }).allowed, true);
 });
 
 test("blocks configured symbols and same-day initial-stop re-entry", () => {

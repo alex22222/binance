@@ -104,6 +104,45 @@ session, incrementally keeps already downloaded days, and then refreshes the
 non-executing adaptive-momentum versus trend-pullback comparison from recorded
 market scans.
 
+## Trade reviews
+
+The post-close review job reads the append-only action trace and current bot
+state without using the wallet or changing trading controls. It archives real
+terminal SELL fills separately from Shadow observations, keeps daily JSON
+reports, and refreshes 5-session and 20-session summaries shown at `/reviews`.
+For each completed trade with at least 20 aligned one-minute samples, it also
+reports correlation and OLS beta versus an equal-weight SPY/QQQ benchmark.
+The market-attributed loss share is descriptive only: negative beta is floored
+at zero for this long-only attribution, and the report does not treat
+correlation as proof of causation.
+
+```bash
+sudo systemctl start binance-agentic-trade-review
+sudo systemctl enable --now binance-agentic-trade-review.timer
+systemctl list-timers binance-agentic-trade-review.timer
+```
+
+The timer runs at `22:15 UTC` on weekdays, which is after the regular NYSE close
+in both U.S. daylight and standard time and before the heavier strategy
+validation timer. Reports are written only under `state/trade-reviews/`.
+
+The premarket research brief collects SPY, QQQ, IWM, VIX, index futures,
+configured-stock premarket moves, breadth, and optional GDELT headlines. It
+labels the session `NORMAL_LONG`, `SELECTIVE_LONG`, `DEFENSIVE`, or
+`DATA_INSUFFICIENT`; the label is stored in the daily review and has no
+execution effect.
+
+```bash
+sudo systemctl enable --now binance-agentic-premarket-brief.timer
+systemctl list-timers binance-agentic-premarket-brief.timer
+```
+
+The timer runs at both `13:15 UTC` and `14:15 UTC`. The script uses the actual
+New York session bounds and skips runs outside the 90 minutes before regular
+open, so daylight time gets the 13:15 collection and standard time gets a
+13:15 collection plus a 14:15 refresh. External data or headline failures are
+recorded as missing research inputs and do not stop the bot or change entries.
+
 ## Explicit live cutover
 
 Never run the local Mac and server with `BOT_LIVE=1` at the same time. Before

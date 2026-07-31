@@ -54,7 +54,8 @@ test("dashboard records one exact approval without writing the bot state", async
     env: {
       ...process.env,
       BOT_CONFIG: configPath,
-      DASHBOARD_PORT: String(port)
+      DASHBOARD_PORT: String(port),
+      TRADE_REVIEW_DIR: join(directory, "trade-reviews")
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -82,6 +83,13 @@ test("dashboard records one exact approval without writing the bot state", async
     const strategyPage = await fetch(`${origin}/strategies`);
     assert.equal(strategyPage.status, 200);
     assert.match(await strategyPage.text(), /id="strategyComparison"/);
+
+    const reviewPage = await fetch(`${origin}/reviews`);
+    assert.equal(reviewPage.status, 200);
+    assert.match(await reviewPage.text(), /id="dailyMetrics"/);
+
+    const reviews = await fetch(`${origin}/api/trade-reviews`).then((response) => response.json());
+    assert.equal(reviews.available, false);
 
     const invalid = await fetch(`${origin}/api/approval-decision`, {
       method: "POST",

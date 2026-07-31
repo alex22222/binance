@@ -7,9 +7,29 @@ import {
   shadowTrendPullbackDecision,
   shadowTrendQualityDecision
 } from "./strategy.mjs";
+import {
+  analyzeCandles,
+  calculateAtrPct
+} from "./strategy-signals.mjs";
+import { dynamicExitDecision } from "./strategy-exit.mjs";
+import {
+  createReplayFrames,
+  createReplayRecorder
+} from "./replay-engine.mjs";
+import { executeReplayOrder } from "./replay-execution.mjs";
+import {
+  executionMetrics,
+  performanceMetrics as calculatePerformanceMetrics
+} from "./performance-report.mjs";
+
+export { executionMetrics } from "./performance-report.mjs";
 
 const DEFAULT_NOTIONAL_USDT = 50;
 const DEFAULT_ROUND_TRIP_COST_PCT = 1;
+
+export function performanceMetrics(trades, notionalUsdt = DEFAULT_NOTIONAL_USDT) {
+  return calculatePerformanceMetrics(trades, notionalUsdt);
+}
 
 const definitions = [
   {
@@ -25,6 +45,19 @@ const definitions = [
     evidenceLevel: "historical-shadow",
     marketFilter: true,
     rule: "自适应动量信号，仅排除SPY/QQQ共同弱势且至少一个持续下跌的时点"
+  },
+  {
+    id: "adaptive-momentum-three-controls",
+    baseStrategyId: "adaptive-momentum",
+    name: "自适应动量＋三规则",
+    evidenceLevel: "historical-counterfactual",
+    researchControls: {
+      minPlannedNetPayoffRatio: 0.8,
+      profitProtectionNetR: 0.5,
+      earlyFailureMinutes: 30,
+      earlyFailureLossR: 0.25
+    },
+    rule: "计划净盈亏比≥0.8；净收益达到0.5R后移动保护；30分钟无净盈利且信号失效时提前止损"
   },
   {
     id: "trend-pullback-confirmation",
@@ -64,35 +97,6 @@ export function strategyValidationDefinitions() {
   return definitions.map((definition) => ({ ...definition }));
 }
 
-export function performanceMetrics(trades, notionalUsdt = DEFAULT_NOTIONAL_USDT) {
-  const pnl = trades.map(({ pnlUsdt }) => Number(pnlUsdt)).filter(Number.isFinite);
-  const wins = pnl.filter((value) => value > 0);
-  const losses = pnl.filter((value) => value < 0);
-  let equity = 0;
-  let peak = 0;
-  let maxDrawdownUsdt = 0;
-  for (const value of pnl) {
-    equity += value;
-    peak = Math.max(peak, equity);
-    maxDrawdownUsdt = Math.max(maxDrawdownUsdt, peak - equity);
-  }
-  const pnlUsdt = pnl.reduce((sum, value) => sum + value, 0);
-  const grossProfit = wins.reduce((sum, value) => sum + value, 0);
-  const grossLoss = Math.abs(losses.reduce((sum, value) => sum + value, 0));
-  return {
-    trades: pnl.length,
-    wins: wins.length,
-    losses: losses.length,
-    winRatePct: pnl.length ? wins.length / pnl.length * 100 : null,
-    pnlUsdt,
-    returnPct: pnlUsdt / notionalUsdt * 100,
-    returnOnTurnoverPct: pnl.length ? pnlUsdt / (notionalUsdt * pnl.length) * 100 : null,
-    profitFactor: grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? null : null,
-    maxDrawdownUsdt,
-    maxDrawdownPct: maxDrawdownUsdt / notionalUsdt * 100
-  };
-}
-
 function performanceBySymbol(trades, notionalUsdt) {
   const symbols = [...new Set(trades.map(({ ticker }) => ticker).filter(Boolean))].sort();
   return Object.fromEntries(symbols.map((ticker) => [
@@ -128,15 +132,7 @@ function aggregate15MinuteCandles(candles) {
 }
 
 function atrPct(candles, timestamp, period = 14) {
-  const closed = candles.filter(({ closeTime }) => closeTime < timestamp).slice(-(period + 1));
-  if (closed.length < period + 1) return null;
-  const ranges = closed.slice(1).map((candle, index) => Math.max(
-    candle.high - candle.low,
-    Math.abs(candle.high - closed[index].close),
-    Math.abs(candle.low - closed[index].close)
-  ));
-  const price = closed.at(-1).close;
-  return ranges.reduce((sum, value) => sum + value, 0) / period / price * 100;
+  return calculateAtrPct(candles, period, timestamp)?.atrPct ?? null;
 }
 
 function momentumFeature(market, ticker, timestamp) {
@@ -145,15 +141,15 @@ function momentumFeature(market, ticker, timestamp) {
   if (index == null || index < 15) return null;
   const recent = item.candles.slice(index - 15, index + 1);
   if (recent.at(-1).openTime - recent[0].openTime !== 15 * 60_000) return null;
-  const changes = recent.slice(1).map((candle, offset) => candle.close - recent[offset].close);
-  const trend15mPct = (recent.at(-1).close / recent[0].close - 1) * 100;
+  const signal = analyzeCandles(recent, timestamp + 60_000);
+  if (!signal) return null;
   const currentAtrPct = atrPct(item.fifteenMinute, timestamp);
   if (!Number.isFinite(currentAtrPct)) return null;
   return {
-    trend15mPct,
-    upMinutes: changes.filter((value) => value > 0).length,
+    trend15mPct: signal.trend15mPct,
+    upMinutes: signal.upMinutes,
     atr15Pct: currentAtrPct,
-    price: recent.at(-1).close
+    price: signal.lastPrice
   };
 }
 
@@ -200,11 +196,16 @@ function marketView(dataset) {
   return Object.fromEntries(Object.entries(dataset).map(([ticker, item]) => {
     const candles = [...(item.tokenCandles || [])].sort((left, right) => left.openTime - right.openTime);
     const underlying = [...(item.underlyingCandles || [])].sort((left, right) => left.openTime - right.openTime);
+    const executionQuotes = [...(item.executionQuotes || [])];
     const fifteenMinute = aggregate15MinuteCandles(candles);
     return [ticker, {
       multiplier: Number(item.multiplier || 1),
       candles,
       underlying,
+      executionQuoteIndex: new Map(executionQuotes.map((quote) => [
+        `${quote.side}:${Number(quote.executionTime)}`,
+        quote
+      ])),
       index: new Map(candles.map((candle, index) => [candle.openTime, index])),
       underlyingIndex: new Map(underlying.map((candle, index) => [candle.openTime, index])),
       fifteenMinute,
@@ -379,7 +380,7 @@ function strategySignal(definition, market, timestamp, options, eligible) {
     return { signal: null, marketBlocked: true, marketRegime };
   }
   const { roundTripCostPct, minNetEdgePct } = options;
-  const signal = strategyId === "adaptive-momentum"
+  let signal = strategyId === "adaptive-momentum"
     ? adaptiveEntry(market, timestamp, roundTripCostPct, minNetEdgePct, eligible)
     : strategyId === "trend-pullback-confirmation"
       ? trendPullbackEntry(
@@ -395,7 +396,34 @@ function strategySignal(definition, market, timestamp, options, eligible) {
         : strategyId === "residual-reversal"
           ? residualEntry(market, timestamp, roundTripCostPct, minNetEdgePct, eligible)
           : sessionEntry(market, timestamp, eligible);
-  return { signal, marketBlocked: false, marketRegime };
+  let payoffBlocked = false;
+  let plannedNetPayoffRatio = null;
+  if (signal && definition.researchControls) {
+    const initialRiskPct = Math.min(
+      options.maxInitialStopPct,
+      Math.max(
+        options.minInitialStopPct,
+        signal.feature.atr15Pct * options.atrStopMultiplier
+      )
+    );
+    plannedNetPayoffRatio = (
+      initialRiskPct * options.finalTakeProfitR - options.roundTripCostPct
+    ) / (initialRiskPct + options.roundTripCostPct);
+    if (
+      plannedNetPayoffRatio <
+      definition.researchControls.minPlannedNetPayoffRatio
+    ) {
+      signal = null;
+      payoffBlocked = true;
+    }
+  }
+  return {
+    signal,
+    marketBlocked: false,
+    marketRegime,
+    payoffBlocked,
+    plannedNetPayoffRatio
+  };
 }
 
 function signalStillValid(strategyId, market, position, timestamp, costPct, minNetEdgePct) {
@@ -415,9 +443,20 @@ function signalStillValid(strategyId, market, position, timestamp, costPct, minN
   return sessionMinute(timestamp) < 15 * 60 + 50;
 }
 
+function replayExitReason(type) {
+  if (type === "TAKE_PROFIT_2R") return "TAKE_PROFIT";
+  if (type === "SIGNAL_TIMEOUT") return "SIGNAL_REVIEW";
+  return type;
+}
+
+function replayQuote(market, ticker, side, executionTime) {
+  return market[ticker]?.executionQuoteIndex.get(`${side}:${executionTime}`) || null;
+}
+
 function simulateStrategy(definition, market, timestamps, options) {
   const strategyId = definition.id;
   const baseStrategyId = definition.baseStrategyId || strategyId;
+  const researchControls = definition.researchControls || null;
   const {
     notionalUsdt,
     roundTripCostPct,
@@ -433,35 +472,98 @@ function simulateStrategy(definition, market, timestamps, options) {
     minNetEdgePct,
     disasterStopLossPct,
     entryCutoffMinutes,
-    entryBlockedSymbols
+    entryBlockedSymbols,
+    includeReplayEvents,
+    executionModel,
+    maxQuoteAgeMs,
+    maxQuoteDriftPct
   } = options;
+  const replayCostPct = executionModel === "QUOTE_REPLAY" ? 0 : roundTripCostPct;
+  const recorder = createReplayRecorder({ includeEvents: includeReplayEvents });
   const trades = [];
   const entryDiagnostics = {
     cadenceChecks: 0,
     signals: 0,
     marketBlocked: 0,
     cutoffBlocked: 0,
-    symbolPolicyBlocked: 0
+    symbolPolicyBlocked: 0,
+    payoffBlocked: 0,
+    earlyFailureExits: 0
   };
   let initialStopHistory = [];
   let quarantineUntilBySymbol = {};
   let positions = [];
   let pending = null;
-  for (const timestamp of timestamps) {
+  for (const frame of createReplayFrames(timestamps)) {
+    const timestamp = frame.marketTime;
+    const executionFrame = {
+      marketTime: timestamp,
+      frontierTime: timestamp
+    };
     if (pending && positions.length < maxOpenPositions) {
       const candle = market[pending.ticker]?.candles[market[pending.ticker].index.get(timestamp)];
       if (candle && !positions.some(({ ticker }) => ticker === pending.ticker)) {
         const feature = momentumFeature(market, pending.ticker, timestamp);
         const currentAtrPct = feature?.atr15Pct || pending.feature.atr15Pct || 1;
-        positions.push({
-          ticker: pending.ticker,
-          entryTime: timestamp,
-          entryPrice: candle.open,
-          initialRiskPct: Math.min(maxInitialStopPct, Math.max(minInitialStopPct, currentAtrPct * atrStopMultiplier)),
-          peakGrossReturnPct: 0,
-          peakNetReturnPct: -roundTripCostPct,
-          worstNetReturnPct: -roundTripCostPct
+        const quote = replayQuote(market, pending.ticker, "BUY", timestamp);
+        const execution = executeReplayOrder({
+          model: executionModel,
+          orderId: pending.orderId,
+          side: "BUY",
+          executedAtMs: timestamp,
+          candlePrice: candle.open,
+          notionalUsdt,
+          quote,
+          expectedOutputAmount: quote?.expectedOutputAmount,
+          maxQuoteAgeMs,
+          maxQuoteDriftPct,
+          gasUsdt: quote?.gasUsdt
         });
+        if (execution.status === "FILLED") {
+          recorder.record("ORDER_FILLED", executionFrame, {
+            orderId: pending.orderId,
+            side: "BUY",
+            ticker: pending.ticker,
+            price: execution.fillPrice,
+            evidenceLevel: execution.evidenceLevel,
+            gasUsdt: execution.gasUsdt,
+            quoteAgeMs: execution.quoteAgeMs,
+            quoteDriftPct: execution.quoteDriftPct
+          });
+          positions.push({
+            ticker: pending.ticker,
+            entryTime: timestamp,
+            entryPrice: execution.fillPrice,
+            quantity: execution.fillQuantity,
+            entryValueUsdt: execution.inputAmount,
+            entryGasUsdt: execution.gasUsdt,
+            entryExecutionEvidenceLevel: execution.evidenceLevel,
+            initialRiskPct: Math.min(maxInitialStopPct, Math.max(minInitialStopPct, currentAtrPct * atrStopMultiplier)),
+            peakGrossReturnPct: 0,
+            peakNetReturnPct: -replayCostPct,
+            worstNetReturnPct: -replayCostPct
+          });
+          recorder.record("POSITION_OPENED", executionFrame, {
+            orderId: pending.orderId,
+            ticker: pending.ticker,
+            price: execution.fillPrice
+          });
+        } else {
+          recorder.record(
+            execution.status === "FAILED" ? "ORDER_FAILED" : "ORDER_REJECTED",
+            executionFrame,
+            {
+              orderId: pending.orderId,
+              side: "BUY",
+              ticker: pending.ticker,
+              reason: execution.reason,
+              evidenceLevel: execution.evidenceLevel,
+              gasUsdt: execution.gasUsdt,
+              quoteAgeMs: execution.quoteAgeMs,
+              quoteDriftPct: execution.quoteDriftPct
+            }
+          );
+        }
       }
       pending = null;
     }
@@ -473,15 +575,18 @@ function simulateStrategy(definition, market, timestamps, options) {
         continue;
       }
       const grossReturnPct = (candle.close / position.entryPrice - 1) * 100;
-      const returnPct = grossReturnPct - roundTripCostPct;
+      const returnPct = grossReturnPct - replayCostPct;
       position.peakGrossReturnPct = Math.max(position.peakGrossReturnPct, grossReturnPct);
       position.peakNetReturnPct = Math.max(position.peakNetReturnPct, returnPct);
       position.worstNetReturnPct = Math.min(position.worstNetReturnPct, returnPct);
       const feature = momentumFeature(market, position.ticker, timestamp);
       const currentAtrPct = feature?.atr15Pct || position.initialRiskPct / atrStopMultiplier;
-      const protectedStop = position.peakGrossReturnPct >= position.initialRiskPct * profitProtectionR
+      const protectionActivationPct = researchControls
+        ? replayCostPct + position.initialRiskPct * researchControls.profitProtectionNetR
+        : position.initialRiskPct * profitProtectionR;
+      const protectedStop = position.peakGrossReturnPct >= protectionActivationPct
         ? Math.max(
-            roundTripCostPct + minNetEdgePct,
+            replayCostPct + minNetEdgePct,
             position.peakGrossReturnPct - currentAtrPct * trailingAtrMultiplier
           )
         : null;
@@ -500,39 +605,146 @@ function simulateStrategy(definition, market, timestamps, options) {
       const sessionClose = baseStrategyId === "session-momentum" &&
         sessionMinute(timestamp) >= 15 * 60 + 50;
       const heldMs = timestamp - position.entryTime;
-      const rawReason = grossReturnPct <= -disasterStopLossPct ? "DISASTER_STOP"
-        : grossReturnPct <= -position.initialRiskPct ? "INITIAL_STOP"
-          : grossReturnPct >= position.initialRiskPct * finalTakeProfitR ? "TAKE_PROFIT"
-            : protectedStop != null && grossReturnPct <= protectedStop ? "TRAILING_STOP"
-            : heldMs >= signalReviewHours * 60 * 60_000 &&
-              !valid &&
-              grossReturnPct < position.initialRiskPct * signalReviewMinR ? "SIGNAL_REVIEW"
-              : basisNormalized ? "BASIS_NORMALIZED"
-                : residualNormalized ? "RESIDUAL_NORMALIZED"
-                  : sessionClose ? "SESSION_CLOSE"
-                    : null;
+      const earlyFailure = researchControls &&
+        heldMs >= researchControls.earlyFailureMinutes * 60_000 &&
+        !valid &&
+        position.peakNetReturnPct <= 0 &&
+        grossReturnPct <= -position.initialRiskPct * researchControls.earlyFailureLossR;
+      const sharedExit = researchControls ? null : dynamicExitDecision({
+        returnPct: grossReturnPct,
+        initialRiskPct: position.initialRiskPct,
+        atr15Pct: currentAtrPct,
+        peakReturnPct: position.peakGrossReturnPct,
+        openedAtMs: position.entryTime,
+        nowMs: timestamp,
+        signalValid: valid,
+        disasterStopLossPct,
+        profitProtectionR,
+        trailingAtrMultiplier,
+        finalTakeProfitR,
+        signalReviewHours,
+        signalReviewMinR,
+        profitFloorPct: replayCostPct + minNetEdgePct
+      });
+      const rawReason = researchControls
+        ? grossReturnPct <= -disasterStopLossPct ? "DISASTER_STOP"
+          : grossReturnPct <= -position.initialRiskPct ? "INITIAL_STOP"
+            : grossReturnPct >= position.initialRiskPct * finalTakeProfitR ? "TAKE_PROFIT"
+              : protectedStop != null && grossReturnPct <= protectedStop ? "TRAILING_STOP"
+                : earlyFailure ? "EARLY_FAILURE_STOP"
+                  : heldMs >= signalReviewHours * 60 * 60_000 &&
+                    !valid &&
+                    grossReturnPct < position.initialRiskPct * signalReviewMinR ? "SIGNAL_REVIEW"
+                    : null
+        : replayExitReason(sharedExit.type) ||
+          (basisNormalized ? "BASIS_NORMALIZED"
+            : residualNormalized ? "RESIDUAL_NORMALIZED"
+              : sessionClose ? "SESSION_CLOSE"
+                : null);
       const reason = rawReason && (
-        ["INITIAL_STOP", "DISASTER_STOP"].includes(rawReason) || returnPct >= 0
+        ["INITIAL_STOP", "DISASTER_STOP", "EARLY_FAILURE_STOP"].includes(rawReason) ||
+        returnPct >= 0
       ) ? rawReason : null;
       if (reason) {
+        const orderId = `${strategyId}:${position.ticker}:SELL:${frame.frontierTime}`;
+        recorder.record("EXIT_SIGNAL", frame, {
+          orderId,
+          ticker: position.ticker,
+          reason
+        });
+        recorder.record("ORDER_INTENT", frame, {
+          orderId,
+          side: "SELL",
+          ticker: position.ticker
+        });
+        const quote = replayQuote(market, position.ticker, "SELL", frame.frontierTime);
+        const execution = executeReplayOrder({
+          model: executionModel,
+          orderId,
+          side: "SELL",
+          executedAtMs: frame.frontierTime,
+          candlePrice: candle.close,
+          quantity: position.quantity,
+          quote,
+          expectedOutputAmount: quote?.expectedOutputAmount,
+          maxQuoteAgeMs,
+          maxQuoteDriftPct,
+          gasUsdt: quote?.gasUsdt
+        });
+        if (execution.status !== "FILLED") {
+          recorder.record(
+            execution.status === "FAILED" ? "ORDER_FAILED" : "ORDER_REJECTED",
+            frame,
+            {
+              orderId,
+              side: "SELL",
+              ticker: position.ticker,
+              reason: execution.reason,
+              evidenceLevel: execution.evidenceLevel,
+              gasUsdt: execution.gasUsdt,
+              quoteAgeMs: execution.quoteAgeMs,
+              quoteDriftPct: execution.quoteDriftPct
+            }
+          );
+          retained.push(position);
+          continue;
+        }
+        recorder.record("ORDER_FILLED", frame, {
+          orderId,
+          side: "SELL",
+          ticker: position.ticker,
+          price: execution.fillPrice,
+          evidenceLevel: execution.evidenceLevel,
+          gasUsdt: execution.gasUsdt,
+          quoteAgeMs: execution.quoteAgeMs,
+          quoteDriftPct: execution.quoteDriftPct
+        });
+        const gasCostUsdt = position.entryGasUsdt + execution.gasUsdt;
+        const realizedGrossReturnPct = (execution.fillPrice / position.entryPrice - 1) * 100;
+        const realizedReturnPct = realizedGrossReturnPct - replayCostPct -
+          gasCostUsdt / notionalUsdt * 100;
+        const fixedCostUsdt = notionalUsdt * replayCostPct / 100;
+        const totalCostUsdt = fixedCostUsdt + gasCostUsdt;
+        const executionEvidenceLevel =
+          position.entryExecutionEvidenceLevel === execution.evidenceLevel
+            ? execution.evidenceLevel
+            : "MIXED";
         trades.push({
           strategyId,
           ticker: position.ticker,
           entryTime: new Date(position.entryTime).toISOString(),
           exitTime: new Date(timestamp).toISOString(),
           entryPrice: position.entryPrice,
-          exitPrice: candle.close,
-          returnPct,
-          pnlUsdt: notionalUsdt * returnPct / 100,
+          exitPrice: execution.fillPrice,
+          entryValueUsdt: position.entryValueUsdt,
+          exitValueUsdt: execution.outputAmount,
+          returnPct: realizedReturnPct,
+          pnlUsdt: notionalUsdt * realizedReturnPct / 100,
+          grossPnlUsdt: notionalUsdt * realizedGrossReturnPct / 100,
+          fixedCostUsdt,
+          gasCostUsdt,
+          totalCostUsdt,
+          executionEvidenceLevel,
+          entryExecutionEvidenceLevel: position.entryExecutionEvidenceLevel,
+          exitExecutionEvidenceLevel: execution.evidenceLevel,
           riskUsdt: notionalUsdt * position.initialRiskPct / 100,
           maePct: position.worstNetReturnPct,
           mfePct: position.peakNetReturnPct,
           maeR: position.worstNetReturnPct / position.initialRiskPct,
           mfeR: position.peakNetReturnPct / position.initialRiskPct,
-          realizedR: returnPct / position.initialRiskPct,
+          realizedR: realizedReturnPct / position.initialRiskPct,
           reason
         });
-        if (reason === "INITIAL_STOP") {
+        recorder.record("POSITION_CLOSED", frame, {
+          orderId,
+          ticker: position.ticker,
+          price: execution.fillPrice,
+          reason
+        });
+        if (reason === "EARLY_FAILURE_STOP") {
+          entryDiagnostics.earlyFailureExits += 1;
+        }
+        if (["INITIAL_STOP", "EARLY_FAILURE_STOP"].includes(reason)) {
           const updated = initialStopPolicyUpdate({
             symbol: position.ticker,
             initialStopHistory,
@@ -566,20 +778,42 @@ function simulateStrategy(definition, market, timestamps, options) {
       };
       const result = strategySignal(definition, market, timestamp, options, eligible);
       if (result.marketBlocked) entryDiagnostics.marketBlocked += 1;
+      if (result.payoffBlocked) entryDiagnostics.payoffBlocked += 1;
       if (result.signal) {
         entryDiagnostics.signals += 1;
         if (!positions.some(({ ticker }) => ticker === result.signal.ticker)) {
-          pending = result.signal;
+          const orderId = `${strategyId}:${result.signal.ticker}:BUY:${frame.frontierTime}`;
+          recorder.record("SIGNAL", frame, {
+            orderId,
+            ticker: result.signal.ticker
+          });
+          recorder.record("ORDER_INTENT", frame, {
+            orderId,
+            side: "BUY",
+            ticker: result.signal.ticker
+          });
+          pending = {
+            ...result.signal,
+            orderId
+          };
         }
       }
     }
   }
-  return { trades, entryDiagnostics };
+  return {
+    trades,
+    entryDiagnostics,
+    replay: recorder.snapshot()
+  };
 }
 
 export function backtestStrategyLibrary(dataset, options = {}) {
   const notionalUsdt = Number(options.maxTradeUsdt || DEFAULT_NOTIONAL_USDT);
   const roundTripCostPct = Number(options.roundTripCostPct || DEFAULT_ROUND_TRIP_COST_PCT);
+  const executionModel = options.executionModel || "CANDLE_PROXY";
+  if (!["CANDLE_PROXY", "QUOTE_REPLAY"].includes(executionModel)) {
+    throw new Error(`Unsupported replay execution model: ${executionModel}`);
+  }
   const simulationOptions = {
     notionalUsdt,
     roundTripCostPct,
@@ -597,14 +831,18 @@ export function backtestStrategyLibrary(dataset, options = {}) {
     entryCutoffMinutes: Number(options.entryCutoffMinutes ?? 45),
     entryBlockedSymbols: Array.isArray(options.entryBlockedSymbols)
       ? [...options.entryBlockedSymbols]
-      : []
+      : [],
+    includeReplayEvents: options.includeReplayEvents === true,
+    executionModel,
+    maxQuoteAgeMs: Number(options.maxQuoteAgeMs ?? 10_000),
+    maxQuoteDriftPct: Number(options.maxQuoteDriftPct ?? 0.3)
   };
   const market = marketView(dataset);
   const timestamps = [...new Set(Object.values(market).flatMap(({ candles }) => (
     candles.map(({ openTime }) => openTime)
   )))].sort((left, right) => left - right);
   const strategies = definitions.map((definition) => {
-    const { trades, entryDiagnostics } = simulateStrategy(
+    const { trades, entryDiagnostics, replay } = simulateStrategy(
       definition,
       market,
       timestamps,
@@ -615,6 +853,8 @@ export function backtestStrategyLibrary(dataset, options = {}) {
       performance: performanceMetrics(trades, notionalUsdt),
       performanceBySymbol: performanceBySymbol(trades, notionalUsdt),
       entryDiagnostics,
+      replay,
+      executionPerformance: executionMetrics(replay, trades),
       trades
     };
   });
@@ -622,13 +862,37 @@ export function backtestStrategyLibrary(dataset, options = {}) {
   return {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
+    validationWindow: options.validationWindow || "UNSPECIFIED",
     assumptions: {
       notionalUsdt,
       roundTripCostPct,
-      costModel: "roundTripCostPct deducted from every completed trade",
+      costModel: executionModel === "QUOTE_REPLAY"
+        ? "amount-specific quote fills and gas; no additional fixed round-trip deduction"
+        : "roundTripCostPct deducted from every completed trade",
+      execution: {
+        model: executionModel,
+        strictQuoteReplay: executionModel === "QUOTE_REPLAY",
+        maxQuoteAgeMs: simulationOptions.maxQuoteAgeMs,
+        maxQuoteDriftPct: simulationOptions.maxQuoteDriftPct,
+        quoteDriftRequiresExpectedOutput: true,
+        candleProxyRoundTripCostPct: roundTripCostPct,
+        quoteReplayAdditionalRoundTripCostPct: 0
+      },
+      reporting: {
+        returnPct: "net PnL divided by fixed entry notional",
+        returnOnTurnoverPct: "net PnL divided by fixed entry notional per completed trade",
+        returnOnExecutedTurnoverPct: "net PnL divided by summed entry and exit executed values",
+        maeMfe: "minute-close mark-to-market after fixed model cost and before gas",
+        realizedPnl: "completed fills only, after fixed model cost and recorded gas"
+      },
       maxOpenPositions: simulationOptions.maxOpenPositions,
       onePositionAtATime: simulationOptions.maxOpenPositions === 1,
       signalExecutionDelayMinutes: 1,
+      timeFrontier: {
+        intervalMs: 60_000,
+        marketDataAvailableAt: "minute candle close",
+        monotonic: true
+      },
       basisUsesCurrentMultiplier: true,
       entryPolicy: {
         entryCutoffMinutes: simulationOptions.entryCutoffMinutes,

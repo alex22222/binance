@@ -133,13 +133,29 @@ export function liveDashboardHtml() {
     .signal-strength, .signal-time { color: var(--muted); font-size: 11px; }
     .signal-change { font-size: 14px; letter-spacing: -.02em; }
     .signal-toggle { display: none; width: 100%; min-height: 44px; border: 0; border-top: 1px solid var(--line); color: var(--muted); background: transparent; cursor: pointer; font-weight: 700; }
+    .action-head-tools { display: flex; align-items: center; gap: 10px; }
+    .timeline-filters { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.02); }
+    .timeline-filter { min-height: 32px; padding: 6px 10px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; font-size: 11px; font-weight: 720; }
+    .timeline-filter span { margin-left: 4px; font: 700 10px ui-monospace, SFMono-Regular, monospace; }
+    .timeline-filter.active { color: var(--text); background: var(--panel-2); box-shadow: 0 4px 14px rgba(0,0,0,.22); }
+    .timeline-filter:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
     .timeline { max-height: 300px; overflow: auto; box-shadow: none; }
     .event { display: grid; grid-template-columns: 66px 1fr; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); align-items: start; }
     .event:last-child { border-bottom: 0; }
     .event time { color: #768292; font: 11px ui-monospace, SFMono-Regular, monospace; }
+    .event-title { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
     .event-name { font-weight: 680; }
-    .event-details { margin-top: 5px; color: var(--muted); font: 11px/1.5 ui-monospace, SFMono-Regular, monospace; word-break: break-word; }
-    .event-status { color: var(--blue); font: 700 10px ui-monospace, SFMono-Regular, monospace; text-transform: uppercase; grid-column: 2; }
+    .event-kind { padding: 3px 6px; border: 1px solid rgba(120,169,255,.25); border-radius: 999px; color: var(--blue); font-size: 9px; font-weight: 720; }
+    .event-kind.decision { border-color: rgba(245,193,79,.3); color: var(--gold); }
+    .event-kind.trade { border-color: rgba(81,214,163,.3); color: var(--green); }
+    .event-details { margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.5; word-break: break-word; }
+    .event-status { color: var(--blue); font: 700 10px ui-monospace, SFMono-Regular, monospace; grid-column: 2; }
+    .event-status.green { color: var(--green); }
+    .event-status.red { color: var(--red); }
+    .event-status.gold { color: var(--gold); }
+    .event-raw { margin-top: 7px; color: #738091; font-size: 10px; }
+    .event-raw summary { width: max-content; cursor: pointer; user-select: none; }
+    .event-raw pre { margin: 6px 0 0; padding: 8px; overflow: auto; border-radius: 8px; background: rgba(0,0,0,.2); font: 10px/1.45 ui-monospace, SFMono-Regular, monospace; white-space: pre-wrap; word-break: break-word; }
     .policy-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
     .policy-item { min-height: 92px; padding: 13px; border: 1px solid rgba(255,255,255,.075); border-radius: 14px; background: linear-gradient(145deg, rgba(20,25,33,.96), rgba(14,18,24,.96)); box-shadow: 0 10px 28px rgba(0,0,0,.16); }
     .policy-item strong { display: block; margin-top: 7px; font-size: 13px; line-height: 1.45; }
@@ -173,7 +189,13 @@ export function liveDashboardHtml() {
       .workflow { grid-template-columns: repeat(3, 1fr); }
       .section-head { align-items: center; margin-bottom: 10px; }
       h2 { font-size: 19px; }
-      .event { grid-template-columns: 66px 1fr; }
+      .action-section-head { align-items: flex-start; flex-wrap: wrap; }
+      .action-section-head::after { display: none; }
+      .action-head-tools { width: 100%; align-items: stretch; flex-direction: column; gap: 6px; }
+      .action-head-tools #lastError:empty { display: none; }
+      .timeline-filters { width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .timeline-filter { min-width: 0; padding-inline: 4px; white-space: nowrap; }
+      .event { grid-template-columns: 54px minmax(0, 1fr); padding-inline: 9px; }
       .control-button { min-height: 44px; }
       .nav { align-items: stretch; flex-direction: column; gap: 12px; padding: 12px; border-radius: 16px; }
       .brand { min-height: 44px; }
@@ -212,7 +234,7 @@ export function liveDashboardHtml() {
 <body>
   <header>
     <div class="shell nav">
-      <div class="brand"><span class="mark">A</span><span>Agentic Wallet</span><a class="nav-link" href="/strategies">策略</a></div>
+      <div class="brand"><span class="mark">A</span><span>Agentic Wallet</span><a class="nav-link" href="/strategies">策略</a><a class="nav-link" href="/reviews">复盘</a></div>
       <div class="nav-info"><div class="top-stats"><span class="top-stat"><span>钱包余额</span><strong id="walletBalance">—</strong></span><span class="top-stat"><span>盈亏</span><strong class="green" id="realizedPnl">—</strong></span><span class="top-stat"><span>日亏余量</span><strong id="dailyLossRemaining">—</strong></span><span class="top-stat"><span>单笔上限</span><strong id="maxTrade">—</strong></span></div><div class="badges"><span class="badge" id="walletStatus" aria-live="polite"><span class="dot"></span><span>钱包 未检测</span></span><span class="badge" id="mode"><span class="dot"></span><span></span></span><span class="badge" id="health"><span class="dot"></span><span></span></span><div class="control-actions"><button class="control-button" id="autoApprovalToggle" type="button" role="switch" aria-checked="false">自动审批：关</button><button class="control-button stop" id="stopButton" type="button">停机</button><button class="control-button resume" id="resumeButton" type="button" hidden>恢复</button></div></div></div>
     </div>
   </header>
@@ -266,7 +288,7 @@ export function liveDashboardHtml() {
       </section>
     </div>
     <section class="actions-section">
-      <div class="section-head"><h2>动作</h2><span class="muted" id="lastError"></span></div>
+      <div class="section-head action-section-head"><h2>动作</h2><div class="action-head-tools"><span class="muted" id="lastError"></span><div class="timeline-filters" role="group" aria-label="动作日志筛选"><button class="timeline-filter active" id="timelineDecisionFilter" type="button" aria-pressed="true">决策判断 <span id="timelineDecisionCount">0</span></button><button class="timeline-filter" id="timelineTradeFilter" type="button" aria-pressed="false">交易动作 <span id="timelineTradeCount">0</span></button><button class="timeline-filter" id="timelineSystemFilter" type="button" aria-pressed="false">系统日志 <span id="timelineSystemCount">0</span></button></div></div></div>
       <div class="panel timeline" id="timeline"></div>
     </section>
   </main>
@@ -303,6 +325,246 @@ export function liveDashboardHtml() {
         ? "https://www.tradingview.com/chart/?symbol=" + encodeURIComponent(tradingViewSymbol)
         : null;
     };
+    const decisionEvents = new Set([
+      "candidate_evaluated",
+      "candidate_evaluation",
+      "candidate_rejected",
+      "candidate_selected",
+      "cost_coverage_decision",
+      "entry_decision",
+      "exit_decision",
+      "shadow_risk_overlay",
+      "shadow_sub_strategy",
+      "signal_refresh",
+      "token_audit_decision"
+    ]);
+    const tradeEvents = new Set([
+      "buy_submission",
+      "gas_accounting",
+      "market_order",
+      "order_intent",
+      "order_recovery",
+      "order_submission",
+      "pending_order",
+      "position_change",
+      "sell_submission",
+      "trade_approval"
+    ]);
+    const actionEventLabels = {
+      buy_submission: "买入提交",
+      candidate_evaluated: "候选评估",
+      candidate_evaluation: "候选评估",
+      candidate_rejected: "候选未通过",
+      candidate_selected: "入场候选",
+      cost_coverage_decision: "成本覆盖判断",
+      cycle: "轮询周期",
+      entry_decision: "入场判断",
+      exit_decision: "退出判断",
+      external_api_call: "外部接口调用",
+      external_api_retry: "外部接口重试",
+      feishu_notification: "飞书通知",
+      feishu_retry: "飞书重试",
+      gas_accounting: "Gas 成本记录",
+      market_order: "市场订单",
+      mock_result_saved: "模拟结果保存",
+      mock_trade: "模拟交易",
+      order_intent: "订单意图",
+      order_recovery: "订单恢复",
+      order_submission: "订单提交",
+      pending_order: "待处理订单",
+      position_change: "持仓变化",
+      position_monitoring: "持仓监控",
+      sell_submission: "卖出提交",
+      shadow_risk_overlay: "Shadow 风控观察",
+      shadow_sub_strategy: "Shadow 子策略观察",
+      shutdown: "系统停止",
+      signal_refresh: "信号刷新判断",
+      startup: "系统启动",
+      state_saved: "状态已保存",
+      token_audit_decision: "代币审计判断",
+      trade_approval: "交易审批",
+      wallet_balance: "钱包余额查询",
+      wallet_cli: "钱包命令调用",
+      wallet_cli_retry: "钱包命令重试",
+      wallet_session_check: "钱包会话检查",
+      wallet_status_fallback: "钱包状态复核"
+    };
+    const actionStatusLabels = {
+      allowed: "已放行",
+      ambiguous: "状态不明确",
+      approved: "已批准",
+      auto_approved: "自动批准",
+      closed: "已关闭",
+      failed: "失败",
+      fallback: "使用估算",
+      finished: "已完成",
+      halted: "已暂停",
+      invalidated: "已失效",
+      observed: "已记录",
+      persisted: "已保存",
+      reconciled: "已核对",
+      requested: "待确认",
+      scheduled: "已安排重试",
+      simulated: "模拟执行",
+      skipped: "未执行",
+      started: "进行中",
+      submitted: "已提交",
+      succeeded: "成功",
+      triggered: "已触发",
+      waiting: "等待中"
+    };
+    const actionReasonLabels = {
+      already_held: "已持有该标的",
+      cooldown: "仍在冷却期",
+      daily_loss_limit: "已达到日亏损上限",
+      dynamic_exit_not_triggered: "未触发退出条件",
+      fresh_cost_not_covered: "最新报价无法覆盖全部成本",
+      fresh_initial_risk_rejected: "最新波动对应止损超出上限",
+      fresh_quote_no_longer_triggers_exit: "复核报价已不满足退出条件",
+      fresh_round_trip_cost: "最新往返成本超限",
+      market_status_interval: "未到下一次市场状态检查",
+      market_status_unavailable: "市场状态不可用",
+      market_or_trend_gate: "市场状态或趋势未通过",
+      max_open_positions: "已达到最大持仓数",
+      no_candidate_passed: "没有候选通过全部入场门槛",
+      no_eligible_symbol: "没有可扫描标的",
+      no_loss_floor: "未达到覆盖全部成本的退出底线",
+      non_regular_session: "当前不是美股常规交易时段",
+      quote_drift: "报价漂移超限",
+      signal: "收到停止信号",
+      signal_refresh_interval: "未到下一次持仓信号刷新",
+      stop_loss_override: "止损优先于不亏损底线",
+      insufficient_closed_candles: "收盘分钟线数量不足",
+      insufficient_closed_atr_candles: "ATR 收盘数据不足",
+      COSTS_COVERED: "预计收益覆盖全部成本",
+      INSUFFICIENT_NET_EDGE: "扣除成本后净收益不足",
+      TARGET_DOES_NOT_COVER_COSTS: "止盈目标无法覆盖全部成本"
+    };
+    const actionValueLabels = {
+      BUY: "买入",
+      SELL: "卖出",
+      FLAT: "空仓",
+      LONG: "持仓",
+      CONNECTED: "已连接",
+      REGULAR_OPEN_TRANSITION: "常规交易时段开盘复查",
+      STANDARD_ENTRY_CADENCE: "标准 15 分钟入场节奏",
+      "market-order list": "查询市场订单",
+      "market-order quote": "获取交易报价",
+      "market-order swap": "提交兑换订单",
+      "wallet balance": "查询钱包余额",
+      "wallet settings": "查询钱包设置",
+      "wallet status": "钱包状态"
+    };
+    const actionDetailLabels = {
+      candidateCount: "候选数",
+      endpoint: "接口",
+      error: "错误",
+      expectedProceedsUsdt: "预计回收",
+      expiresAt: "确认截止",
+      from: "原状态",
+      gasUsdt: "Gas",
+      hasPendingOrder: "待处理订单",
+      intervalMs: "间隔",
+      method: "方法",
+      openPositionCount: "当前持仓",
+      operation: "操作",
+      orderId: "订单",
+      positionCount: "持仓数",
+      proceedsUsdt: "回收",
+      realizedPnlUsdt: "已实现盈亏",
+      reason: "原因",
+      returnPct: "当前收益",
+      scheduleReason: "调度",
+      side: "方向",
+      status: "状态",
+      symbol: "标的",
+      to: "新状态"
+    };
+    const durationLabel = (milliseconds) => {
+      const minutes = Number(milliseconds) / 60_000;
+      return Number.isFinite(minutes) ? (minutes >= 1 ? minutes.toFixed(minutes % 1 ? 1 : 0) + " 分钟" : Math.round(Number(milliseconds) / 1000) + " 秒") : "—";
+    };
+    const actionValue = (key, value) => {
+      if (value == null) return "—";
+      if (key === "reason") return actionReasonLabels[value] || value;
+      if (["from", "operation", "scheduleReason", "side", "status", "to"].includes(key)) return actionValueLabels[value] || value;
+      if (key === "intervalMs") return durationLabel(value);
+      if (key === "returnPct") return pct(value);
+      if (["expectedProceedsUsdt", "gasUsdt", "proceedsUsdt", "realizedPnlUsdt"].includes(key)) return money(value) + " USDT";
+      if (typeof value === "boolean") return value ? "是" : "否";
+      if (typeof value === "object") return JSON.stringify(value);
+      return String(value);
+    };
+    function actionSummary(record) {
+      const details = record.details || {};
+      const preferredKeys = record.event === "exit_decision"
+        ? ["symbol", "reason", "returnPct"]
+        : record.event === "state_saved"
+          ? ["positionCount", "hasPendingOrder", "realizedPnlUsdt"]
+          : record.event === "cycle"
+            ? ["positionCount", "hasPendingOrder", "error"]
+            : record.event === "external_api_call"
+              ? ["method", "endpoint", "error"]
+              : ["symbol", "reason", "scheduleReason", "intervalMs", "error"];
+      const entries = preferredKeys
+        .filter((key) => details[key] != null)
+        .map((key) => (actionDetailLabels[key] || key) + "：" + actionValue(key, details[key]));
+      if (entries.length) return entries.join(" · ");
+      const fallback = Object.entries(details).slice(0, 3);
+      return fallback.length
+        ? fallback.map(([key, value]) => (actionDetailLabels[key] || key) + "：" + actionValue(key, value)).join(" · ")
+        : "无附加信息";
+    }
+    function actionCategory(record) {
+      if (decisionEvents.has(record.event)) return "decision";
+      if (tradeEvents.has(record.event)) return "trade";
+      return "system";
+    }
+    function tradeActionSummary(record) {
+      const details = record.details || {};
+      const symbol = details.symbol ? details.symbol + " · " : "";
+      if (record.event === "trade_approval") {
+        return "交易审批：" + symbol + actionValue("side", details.side) + " · " + (actionStatusLabels[record.status] || record.status) +
+          (details.expiresAt ? " · 截止 " + new Date(details.expiresAt).toLocaleString("zh-CN", { hour12: false }) : "");
+      }
+      if (record.event === "buy_submission") {
+        return "买入提交：" + symbol + (details.amountUsdt == null ? "金额待确认" : money(details.amountUsdt) + " USDT") +
+          (details.orderId ? " · 订单 " + details.orderId : "");
+      }
+      if (record.event === "sell_submission") {
+        const proceedsUsdt = details.expectedProceedsUsdt ?? details.proceedsUsdt;
+        return "卖出提交：" + symbol +
+          (proceedsUsdt == null ? "回收金额待确认" : "预计回收 " + money(proceedsUsdt) + " USDT") +
+          (details.realizedPnlUsdt == null ? "" : " · 已实现 " + (Number(details.realizedPnlUsdt) >= 0 ? "+" : "") + money(details.realizedPnlUsdt) + " USDT");
+      }
+      if (record.event === "position_change") {
+        return "持仓变化：" + symbol + actionValue("from", details.from) + " → " + actionValue("to", details.to) +
+          (details.realizedPnlUsdt == null ? "" : " · 已实现 " + (Number(details.realizedPnlUsdt) >= 0 ? "+" : "") + money(details.realizedPnlUsdt) + " USDT");
+      }
+      if (record.event === "pending_order") {
+        return "订单进度：" + symbol + actionValue("side", details.side) + " · " + (actionStatusLabels[record.status] || record.status) +
+          (details.orderId ? " · " + details.orderId : "");
+      }
+      if (record.event === "order_intent") {
+        return "准备下单：" + symbol + actionValue("side", details.side);
+      }
+      if (record.event === "order_submission") {
+        return "下单结果待确认：" + symbol + actionValue("side", details.side) + (details.error ? " · " + details.error : "");
+      }
+      if (record.event === "order_recovery") {
+        return "订单恢复：" + (details.orderId || details.intentId || "待核对") + " · " + (actionStatusLabels[record.status] || record.status);
+      }
+      if (record.event === "gas_accounting") {
+        const gasUsdt = details.gasUsdt ?? details.fallbackGasUsdt;
+        return "Gas 结算：" + (gasUsdt == null ? "使用预估值" : money(gasUsdt) + " USDT（预估）");
+      }
+      if (record.event === "market_order") {
+        return "模拟订单：" + (details.fromTokenQty == null ? "金额待确认" : details.fromTokenQty + " · ") + (details.orderId || "未生成订单号");
+      }
+      return actionSummary(record);
+    }
+    let timelineFilter = "decision";
+    let recentActionRecords = [];
     let submittedApprovalId = null;
     let autoApprovalEnabled = false;
     let walletLoginPoll = null;
@@ -723,16 +985,51 @@ export function liveDashboardHtml() {
     function renderTimeline(data) {
       const root = document.getElementById("timeline");
       root.replaceChildren();
-      if (!data.recentActions.length) {
-        root.append(el("div", "empty", "暂无动作记录"));
+      recentActionRecords = data.recentActions;
+      const decisions = recentActionRecords.filter((record) => actionCategory(record) === "decision");
+      const trades = recentActionRecords.filter((record) => actionCategory(record) === "trade");
+      const systemLogs = recentActionRecords.filter((record) => actionCategory(record) === "system");
+      document.getElementById("timelineDecisionCount").textContent = decisions.length;
+      document.getElementById("timelineTradeCount").textContent = trades.length;
+      document.getElementById("timelineSystemCount").textContent = systemLogs.length;
+      const decisionButton = document.getElementById("timelineDecisionFilter");
+      const tradeButton = document.getElementById("timelineTradeFilter");
+      const systemButton = document.getElementById("timelineSystemFilter");
+      decisionButton.classList.toggle("active", timelineFilter === "decision");
+      tradeButton.classList.toggle("active", timelineFilter === "trade");
+      systemButton.classList.toggle("active", timelineFilter === "system");
+      decisionButton.setAttribute("aria-pressed", String(timelineFilter === "decision"));
+      tradeButton.setAttribute("aria-pressed", String(timelineFilter === "trade"));
+      systemButton.setAttribute("aria-pressed", String(timelineFilter === "system"));
+      const records = timelineFilter === "decision" ? decisions : timelineFilter === "trade" ? trades : systemLogs;
+      if (!records.length) {
+        root.append(el("div", "empty", timelineFilter === "decision" ? "暂无决策判断" : timelineFilter === "trade" ? "暂无交易动作" : "暂无系统日志"));
         return;
       }
-      data.recentActions.forEach((record) => {
+      records.forEach((record) => {
+        const category = actionCategory(record);
         const row = el("article", "event");
         row.append(el("time", "", new Date(record.timestamp).toLocaleTimeString("zh-CN", { hour12: false })));
         const body = el("div");
-        body.append(el("div", "event-name", record.event), el("div", "event-details", JSON.stringify(record.details)));
-        row.append(body, el("span", "event-status", record.status));
+        const title = el("div", "event-title");
+        title.append(
+          el("div", "event-name", actionEventLabels[record.event] || record.event),
+          el("span", "event-kind " + category, category === "decision" ? "决策" : category === "trade" ? "交易" : "系统")
+        );
+        body.append(title, el("div", "event-details", category === "trade" ? tradeActionSummary(record) : actionSummary(record)));
+        if (record.details && Object.keys(record.details).length) {
+          const raw = el("details", "event-raw");
+          raw.append(el("summary", "", "原始日志"), el("pre", "", JSON.stringify(record.details, null, 2)));
+          body.append(raw);
+        }
+        const statusClass = ["failed", "halted", "ambiguous"].includes(record.status)
+          ? " red"
+          : ["succeeded", "finished", "allowed", "triggered", "submitted"].includes(record.status)
+            ? " green"
+            : ["skipped", "waiting", "requested", "scheduled"].includes(record.status)
+              ? " gold"
+              : "";
+        row.append(body, el("span", "event-status" + statusClass, actionStatusLabels[record.status] || record.status));
         root.append(row);
       });
     }
@@ -894,6 +1191,18 @@ export function liveDashboardHtml() {
       const expanded = signals.classList.toggle("expanded");
       event.currentTarget.setAttribute("aria-expanded", String(expanded));
       event.currentTarget.textContent = expanded ? "收起" : "查看全部";
+    });
+    document.getElementById("timelineDecisionFilter").addEventListener("click", () => {
+      timelineFilter = "decision";
+      renderTimeline({ recentActions: recentActionRecords });
+    });
+    document.getElementById("timelineTradeFilter").addEventListener("click", () => {
+      timelineFilter = "trade";
+      renderTimeline({ recentActions: recentActionRecords });
+    });
+    document.getElementById("timelineSystemFilter").addEventListener("click", () => {
+      timelineFilter = "system";
+      renderTimeline({ recentActions: recentActionRecords });
     });
     const assetTrendCanvas = document.getElementById("assetTrendChart");
     assetTrendCanvas.addEventListener("pointermove", (event) => {

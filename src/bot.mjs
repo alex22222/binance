@@ -15,6 +15,7 @@ import {
   entrySymbolPolicyDecision,
   entryStatusCheckDecision,
   executionCostEstimate,
+  fomcEntryBlackoutDecision,
   initialRiskDecision,
   initialStopPolicyUpdate,
   isStopLossExit,
@@ -1432,6 +1433,10 @@ async function evaluateEntry(
   }
   const gasEstimate = currentGasEstimate(config, state);
   const now = Date.now();
+  const fomcEntryDecision = fomcEntryBlackoutDecision({
+    nowMs: now,
+    dates: config.fomcEntryBlackoutDates
+  });
   let schedule = null;
   if (scanOnly) {
     schedule = positionSignalRefreshDecision({
@@ -1651,6 +1656,28 @@ async function evaluateEntry(
     }, currentCycleId);
     log("Position-time signal refresh completed", {
       symbolCount: sessionDecision.symbols.length
+    });
+    return;
+  }
+
+  if (!fomcEntryDecision.allowed) {
+    await traceAction("entry_decision", "skipped", {
+      reason: fomcEntryDecision.reason,
+      nyseDate: fomcEntryDecision.nyseDate,
+      startTime: fomcEntryDecision.startTime,
+      endTime: fomcEntryDecision.endTime,
+      approvedRequestInvalidated: Boolean(approvedRequest)
+    }, currentCycleId);
+    if (approvedRequest) {
+      await notify(
+        state,
+        `[Agentic Stock Bot] BUY APPROVAL INVALIDATED\n${approvedRequest.symbol} ${approvedRequest.address}\nFOMC 日 ${fomcEntryDecision.startTime}-${fomcEntryDecision.endTime} ET 禁止新开仓；现有持仓退出仍正常运行。`
+      );
+    }
+    log("New entry blocked during FOMC decision window", {
+      nyseDate: fomcEntryDecision.nyseDate,
+      startTime: fomcEntryDecision.startTime,
+      endTime: fomcEntryDecision.endTime
     });
     return;
   }
@@ -2630,6 +2657,7 @@ async function main() {
       regularOnlyEntries: config.regularOnlyEntries,
       entryCutoffMinutes: config.entryCutoffMinutes,
       entryBlockedSymbols: config.entryBlockedSymbols,
+      fomcEntryBlackoutDates: config.fomcEntryBlackoutDates,
       nysePlan: nyseSessionPlan(Date.now()),
       atrPeriod: config.atrPeriod,
       entryAtrMultiplier: config.entryAtrMultiplier,

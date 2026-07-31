@@ -214,7 +214,8 @@ function filterDataset(dataset, predicate) {
   return Object.fromEntries(Object.entries(dataset).map(([ticker, item]) => [ticker, {
     ...item,
     tokenCandles: item.tokenCandles.filter((candle) => predicate(candle.openTime)),
-    underlyingCandles: item.underlyingCandles.filter((candle) => predicate(candle.openTime))
+    underlyingCandles: item.underlyingCandles.filter((candle) => predicate(candle.openTime)),
+    executionQuotes: (item.executionQuotes || []).filter((quote) => predicate(Number(quote.executionTime)))
   }]));
 }
 
@@ -287,8 +288,14 @@ const assumptions = {
   entryBlockedSymbols: config.entryBlockedSymbols
 };
 const forwardStartMs = Date.parse(validationState.startedAt);
-const historical = backtestStrategyLibrary(filterDataset(dataset, (timestamp) => timestamp < forwardStartMs), assumptions);
-const forward = backtestStrategyLibrary(filterDataset(dataset, (timestamp) => timestamp >= forwardStartMs), assumptions);
+const historical = backtestStrategyLibrary(
+  filterDataset(dataset, (timestamp) => timestamp < forwardStartMs),
+  { ...assumptions, validationWindow: "HISTORICAL" }
+);
+const forward = backtestStrategyLibrary(
+  filterDataset(dataset, (timestamp) => timestamp >= forwardStartMs),
+  { ...assumptions, validationWindow: "FORWARD" }
+);
 const report = {
   schemaVersion: 1,
   generatedAt: new Date().toISOString(),
