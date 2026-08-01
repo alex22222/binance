@@ -97,6 +97,20 @@ import {
   openPositions,
   removeOpenPosition
 } from "./position-state.mjs";
+import {
+  buildBstocksUniverse,
+  compareBstocksUniverses,
+  resolveLiveAllowedAssets
+} from "./bstocks-universe.mjs";
+import {
+  buildTheoreticalPriceObservation,
+  fetchNasdaqStockQuote
+} from "./theoretical-price.mjs";
+import { buildExecutableBasisObservation } from "./executable-basis.mjs";
+import { evaluateBstocksEligibility } from "./entry-eligibility.mjs";
+import { loadNasdaqCorporateActions } from "./corporate-actions.mjs";
+import { buildShadowBasisDecision } from "./shadow-basis-signal.mjs";
+import { createShadowBasisTracker } from "./shadow-basis-tracker.mjs";
 
 const execFileAsync = promisify(execFile);
 const BSC_CHAIN_ID = "56";
@@ -117,6 +131,10 @@ let recordMarketData = async () => {};
 let currentCycleId = null;
 let shutdownRequested = false;
 let wakeLoop = null;
+let previousBstocksUniverse = null;
+let previousBstocksUniverseLoaded = false;
+let latestBstocksUniverseChanges = null;
+let trackShadowBasisDecision = async () => false;
 
 function log(message, fields = {}) {
   console.log(JSON.stringify({ time: new Date().toISOString(), message, ...fields }));
@@ -555,18 +573,51 @@ async function flushNotifications(state) {
   }
 }
 
-async function resolveAssets(symbols) {
+async function resolveAssets(symbols, liveAllowlist = symbols) {
   const list = await fetchJson(`${API_BASE}/v1/public/wallet-direct/buw/wallet/market/token/rwa/stock/detail/list/ai?type=1`);
-  const wanted = new Set(symbols);
-  const assets = new Map();
-  for (const item of list) {
-    if (item.chainId === BSC_CHAIN_ID && wanted.has(item.ticker)) {
-      assets.set(item.ticker, { ...item, isOfficialRwa: true });
+  const universe = buildBstocksUniverse(list, {
+    chainId: BSC_CHAIN_ID,
+    liveAllowlist,
+    discoveredAt: new Date().toISOString()
+  });
+  const latestUniversePath = resolve(projectRoot, "state/instruments/latest.json");
+  if (!previousBstocksUniverseLoaded) {
+    previousBstocksUniverseLoaded = true;
+    try {
+      previousBstocksUniverse = await loadJson(latestUniversePath);
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        await recordMarketData("asset_universe_snapshot_error", {
+          cycleId: currentCycleId,
+          phase: "load_previous_snapshot",
+          error: error.message
+        });
+      }
     }
   }
-  const missing = symbols.filter((symbol) => !assets.has(symbol));
-  if (missing.length) throw new Error(`BSC contracts not found: ${missing.join(", ")}`);
-  return assets;
+  const changes = previousBstocksUniverse
+    ? {
+        baselineAvailable: true,
+        baselineDiscoveredAt: previousBstocksUniverse.discoveredAt || null,
+        ...compareBstocksUniverses(previousBstocksUniverse, universe)
+      }
+    : {
+        baselineAvailable: false,
+        baselineDiscoveredAt: null,
+        addedInstrumentIds: [],
+        removedInstrumentIds: [],
+        contractChanges: [],
+        multiplierChanges: []
+      };
+  latestBstocksUniverseChanges = changes;
+  await recordMarketData("asset_universe_snapshot", {
+    cycleId: currentCycleId,
+    universe,
+    changes
+  });
+  await saveJson(latestUniversePath, universe);
+  previousBstocksUniverse = universe;
+  return resolveLiveAllowedAssets(universe, symbols);
 }
 
 async function assetStatus(address) {
@@ -600,6 +651,68 @@ async function quote(fromTokenQty, fromToken, toToken, slippagePct) {
   return {
     ...result,
     quotedAt: new Date().toISOString()
+  };
+}
+
+async function sampleShadowBasisCheckpoint({ decision }, config, estimatedRoundTripGasUsdt) {
+  const instrument = decision.baseline.instrument;
+  const contractAddress = instrument.contractAddress;
+  const tradeUsdt = Number(decision.baseline.execution.buy.inputUsdt);
+  const baselineTokenQuantity = decision.baseline.execution.buy.outputToken;
+  const [underlying, dynamic, companyAction, marketStatus] = await Promise.all([
+    fetchNasdaqStockQuote(instrument.underlyingSymbol),
+    rwaDynamic(contractAddress),
+    loadNasdaqCorporateActions(instrument.underlyingSymbol),
+    assetStatus(contractAddress)
+  ]);
+  const dynamicRetrievedAt = new Date().toISOString();
+  const theoreticalPrice = buildTheoreticalPriceObservation({
+    instrument,
+    underlying,
+    rwaDynamic: dynamic,
+    dynamicRetrievedAt
+  });
+  const buyQuote = await quote(tradeUsdt, USDT_ADDRESS, contractAddress, config.slippagePct);
+  const sellQuote = await quote(buyQuote.toCoinAmount, contractAddress, USDT_ADDRESS, config.slippagePct);
+  const baselineExitQuote = await quote(
+    baselineTokenQuantity,
+    contractAddress,
+    USDT_ADDRESS,
+    config.slippagePct
+  );
+  const executableBasis = buildExecutableBasisObservation({
+    theoreticalPrice,
+    tradeUsdt,
+    buyQuote: {
+      requestedInputUsdt: tradeUsdt,
+      outputToken: buyQuote.toCoinAmount,
+      quotedAt: buyQuote.quotedAt
+    },
+    sellQuote: {
+      requestedInputToken: buyQuote.toCoinAmount,
+      outputUsdt: sellQuote.toCoinAmount,
+      quotedAt: sellQuote.quotedAt
+    },
+    estimatedRoundTripGasUsdt,
+    executionBufferPct: config.executionBufferPct
+  });
+
+  return {
+    executableBasis,
+    baselineExitQuote: {
+      inputToken: baselineTokenQuantity,
+      outputUsdt: baselineExitQuote.toCoinAmount,
+      quotedAt: baselineExitQuote.quotedAt,
+      source: "AGENTIC_WALLET_AMOUNT_QUOTE"
+    },
+    marketStatus,
+    companyAction,
+    dataQuality: {
+      theoreticalVetoReasons: theoreticalPrice.vetoReasons,
+      theoreticalWarnings: theoreticalPrice.warnings,
+      executableVetoReasons: executableBasis.vetoReasons,
+      companyActionStatus: companyAction.status
+    }
   };
 }
 
@@ -1288,9 +1401,12 @@ async function buildCandidate(
     estimatedRoundTripGasUsdt
   });
   let basis = null;
+  let dynamic = null;
+  let dynamicRetrievedAt = null;
   let grossEdgeProxyPct = candidate.trend15mPct;
   if (strategyId === "executable-basis-reversion") {
-    const dynamic = await rwaDynamic(candidate.address);
+    dynamic = await rwaDynamic(candidate.address);
+    dynamicRetrievedAt = new Date().toISOString();
     basis = executableBasisDecision({
       executableBuyPrice: config.maxTradeUsdt / Number(buyQuote.toCoinAmount),
       underlyingPrice: Number(dynamic.stockInfo?.price),
@@ -1299,6 +1415,99 @@ async function buildCandidate(
       minNetEdgePct: config.minNetEdgePct
     });
     grossEdgeProxyPct = basis.grossEdgePct;
+  }
+  if (config.mode === "shadow") {
+    try {
+      const [underlying, shadowDynamic, companyAction] = await Promise.all([
+        fetchNasdaqStockQuote(symbol),
+        dynamic ? Promise.resolve(dynamic) : rwaDynamic(candidate.address),
+        loadNasdaqCorporateActions(symbol)
+      ]);
+      dynamic = shadowDynamic;
+      dynamicRetrievedAt ||= new Date().toISOString();
+      const theoreticalPrice = buildTheoreticalPriceObservation({
+        instrument: asset,
+        underlying,
+        rwaDynamic: dynamic,
+        dynamicRetrievedAt
+      });
+      await recordMarketData("theoretical_price_observation", {
+        cycleId: currentCycleId,
+        scanId,
+        symbol,
+        theoreticalPrice
+      });
+      const executableBasisObservation = buildExecutableBasisObservation({
+        theoreticalPrice,
+        tradeUsdt: config.maxTradeUsdt,
+        buyQuote: {
+          requestedInputUsdt: config.maxTradeUsdt,
+          outputToken: buyQuote.toCoinAmount,
+          quotedAt: buyQuote.quotedAt
+        },
+        sellQuote: {
+          requestedInputToken: buyQuote.toCoinAmount,
+          outputUsdt: sellQuote.toCoinAmount,
+          quotedAt: sellQuote.quotedAt
+        },
+        estimatedRoundTripGasUsdt,
+        executionBufferPct: config.executionBufferPct
+      });
+      await recordMarketData("executable_basis_observation", {
+        cycleId: currentCycleId,
+        scanId,
+        symbol,
+        executableBasis: executableBasisObservation
+      });
+      await recordMarketData("company_action_observation", {
+        cycleId: currentCycleId,
+        scanId,
+        symbol,
+        companyAction
+      });
+      const eligibility = evaluateBstocksEligibility({
+        instrument: asset,
+        universeChanges: latestBstocksUniverseChanges,
+        assetStatus: status,
+        statusRetrievedAt: dataFetchedAt,
+        companyAction,
+        theoreticalPrice,
+        executableBasis: executableBasisObservation,
+        maxRoundTripCostPct: config.maxRoundTripCostPct
+      });
+      await recordMarketData("entry_eligibility_observation", {
+        cycleId: currentCycleId,
+        scanId,
+        symbol,
+        enforced: false,
+        eligibility
+      });
+      const shadowBasisDecision = buildShadowBasisDecision({
+        signalId: randomUUID(),
+        eligibility,
+        executableBasis: executableBasisObservation
+      });
+      await recordMarketData("shadow_basis_decision", {
+        cycleId: currentCycleId,
+        scanId,
+        symbol,
+        shadowBasisDecision
+      });
+      await trackShadowBasisDecision(shadowBasisDecision);
+    } catch (error) {
+      await recordMarketData("theoretical_price_error", {
+        cycleId: currentCycleId,
+        scanId,
+        symbol,
+        instrumentId: asset.instrumentId,
+        error: error.message
+      });
+      await traceAction("theoretical_price_observation", "failed", {
+        symbol,
+        error: error.message,
+        enforced: false
+      }, currentCycleId);
+    }
   }
   const initialRisk = initialRiskDecision({
     atr15Pct: atr.atrPct,
@@ -1505,7 +1714,7 @@ async function evaluateEntry(
     return;
   }
 
-  const assets = await resolveAssets(symbolsToScan);
+  const assets = await resolveAssets(symbolsToScan, config.symbols);
   const statusEntries = (await Promise.all(
     symbolsToScan.map(async (symbol) => {
       try {
@@ -2475,7 +2684,7 @@ async function runMockTrade(config, runId) {
   }, currentCycleId);
 
   try {
-    const asset = (await resolveAssets([symbol])).get(symbol);
+    const asset = (await resolveAssets([symbol], config.symbols)).get(symbol);
     const simulation = simulateRoundTrip({ amountUsdt, buyPrice, sellPrice });
 
     await traceAction("buy_submission", "simulated", {
@@ -2628,8 +2837,22 @@ async function main() {
   };
   process.on("SIGINT", requestShutdown);
   process.on("SIGTERM", requestShutdown);
+  let shadowBasisTracker = null;
 
   try {
+    if (config.mode === "shadow") {
+      shadowBasisTracker = createShadowBasisTracker({
+        statePath: resolve(dirname(statePath), "shadow-basis-tracker.json"),
+        sample: ({ decision, horizonMs, dueAt }) => sampleShadowBasisCheckpoint(
+          { decision, horizonMs, dueAt },
+          config,
+          currentGasEstimate(config, state).gasUsdt
+        ),
+        record: ({ recordType, ...checkpoint }) => recordMarketData(recordType, checkpoint)
+      });
+      await shadowBasisTracker.start();
+      trackShadowBasisDecision = (decision) => shadowBasisTracker.track(decision);
+    }
     await ensureNotEmergencyStopped(emergencyStopPath, state);
     if (config.mode === "live") {
       await sendFeishu(
@@ -2708,6 +2931,8 @@ async function main() {
     }
     throw error;
   } finally {
+    trackShadowBasisDecision = async () => false;
+    if (shadowBasisTracker) await shadowBasisTracker.stop();
     process.off("SIGINT", requestShutdown);
     process.off("SIGTERM", requestShutdown);
     await processLock.release();

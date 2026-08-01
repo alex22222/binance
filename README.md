@@ -12,7 +12,7 @@ The bot:
 - holds at most three different stock positions while serializing approvals and on-chain orders;
 - caps each order at 50 USDT;
 - stops opening positions after 10 USDT of realized daily loss;
-- resolves current BSC contracts from Binance on every entry cycle;
+- discovers the full current official BSC RWA universe from Binance on every entry cycle, while treating `config.symbols` only as the explicit Live allowlist;
 - blocks entries when market status, security audit, quote cost, wallet status, or Feishu setup fails;
 - retries transient read-only failures but never retries a state-changing swap submission;
 - writes an order intent before submission so a restart reconciles an ambiguous order instead of placing a duplicate;
@@ -342,11 +342,71 @@ npm start
 
 Every run receives a unique run ID and every cycle receives a unique cycle ID. The append-only trace is written to `state/action-trace.jsonl` by default. Credentials, tokens, authorization headers, API keys, and webhook URLs are redacted.
 
+Each discovery writes an `asset_universe_snapshot` market-data record. Every
+official BSC asset receives a contract-bound `instrumentId` and is classified
+as `LIVE_ALLOWED` only when its ticker is present in `config.symbols`; all other
+discovered assets are `RESEARCH_ONLY`. New official assets therefore become
+visible without receiving approval or order eligibility. Missing configured
+assets and duplicate ticker/contract identities fail closed for new entries.
+
 Selected candidates also emit a non-enforcing `shadow_risk_overlay` observation.
 It records same-day symbol concentration, high-volatility trend efficiency, and
 an ATR-scaled position-size suggestion. These fields are displayed on the
 Dashboard but do not change candidate ranking, approval, or the submitted
 amount.
+
+In Shadow mode, quote-evaluated candidates also emit a
+`theoretical_price_observation`. The underlying reference is the official
+Nasdaq stock quote with its provider time, real-time flag, and market status;
+the token multiplier is Binance Web3 RWA `sharesMultiplier`, explicitly defined
+as underlying shares per token. The theoretical price is therefore
+`Nasdaq stock price × sharesMultiplier`. Nasdaq/Binance reference disagreement,
+stale or non-real-time prices, invalid multipliers, and missing multiplier
+effective-time provenance are preserved separately. Because Binance currently
+omits the multiplier effective time, the first snapshot fails closed; later
+Shadow signals require an unchanged persisted multiplier baseline plus clear
+official corporate-action evidence. This observation is not read by Live
+ranking, approval, sizing, or execution.
+
+The same Shadow sample emits an `executable_basis_observation` built only from
+the exact requested USDT buy quote and the matching token-quantity sell quote.
+It records both signed unit-price basis values (`buyBasisPct` and
+`sellBasisPct`), immediate round-trip cost, estimated Gas, execution buffer,
+gross discount, and net entry edge. Quote amount mismatches, missing depth,
+future/stale timestamps, and non-positive net edge are explicit veto reasons;
+no ticker last price or midpoint is accepted as an executable substitute.
+
+Official Nasdaq split and ex-dividend calendars are cached once per New York
+trading date and recorded as `company_action_observation`. The composed
+`entry_eligibility_observation` treats identity changes, multiplier changes,
+non-trading market state, corporate-action blackouts, stale/conflicting data,
+missing quote depth, and excessive round-trip cost as non-overridable vetoes.
+That result controls only the new `shadow_basis_decision`; it is explicitly not
+connected to existing Live ranking, approvals, positions, or order submission.
+The eligibility contract always leaves protective exits allowed.
+
+Every admitted Shadow basis signal is persisted in
+`state/shadow-basis-tracker.json` with checkpoints at 3, 10, 30, and 60 seconds.
+At each checkpoint the tracker obtains a fresh same-notional buy/sell quote and
+a separate sell quote for the exact token quantity available at the baseline.
+It records basis decay, cost changes, executable return after estimated Gas,
+market/company-action state, and data quality. Pending checkpoints survive a
+restart; a missed timing window is recorded as `MISSED`, never backfilled with
+a later price. The tracker is created only in Shadow mode.
+
+Generate the non-executing evidence-readiness report with:
+
+```bash
+npm run strategy:bstocks-readiness
+```
+
+The report requires at least 100 complete forward signals, 95% checkpoint and
+data-quality coverage, and a chronological 30% out-of-sample tail containing
+at least 30 signals. Strategy promotion additionally requires out-of-sample
+profit factor of at least 1.1 and maximum drawdown no greater than 5%. These are
+research gates, not trading controls. `automaticTradingEligible` remains hard
+coded to `false` and reports both explicit-authorization and implementation
+blockers.
 
 Every regular-session universe scan also compares the live adaptive-momentum
 signal with a non-executing trend-pullback confirmation. The Shadow signal
