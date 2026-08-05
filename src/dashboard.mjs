@@ -1,10 +1,45 @@
-import { readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { readEmergencyStop } from "./reliability.mjs";
 import { buildStrategyComparison, DEFAULT_STRATEGY_ID } from "./strategy-lab.mjs";
 import { buildAssetTrend } from "./wallet-balance.mjs";
 import { effectiveRoundTripGasEstimate } from "./execution-accounting.mjs";
 import { openPositions } from "./position-state.mjs";
+
+export const DASHBOARD_TRACE_TAIL_BYTES = 8 * 1024 * 1024;
+const DASHBOARD_SIGNAL_HISTORY_TAIL_BYTES = 1024 * 1024;
+
+export async function readJsonLinesTail(path, maxBytes = DASHBOARD_TRACE_TAIL_BYTES) {
+  let handle;
+  try {
+    handle = await open(path, "r");
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+
+  try {
+    const { size } = await handle.stat();
+    if (size === 0) return [];
+    const start = Math.max(0, size - maxBytes);
+    const length = size - start;
+    const buffer = Buffer.alloc(length);
+    let offset = 0;
+    while (offset < length) {
+      const result = await handle.read(buffer, offset, length - offset, start + offset);
+      if (result.bytesRead === 0) break;
+      offset += result.bytesRead;
+    }
+    const text = buffer.subarray(0, offset).toString("utf8");
+    const completeText = start > 0 ? text.slice(text.indexOf("\n") + 1) : text;
+    return completeText
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+  } finally {
+    await handle.close();
+  }
+}
 
 function finiteNumber(value, fallback = 0) {
   const number = Number(value);
@@ -367,13 +402,15 @@ export async function loadDashboardSnapshot({
   strategyControlPath,
   nowMs = Date.now()
 }) {
-  const [configText, stateText, traceText, signalHistoryText, walletBalanceHistoryText, approvalControl, emergencyStop, strategyControl] = await Promise.all([
+  const [configText, stateText, traceRecords, signalHistoryRecords, walletBalanceHistoryText, approvalControl, emergencyStop, strategyControl] = await Promise.all([
     readFile(configPath, "utf8"),
     readFile(statePath, "utf8").catch((error) => error.code === "ENOENT" ? "{}" : Promise.reject(error)),
-    readFile(tracePath, "utf8").catch((error) => error.code === "ENOENT" ? "" : Promise.reject(error)),
+    // The trace is append-only and can grow indefinitely. The dashboard only needs
+    // recent actions/signals, so keep the read bounded to protect the 1 GB VPS.
+    readJsonLinesTail(tracePath),
     signalHistoryPath
-      ? readFile(signalHistoryPath, "utf8").catch((error) => error.code === "ENOENT" ? "" : Promise.reject(error))
-      : "",
+      ? readJsonLinesTail(signalHistoryPath, DASHBOARD_SIGNAL_HISTORY_TAIL_BYTES)
+      : [],
     readFile(resolve(dirname(statePath), "wallet-balance-history.json"), "utf8")
       .catch((error) => error.code === "ENOENT" ? "[]" : Promise.reject(error)),
     approvalControlPath
@@ -384,14 +421,6 @@ export async function loadDashboardSnapshot({
       ? readFile(strategyControlPath, "utf8").then(JSON.parse).catch((error) => error.code === "ENOENT" ? null : Promise.reject(error))
       : null
   ]);
-  const traceRecords = traceText
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
-  const signalHistoryRecords = signalHistoryText
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
   const walletBalanceHistory = JSON.parse(walletBalanceHistoryText);
   return buildDashboardSnapshot({
     config: JSON.parse(configText),

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { buildDashboardSnapshot } from "../src/dashboard.mjs";
+import { buildDashboardSnapshot, readJsonLinesTail } from "../src/dashboard.mjs";
 
 const config = {
   mode: "shadow",
@@ -29,6 +32,22 @@ const config = {
   estimatedRoundTripGasUsdt: 0.1,
   minNetEdgePct: 0.1
 };
+
+test("reads only complete JSON lines from the bounded trace tail", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "binance-dashboard-trace-"));
+  const tracePath = join(directory, "action-trace.jsonl");
+  const lines = Array.from({ length: 20 }, (_, sequence) => JSON.stringify({
+    sequence,
+    payload: "x".repeat(80)
+  })).join("\n") + "\n";
+  await writeFile(tracePath, lines);
+
+  const records = await readJsonLinesTail(tracePath, 220);
+
+  assert.ok(records.length < 20);
+  assert.equal(records.at(-1).sequence, 19);
+  assert.ok(records.every((record) => Number.isInteger(record.sequence)));
+});
 
 test("builds a live position snapshot from the latest executable sell quote", () => {
   const nowMs = Date.parse("2026-07-24T13:00:00.000Z");
