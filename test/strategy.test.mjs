@@ -26,6 +26,7 @@ import {
   shadowDowntrendVetoDecision,
   shadowEntryFailureDecision,
   shadowMarketRegimeDecision,
+  shadowRegimeRelativePullbackDecision,
   shadowTrendPullbackDecision,
   shadowTrendQualityDecision,
   simulateRoundTrip,
@@ -779,6 +780,46 @@ test("shadow market regime blocks only broad persistent benchmark weakness", () 
     }
   ]);
   assert.equal(mixed.decision, "WOULD_ALLOW");
+});
+
+test("shadow regime-relative pullback ranks positive stock strength without changing live decisions", () => {
+  const marketRegime = { decision: "WOULD_ALLOW" };
+  const candidate = (symbol, return60mPct, pullbackDecision = "WOULD_ENTER") => ({
+    scanId: `scan-${symbol}`,
+    symbol,
+    shadowDowntrendVeto: { decision: "WOULD_ALLOW", return60mPct },
+    shadowTrendPullback: { decision: pullbackDecision, return60mPct },
+    shadowTrendPullbackCostCoverage: { allowed: true },
+    initialRiskPct: 1.5
+  });
+  const result = shadowRegimeRelativePullbackDecision([
+    candidate("SPY", 0.4, "WOULD_WAIT"),
+    candidate("QQQ", 0.6, "WOULD_WAIT"),
+    candidate("NVDA", 2),
+    candidate("TSLA", 1),
+    candidate("META", -0.2)
+  ], marketRegime);
+
+  assert.equal(result.mode, "SHADOW");
+  assert.equal(result.enforced, false);
+  assert.equal(result.benchmarkReturn60mPct, 0.5);
+  assert.equal(result.stockUniverseSize, 3);
+  assert.equal(result.topCount, 1);
+  const nvda = result.candidates.find(({ symbol }) => symbol === "NVDA");
+  const tsla = result.candidates.find(({ symbol }) => symbol === "TSLA");
+  assert.equal(nvda.decision, "WOULD_ENTER");
+  assert.equal(nvda.relativeStrengthRank, 1);
+  assert.equal(nvda.benchmarkRelativeReturn60mPct, 1.5);
+  assert.equal(nvda.conditions.costCovered, true);
+  assert.equal(tsla.decision, "WOULD_SKIP");
+  assert.equal(tsla.reason, "NOT_TOP_RELATIVE_STRENGTH");
+
+  const blocked = shadowRegimeRelativePullbackDecision([
+    candidate("SPY", -1, "WOULD_WAIT"),
+    candidate("QQQ", -0.8, "WOULD_WAIT"),
+    candidate("NVDA", 1.5)
+  ], { decision: "WOULD_BLOCK" });
+  assert.equal(blocked.candidates.find(({ symbol }) => symbol === "NVDA").reason, "MARKET_REGIME_BLOCKED");
 });
 
 test("shadow trend quality flags high-volatility chop without enforcing it", () => {

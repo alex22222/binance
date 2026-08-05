@@ -120,3 +120,48 @@ test("compares adaptive momentum with trend pullback candidates under one market
   assert.equal(report.horizons[0].marketRegimeCohorts.WOULD_BLOCK.samples, 0);
   assert.equal(report.outcomes.find(({ scanId }) => scanId === "pullback").marketRegimeDecision, "WOULD_ALLOW");
 });
+
+test("tracks the independent regime-relative pullback shadow cohort", () => {
+  const records = [
+    scan("composite", "NVDA", "2026-07-28T13:30:00.000Z", 100, "WOULD_ALLOW", "WOULD_ENTER"),
+    {
+      recordType: "quote_evaluation",
+      scanId: "composite",
+      symbol: "NVDA",
+      recordedAt: "2026-07-28T13:30:01.000Z",
+      executionCost: { allInCostPct: 0.5 },
+      initialRisk: { initialRiskPct: 1 },
+      shadowTrendPullbackCostCoverage: { allowed: true },
+      costCoverage: { allowed: false }
+    },
+    {
+      recordType: "shadow_candidate_comparison",
+      scanId: "composite",
+      symbol: "NVDA",
+      recordedAt: "2026-07-28T13:30:02.000Z",
+      regimeRelativePullbackMomentum: {
+        decision: "WOULD_ENTER",
+        benchmarkReturn60mPct: 0.5,
+        benchmarkRelativeReturn60mPct: 1.5,
+        relativeStrengthRank: 1,
+        stockUniverseSize: 8,
+        costAllowed: true
+      }
+    },
+    scan("composite-future", "NVDA", "2026-07-28T13:45:00.000Z", 102, "WOULD_ALLOW")
+  ];
+
+  const report = buildShadowOutcomeReport(records, {
+    generatedAt: "2026-07-28T14:00:00.000Z",
+    horizonsMinutes: [15]
+  });
+
+  const cohort = report.horizons[0].strategyCohorts["regime-relative-pullback-momentum"];
+  assert.equal(report.regimeRelativePullbackLabeledCandidates, 1);
+  assert.equal(cohort.samples, 1);
+  assert.equal(cohort.winRatePct, 100);
+  assert.ok(Math.abs(cohort.averageNetReturnPct - 1.5) < 1e-9);
+  const outcome = report.outcomes.find(({ scanId }) => scanId === "composite");
+  assert.equal(outcome.regimeRelativePullbackDecision, "WOULD_ENTER");
+  assert.equal(outcome.benchmarkRelativeReturn60mPct, 1.5);
+});

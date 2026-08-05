@@ -29,6 +29,7 @@ import {
   shadowDowntrendVetoDecision,
   shadowEntryFailureDecision,
   shadowMarketRegimeDecision,
+  shadowRegimeRelativePullbackDecision,
   shadowTrendPullbackDecision,
   shadowTrendQualityDecision,
   simulateRoundTrip,
@@ -1811,6 +1812,13 @@ async function evaluateEntry(
   )).filter(Boolean);
 
   const shadowMarketRegime = shadowMarketRegimeDecision(candidates);
+  const shadowRegimeRelativePullback = shadowRegimeRelativePullbackDecision(
+    candidates,
+    shadowMarketRegime
+  );
+  const relativePullbackByScanId = new Map(
+    shadowRegimeRelativePullback.candidates.map((candidate) => [candidate.scanId, candidate])
+  );
   const longOnlyStrategyIds = STRATEGIES
     .filter(({ direction }) => direction === "LONG_ONLY")
     .map(({ id }) => id);
@@ -1831,8 +1839,40 @@ async function evaluateEntry(
     conditions: shadowMarketRegime.conditions,
     benchmarkStates: shadowMarketRegime.benchmarkStates
   }, currentCycleId);
+  await recordMarketData("shadow_regime_relative_pullback", {
+    cycleId: currentCycleId,
+    strategyId: shadowRegimeRelativePullback.id,
+    decision: shadowRegimeRelativePullback.decision,
+    reason: shadowRegimeRelativePullback.reason,
+    enforced: false,
+    benchmarkStates: shadowRegimeRelativePullback.benchmarkStates,
+    benchmarkReturn60mPct: shadowRegimeRelativePullback.benchmarkReturn60mPct,
+    stockUniverseSize: shadowRegimeRelativePullback.stockUniverseSize,
+    topCount: shadowRegimeRelativePullback.topCount,
+    signalCount: shadowRegimeRelativePullback.signalCount,
+    candidates: shadowRegimeRelativePullback.candidates
+  });
+  await traceAction("shadow_strategy", "observed", {
+    strategyId: shadowRegimeRelativePullback.id,
+    decision: shadowRegimeRelativePullback.decision,
+    reason: shadowRegimeRelativePullback.reason,
+    enforced: false,
+    benchmarkReturn60mPct: shadowRegimeRelativePullback.benchmarkReturn60mPct,
+    stockUniverseSize: shadowRegimeRelativePullback.stockUniverseSize,
+    topCount: shadowRegimeRelativePullback.topCount,
+    signalCount: shadowRegimeRelativePullback.signalCount
+  }, currentCycleId);
   await Promise.all(candidates.map(async (candidate) => {
     candidate.shadowMarketRegime = shadowMarketRegime;
+    const relativePullback = relativePullbackByScanId.get(candidate.scanId) || {
+      decision: "INSUFFICIENT_DATA",
+      reason: "CANDIDATE_NOT_RANKED"
+    };
+    const relativePullbackPositionSize = shadowAtrPositionSizeDecision({
+      maxTradeUsdt: config.maxTradeUsdt,
+      initialRiskPct: Number(candidate.initialRiskPct),
+      targetRiskPct: config.minInitialStopPct
+    });
     await recordMarketData("shadow_candidate_comparison", {
       cycleId: currentCycleId,
       scanId: candidate.scanId,
@@ -1853,6 +1893,12 @@ async function evaluateEntry(
         decision: shadowMarketRegime.decision,
         reason: shadowMarketRegime.reason,
         enforced: false
+      },
+      regimeRelativePullbackMomentum: {
+        ...relativePullback,
+        strategyId: shadowRegimeRelativePullback.id,
+        costAllowed: relativePullback.conditions?.costCovered === true,
+        positionSize: relativePullbackPositionSize
       }
     });
   }));

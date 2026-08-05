@@ -204,6 +204,7 @@ export function strategyLabHtml() {
         const block = horizon.cohorts.WOULD_BLOCK;
         const adaptive = horizon.strategyCohorts?.["adaptive-momentum"];
         const pullback = horizon.strategyCohorts?.["trend-pullback-confirmation"];
+        const relativePullback = horizon.strategyCohorts?.["regime-relative-pullback-momentum"];
         const marketAllow = horizon.marketRegimeCohorts?.WOULD_ALLOW;
         const marketBlock = horizon.marketRegimeCohorts?.WOULD_BLOCK;
         const row = el("div", "return-row");
@@ -214,6 +215,11 @@ export function strategyLabHtml() {
               " / 均值 " + pct(adaptive.averageNetReturnPct) + " · 趋势回撤 " +
               pullback.samples + " 个 / 胜率 " + pct(pullback.winRatePct) +
               " / 均值 " + pct(pullback.averageNetReturnPct) +
+              (relativePullback
+                ? " · 相对强度回撤 " + relativePullback.samples + " 个 / 胜率 " +
+                  pct(relativePullback.winRatePct) + " / 均值 " +
+                  pct(relativePullback.averageNetReturnPct)
+                : "") +
               (marketAllow && marketBlock
                 ? " · 市场允许 " + marketAllow.samples + " 个 / 均值 " +
                   pct(marketAllow.averageNetReturnPct) + " · 市场阻止 " +

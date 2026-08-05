@@ -60,10 +60,15 @@ test("compares realized returns by strategy without inventing missing results", 
 test("attaches the same non-enforcing shadow risk overlays to every strategy", () => {
   const comparison = buildStrategyComparison("adaptive-momentum", []);
 
-  assert.equal(comparison.length, 5);
+  assert.equal(comparison.length, 6);
   const pullback = comparison.find((strategy) => strategy.id === "trend-pullback-confirmation");
+  const relativePullback = comparison.find(
+    (strategy) => strategy.id === "regime-relative-pullback-momentum"
+  );
   assert.equal(pullback.status, "SHADOW");
   assert.equal(pullback.switchable, false);
+  assert.equal(relativePullback.status, "SHADOW");
+  assert.equal(relativePullback.switchable, false);
   for (const strategy of comparison) {
     assert.equal(strategy.direction, "LONG_ONLY");
     assert.equal(strategy.subStrategies.length, 3);

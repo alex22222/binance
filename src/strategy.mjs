@@ -636,6 +636,140 @@ export function shadowMarketRegimeDecision(candidates) {
   };
 }
 
+export function shadowRegimeRelativePullbackDecision(candidates, marketRegime, options = {}) {
+  const benchmarks = ["SPY", "QQQ"];
+  const requestedTopFraction = Number(options.topFraction);
+  const topFraction = requestedTopFraction > 0 && requestedTopFraction <= 1
+    ? requestedTopFraction
+    : 0.3;
+  const base = {
+    id: "regime-relative-pullback-momentum",
+    mode: "SHADOW",
+    enforced: false,
+    source: "TOKEN_60M_BENCHMARK_RELATIVE_RETURN_AND_PULLBACK",
+    benchmarks,
+    thresholds: {
+      topFraction,
+      minBenchmarkRelativeReturn60mPct: 0
+    }
+  };
+  const return60mFor = (candidate) => {
+    const pullbackReturn = Number(candidate.shadowTrendPullback?.return60mPct);
+    if (Number.isFinite(pullbackReturn)) return pullbackReturn;
+    const downtrendReturn = Number(candidate.shadowDowntrendVeto?.return60mPct);
+    return Number.isFinite(downtrendReturn) ? downtrendReturn : null;
+  };
+  const benchmarkStates = benchmarks.map((symbol) => {
+    const candidate = candidates.find((entry) => entry.symbol === symbol);
+    return candidate ? { symbol, return60mPct: return60mFor(candidate) } : null;
+  }).filter(Boolean);
+  const benchmarkDataAvailable = (
+    benchmarkStates.length === benchmarks.length &&
+    benchmarkStates.every(({ return60mPct }) => Number.isFinite(return60mPct))
+  );
+  const benchmarkReturn60mPct = benchmarkDataAvailable
+    ? benchmarkStates.reduce((sum, state) => sum + state.return60mPct, 0) / benchmarkStates.length
+    : null;
+  const stocks = candidates
+    .filter(({ symbol }) => !benchmarks.includes(symbol))
+    .map((candidate) => ({ candidate, return60mPct: return60mFor(candidate) }))
+    .filter(({ return60mPct }) => Number.isFinite(return60mPct))
+    .map((entry) => ({
+      ...entry,
+      benchmarkRelativeReturn60mPct: benchmarkDataAvailable
+        ? entry.return60mPct - benchmarkReturn60mPct
+        : null
+    }))
+    .sort((left, right) => (
+      right.benchmarkRelativeReturn60mPct - left.benchmarkRelativeReturn60mPct ||
+      left.candidate.symbol.localeCompare(right.candidate.symbol)
+    ));
+  const topCount = stocks.length ? Math.max(1, Math.ceil(stocks.length * topFraction)) : 0;
+  const rankingByScanId = new Map(stocks.map((entry, index) => [entry.candidate.scanId, {
+    return60mPct: entry.return60mPct,
+    benchmarkRelativeReturn60mPct: entry.benchmarkRelativeReturn60mPct,
+    relativeStrengthRank: index + 1
+  }]));
+  const decisions = candidates.map((candidate) => {
+    const ranking = rankingByScanId.get(candidate.scanId);
+    if (benchmarks.includes(candidate.symbol)) {
+      return {
+        scanId: candidate.scanId,
+        symbol: candidate.symbol,
+        decision: "WOULD_SKIP",
+        reason: "BENCHMARK_NOT_ELIGIBLE"
+      };
+    }
+    if (!benchmarkDataAvailable || !ranking) {
+      return {
+        scanId: candidate.scanId,
+        symbol: candidate.symbol,
+        decision: "INSUFFICIENT_DATA",
+        reason: benchmarkDataAvailable ? "STOCK_RETURN_UNAVAILABLE" : "BENCHMARK_DATA_UNAVAILABLE"
+      };
+    }
+    const conditions = {
+      marketRegimeAllowed: marketRegime?.decision === "WOULD_ALLOW",
+      individualDowntrendClear: candidate.shadowDowntrendVeto?.decision === "WOULD_ALLOW",
+      positiveRelativeStrength: (
+        ranking.benchmarkRelativeReturn60mPct > base.thresholds.minBenchmarkRelativeReturn60mPct
+      ),
+      topRelativeStrength: ranking.relativeStrengthRank <= topCount,
+      pullbackConfirmed: candidate.shadowTrendPullback?.decision === "WOULD_ENTER",
+      costCovered: candidate.shadowTrendPullbackCostCoverage?.allowed === true
+    };
+    let decision = "WOULD_ENTER";
+    let reason = "REGIME_RELATIVE_PULLBACK_CONFIRMED";
+    if (marketRegime?.decision !== "WOULD_ALLOW") {
+      decision = marketRegime?.decision === "WOULD_BLOCK" ? "WOULD_SKIP" : "INSUFFICIENT_DATA";
+      reason = marketRegime?.decision === "WOULD_BLOCK"
+        ? "MARKET_REGIME_BLOCKED"
+        : "MARKET_REGIME_UNAVAILABLE";
+    } else if (!conditions.individualDowntrendClear) {
+      decision = "WOULD_SKIP";
+      reason = "INDIVIDUAL_DOWNTREND_NOT_CLEAR";
+    } else if (!conditions.pullbackConfirmed) {
+      decision = "WOULD_WAIT";
+      reason = "PULLBACK_NOT_CONFIRMED";
+    } else if (!conditions.positiveRelativeStrength) {
+      decision = "WOULD_SKIP";
+      reason = "NON_POSITIVE_RELATIVE_STRENGTH";
+    } else if (!conditions.topRelativeStrength) {
+      decision = "WOULD_SKIP";
+      reason = "NOT_TOP_RELATIVE_STRENGTH";
+    } else if (!conditions.costCovered) {
+      decision = "WOULD_SKIP";
+      reason = "COST_NOT_COVERED";
+    }
+    return {
+      scanId: candidate.scanId,
+      symbol: candidate.symbol,
+      decision,
+      reason,
+      return60mPct: ranking.return60mPct,
+      benchmarkReturn60mPct,
+      benchmarkRelativeReturn60mPct: ranking.benchmarkRelativeReturn60mPct,
+      relativeStrengthRank: ranking.relativeStrengthRank,
+      stockUniverseSize: stocks.length,
+      topCount,
+      initialRiskPct: candidate.initialRiskPct ?? null,
+      conditions
+    };
+  });
+  const signalCount = decisions.filter(({ decision }) => decision === "WOULD_ENTER").length;
+  return {
+    ...base,
+    decision: signalCount > 0 ? "WOULD_ENTER" : "NO_SIGNAL",
+    reason: signalCount > 0 ? "QUALIFIED_CANDIDATE_FOUND" : "NO_QUALIFIED_CANDIDATE",
+    benchmarkStates,
+    benchmarkReturn60mPct,
+    stockUniverseSize: stocks.length,
+    topCount,
+    signalCount,
+    candidates: decisions
+  };
+}
+
 export function shadowTrendQualityDecision(candles, atr15Pct, nowMs = Date.now()) {
   const base = {
     id: "shadow-trend-quality",

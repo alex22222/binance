@@ -75,6 +75,19 @@ export const STRATEGIES = [
     subStrategies: shadowRiskOverlays("区分健康回撤与大级别持续下跌")
   },
   {
+    id: "regime-relative-pullback-momentum",
+    name: "状态过滤的相对强度回撤动量",
+    shortName: "相对强度回撤",
+    status: "SHADOW",
+    direction: "LONG_ONLY",
+    thesis: "市场状态允许时，只跟踪相对SPY/QQQ更强且完成受控回撤再确认的股票。",
+    entry: "SPY/QQQ允许；60分钟相对收益为正且排名前30%；回撤再确认；可执行成本覆盖",
+    exit: "仅记录15/30/60/120分钟反事实结果，不下单",
+    evidence: "独立前向Shadow，使用同轮代币K线与金额匹配双向报价",
+    risk: "横截面较小、基准beta近似为1，可能遗漏低beta强势股",
+    subStrategies: shadowRiskOverlays("避免把个股反弹误判为相对强势回撤")
+  },
+  {
     id: "executable-basis-reversion",
     name: "可执行折价回归",
     shortName: "折价回归",

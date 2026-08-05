@@ -49,6 +49,11 @@ export function buildShadowOutcomeReport(records, options = {}) {
       .filter(({ recordType }) => recordType === "shadow_market_regime")
       .map((record) => [record.cycleId, record])
   );
+  const comparisonByScanId = new Map(
+    records
+      .filter(({ recordType }) => recordType === "shadow_candidate_comparison")
+      .map((record) => [record.scanId, record])
+  );
   const scansBySymbol = new Map();
   for (const scan of scans) {
     const list = scansBySymbol.get(scan.symbol) || [];
@@ -59,6 +64,7 @@ export function buildShadowOutcomeReport(records, options = {}) {
     .filter(({ recordType }) => recordType === "quote_evaluation")
     .map((quote) => {
       const scan = scansById.get(quote.scanId);
+      const comparison = comparisonByScanId.get(quote.scanId);
       const strategyIds = [];
       if (scan?.gates?.trendPassed === true && quote.costCoverage?.allowed !== false) {
         strategyIds.push("adaptive-momentum");
@@ -69,11 +75,17 @@ export function buildShadowOutcomeReport(records, options = {}) {
       ) {
         strategyIds.push("trend-pullback-confirmation");
       }
-      return { quote, scan, strategyIds };
+      if (
+        comparison?.regimeRelativePullbackMomentum?.decision === "WOULD_ENTER" &&
+        comparison.regimeRelativePullbackMomentum.costAllowed === true
+      ) {
+        strategyIds.push("regime-relative-pullback-momentum");
+      }
+      return { quote, scan, comparison, strategyIds };
     })
     .filter(({ scan, strategyIds }) => scan && strategyIds.length > 0);
   const outcomes = [];
-  for (const { quote, scan, strategyIds } of candidates) {
+  for (const { quote, scan, comparison, strategyIds } of candidates) {
     const entryPrice = scanPrice(scan);
     const allInCostPct = finite(quote.executionCost?.allInCostPct) || 0;
     const initialRiskPct = finite(quote.initialRisk?.initialRiskPct);
@@ -109,6 +121,15 @@ export function buildShadowOutcomeReport(records, options = {}) {
         trendQualityDecision: scan.shadowTrendQuality?.decision || "UNKNOWN",
         trendPullbackDecision: scan.shadowTrendPullback?.decision || "UNKNOWN",
         marketRegimeDecision: marketRegimeByCycle.get(scan.cycleId)?.decision || "UNKNOWN",
+        regimeRelativePullbackDecision: (
+          comparison?.regimeRelativePullbackMomentum?.decision || "UNKNOWN"
+        ),
+        benchmarkRelativeReturn60mPct: finite(
+          comparison?.regimeRelativePullbackMomentum?.benchmarkRelativeReturn60mPct
+        ),
+        relativeStrengthRank: finite(
+          comparison?.regimeRelativePullbackMomentum?.relativeStrengthRank
+        ),
         strategyIds,
         entryPrice,
         forwardPrice: scanPrice(future),
@@ -141,6 +162,9 @@ export function buildShadowOutcomeReport(records, options = {}) {
     marketRegimeLabeledCandidates: candidates.filter(
       ({ scan }) => normalizedDecision(marketRegimeByCycle.get(scan.cycleId)?.decision) !== "UNKNOWN"
     ).length,
+    regimeRelativePullbackLabeledCandidates: candidates.filter(
+      ({ comparison }) => comparison?.regimeRelativePullbackMomentum?.decision === "WOULD_ENTER"
+    ).length,
     horizons: horizonsMinutes.map((horizonMinutes) => {
       const horizonOutcomes = outcomes.filter((outcome) => outcome.horizonMinutes === horizonMinutes);
       return {
@@ -152,6 +176,9 @@ export function buildShadowOutcomeReport(records, options = {}) {
           )),
           "trend-pullback-confirmation": cohortMetrics(horizonOutcomes.filter(
             ({ strategyIds }) => strategyIds.includes("trend-pullback-confirmation")
+          )),
+          "regime-relative-pullback-momentum": cohortMetrics(horizonOutcomes.filter(
+            ({ strategyIds }) => strategyIds.includes("regime-relative-pullback-momentum")
           ))
         },
         marketRegimeCohorts: {
