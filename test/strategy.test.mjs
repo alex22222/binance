@@ -16,6 +16,7 @@ import {
   initialStopPolicyUpdate,
   initialRiskDecision,
   isStopLossExit,
+  mergeShadowContextCandidates,
   pendingOrderAction,
   positionSignalRefreshDecision,
   rankCandidates,
@@ -820,6 +821,55 @@ test("shadow regime-relative pullback ranks positive stock strength without chan
     candidate("NVDA", 1.5)
   ], { decision: "WOULD_BLOCK" });
   assert.equal(blocked.candidates.find(({ symbol }) => symbol === "NVDA").reason, "MARKET_REGIME_BLOCKED");
+});
+
+test("reuses only fresh timestamped SPY and QQQ observations during approval revalidation", () => {
+  const nowMs = Date.parse("2026-08-05T13:48:50.000Z");
+  const stock = {
+    scanId: "scan-TSLA",
+    symbol: "TSLA",
+    dataFetchedAt: "2026-08-05T13:48:49.000Z",
+    shadowDowntrendVeto: { decision: "WOULD_ALLOW", return60mPct: 1.2 },
+    shadowTrendPullback: { decision: "WOULD_ENTER", return60mPct: 1.2 },
+    shadowTrendPullbackCostCoverage: { allowed: true },
+    initialRiskPct: 1
+  };
+  const benchmark = (symbol, return60mPct, dataFetchedAt) => ({
+    scanId: `scan-${symbol}`,
+    symbol,
+    dataFetchedAt,
+    shadowDowntrendVeto: { decision: "WOULD_ALLOW", return60mPct },
+    shadowTrendPullback: { decision: "WOULD_WAIT", return60mPct }
+  });
+  const fresh = mergeShadowContextCandidates([stock], [
+    benchmark("SPY", 0.2, "2026-08-05T13:47:40.000Z"),
+    benchmark("QQQ", 0.4, "2026-08-05T13:47:40.000Z"),
+    {
+      ...stock,
+      scanId: "scan-NVDA",
+      symbol: "NVDA",
+      dataFetchedAt: "2026-08-05T13:47:40.000Z",
+      shadowDowntrendVeto: { decision: "WOULD_ALLOW", return60mPct: 2 },
+      shadowTrendPullback: { decision: "WOULD_WAIT", return60mPct: 2 }
+    }
+  ], nowMs);
+
+  assert.equal(fresh.length, 4);
+  assert.equal(fresh.find(({ symbol }) => symbol === "SPY").shadowBenchmarkSource, "RECENT_CACHE");
+  assert.equal(fresh.find(({ symbol }) => symbol === "NVDA").shadowContextSource, "RECENT_CACHE");
+  assert.equal(fresh.find(({ symbol }) => symbol === "NVDA").shadowContextAgeMs, 70_000);
+  const marketRegime = shadowMarketRegimeDecision(fresh);
+  const decision = shadowRegimeRelativePullbackDecision(fresh, marketRegime);
+  assert.equal(marketRegime.decision, "WOULD_ALLOW");
+  assert.ok(Math.abs(decision.benchmarkReturn60mPct - 0.3) < 1e-9);
+  assert.equal(decision.stockUniverseSize, 2);
+  assert.equal(decision.candidates.find(({ symbol }) => symbol === "TSLA").reason, "NOT_TOP_RELATIVE_STRENGTH");
+
+  const stale = mergeShadowContextCandidates([stock], [
+    benchmark("SPY", 0.2, "2026-08-05T13:45:00.000Z"),
+    benchmark("QQQ", 0.4, "2026-08-05T13:45:00.000Z")
+  ], nowMs);
+  assert.equal(stale.length, 1);
 });
 
 test("shadow trend quality flags high-volatility chop without enforcing it", () => {

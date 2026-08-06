@@ -603,7 +603,10 @@ export function shadowMarketRegimeDecision(candidates) {
       return60mPct: candidate.shadowDowntrendVeto?.return60mPct,
       return120mPct: candidate.shadowDowntrendVeto?.return120mPct,
       downtrendDecision: candidate.shadowDowntrendVeto?.decision,
-      highVolatility: candidate.shadowTrendQuality?.highVolatility === true
+      highVolatility: candidate.shadowTrendQuality?.highVolatility === true,
+      source: candidate.shadowBenchmarkSource || "CURRENT_CYCLE",
+      observedAt: candidate.dataFetchedAt || null,
+      ageMs: candidate.shadowBenchmarkAgeMs ?? null
     } : null;
   }).filter(Boolean);
   if (
@@ -636,6 +639,45 @@ export function shadowMarketRegimeDecision(candidates) {
   };
 }
 
+export function mergeShadowContextCandidates(
+  candidates,
+  cachedCandidates,
+  nowMs = Date.now(),
+  maxAgeMs = 2 * 60 * 1000
+) {
+  const benchmarks = ["SPY", "QQQ"];
+  const currentSymbols = new Set(candidates.map(({ symbol }) => symbol));
+  const merged = candidates.map((candidate) => ({
+    ...candidate,
+    shadowContextSource: "CURRENT_CYCLE",
+    shadowContextAgeMs: Math.max(0, nowMs - Date.parse(candidate.dataFetchedAt || "")) || 0,
+    ...(benchmarks.includes(candidate.symbol) ? {
+      shadowBenchmarkSource: "CURRENT_CYCLE",
+      shadowBenchmarkAgeMs: Math.max(0, nowMs - Date.parse(candidate.dataFetchedAt || "")) || 0
+    } : {})
+  }));
+  const cachedSymbols = [...new Set(cachedCandidates.map(({ symbol }) => symbol))];
+  for (const symbol of cachedSymbols) {
+    if (currentSymbols.has(symbol)) continue;
+    const cached = cachedCandidates
+      .filter((candidate) => candidate.symbol === symbol)
+      .sort((left, right) => Date.parse(right.dataFetchedAt || "") - Date.parse(left.dataFetchedAt || ""))[0];
+    const observedAtMs = Date.parse(cached?.dataFetchedAt || "");
+    const ageMs = nowMs - observedAtMs;
+    if (!cached || !Number.isFinite(ageMs) || ageMs < 0 || ageMs > maxAgeMs) continue;
+    merged.push({
+      ...cached,
+      shadowContextSource: "RECENT_CACHE",
+      shadowContextAgeMs: ageMs,
+      ...(benchmarks.includes(symbol) ? {
+        shadowBenchmarkSource: "RECENT_CACHE",
+        shadowBenchmarkAgeMs: ageMs
+      } : {})
+    });
+  }
+  return merged;
+}
+
 export function shadowRegimeRelativePullbackDecision(candidates, marketRegime, options = {}) {
   const benchmarks = ["SPY", "QQQ"];
   const requestedTopFraction = Number(options.topFraction);
@@ -661,7 +703,13 @@ export function shadowRegimeRelativePullbackDecision(candidates, marketRegime, o
   };
   const benchmarkStates = benchmarks.map((symbol) => {
     const candidate = candidates.find((entry) => entry.symbol === symbol);
-    return candidate ? { symbol, return60mPct: return60mFor(candidate) } : null;
+    return candidate ? {
+      symbol,
+      return60mPct: return60mFor(candidate),
+      source: candidate.shadowBenchmarkSource || "CURRENT_CYCLE",
+      observedAt: candidate.dataFetchedAt || null,
+      ageMs: candidate.shadowBenchmarkAgeMs ?? null
+    } : null;
   }).filter(Boolean);
   const benchmarkDataAvailable = (
     benchmarkStates.length === benchmarks.length &&
@@ -753,6 +801,9 @@ export function shadowRegimeRelativePullbackDecision(candidates, marketRegime, o
       stockUniverseSize: stocks.length,
       topCount,
       initialRiskPct: candidate.initialRiskPct ?? null,
+      contextSource: candidate.shadowContextSource || "CURRENT_CYCLE",
+      contextObservedAt: candidate.dataFetchedAt || null,
+      contextAgeMs: candidate.shadowContextAgeMs ?? null,
       conditions
     };
   });

@@ -19,6 +19,7 @@ import {
   initialRiskDecision,
   initialStopPolicyUpdate,
   isStopLossExit,
+  mergeShadowContextCandidates,
   nyseSessionPlan,
   pendingOrderAction,
   positionSignalRefreshDecision,
@@ -136,6 +137,7 @@ let previousBstocksUniverse = null;
 let previousBstocksUniverseLoaded = false;
 let latestBstocksUniverseChanges = null;
 let trackShadowBasisDecision = async () => false;
+let latestShadowContextCandidates = [];
 
 function log(message, fields = {}) {
   console.log(JSON.stringify({ time: new Date().toISOString(), message, ...fields }));
@@ -1811,9 +1813,14 @@ async function evaluateEntry(
     })
   )).filter(Boolean);
 
-  const shadowMarketRegime = shadowMarketRegimeDecision(candidates);
-  const shadowRegimeRelativePullback = shadowRegimeRelativePullbackDecision(
+  const shadowDecisionCandidates = mergeShadowContextCandidates(
     candidates,
+    latestShadowContextCandidates
+  );
+  if (!approvedRequest) latestShadowContextCandidates = shadowDecisionCandidates;
+  const shadowMarketRegime = shadowMarketRegimeDecision(shadowDecisionCandidates);
+  const shadowRegimeRelativePullback = shadowRegimeRelativePullbackDecision(
+    shadowDecisionCandidates,
     shadowMarketRegime
   );
   const relativePullbackByScanId = new Map(
@@ -1873,6 +1880,13 @@ async function evaluateEntry(
       initialRiskPct: Number(candidate.initialRiskPct),
       targetRiskPct: config.minInitialStopPct
     });
+    candidate.shadowRegimeRelativePullback = {
+      ...relativePullback,
+      strategyId: shadowRegimeRelativePullback.id,
+      costAllowed: relativePullback.conditions?.costCovered === true,
+      benchmarkStates: shadowRegimeRelativePullback.benchmarkStates,
+      positionSize: relativePullbackPositionSize
+    };
     await recordMarketData("shadow_candidate_comparison", {
       cycleId: currentCycleId,
       scanId: candidate.scanId,
@@ -1894,12 +1908,7 @@ async function evaluateEntry(
         reason: shadowMarketRegime.reason,
         enforced: false
       },
-      regimeRelativePullbackMomentum: {
-        ...relativePullback,
-        strategyId: shadowRegimeRelativePullback.id,
-        costAllowed: relativePullback.conditions?.costCovered === true,
-        positionSize: relativePullbackPositionSize
-      }
+      regimeRelativePullbackMomentum: candidate.shadowRegimeRelativePullback
     });
   }));
 
@@ -2181,6 +2190,15 @@ async function evaluateEntry(
     gasEstimateUsdt: gasEstimate.gasUsdt,
     gasEstimateSource: gasEstimate.source,
     gasEstimateSampleCount: gasEstimate.sampleCount,
+    shadowRegimeRelativePullbackDecision: selected.shadowRegimeRelativePullback?.decision || null,
+    shadowRegimeRelativePullbackReason: selected.shadowRegimeRelativePullback?.reason || null,
+    shadowRegimeRelativePullbackRank: selected.shadowRegimeRelativePullback?.relativeStrengthRank ?? null,
+    shadowRegimeRelativePullbackReturn60mPct: (
+      selected.shadowRegimeRelativePullback?.benchmarkRelativeReturn60mPct ?? null
+    ),
+    shadowRegimeRelativePullbackBenchmarkStates: (
+      selected.shadowRegimeRelativePullback?.benchmarkStates || null
+    ),
     orderId: result.orderId
   }, currentCycleId);
   await notify(

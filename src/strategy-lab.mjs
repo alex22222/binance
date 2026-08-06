@@ -83,7 +83,7 @@ export const STRATEGIES = [
     thesis: "市场状态允许时，只跟踪相对SPY/QQQ更强且完成受控回撤再确认的股票。",
     entry: "SPY/QQQ允许；60分钟相对收益为正且排名前30%；回撤再确认；可执行成本覆盖",
     exit: "仅记录15/30/60/120分钟反事实结果，不下单",
-    evidence: "独立前向Shadow，使用同轮代币K线与金额匹配双向报价",
+    evidence: "独立前向Shadow；审批复核仅复用不超过2分钟且带时间戳的完整横截面上下文，并统计真实成交下的避免亏损与错过盈利",
     risk: "横截面较小、基准beta近似为1，可能遗漏低beta强势股",
     subStrategies: shadowRiskOverlays("避免把个股反弹误判为相对强势回撤")
   },

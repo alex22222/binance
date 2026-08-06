@@ -64,6 +64,38 @@ function summaryForTrades(trades) {
   };
 }
 
+function regimeRelativePullbackCounterfactual(trades) {
+  const vetoDecisions = new Set(["WOULD_WAIT", "WOULD_SKIP", "WOULD_BLOCK"]);
+  const labeled = trades.filter(
+    ({ entryShadow }) => entryShadow.regimeRelativePullback?.decision
+  );
+  const vetoed = labeled.filter(
+    ({ entryShadow }) => vetoDecisions.has(entryShadow.regimeRelativePullback.decision)
+  );
+  const vetoedPnls = vetoed.map(({ realizedPnlUsdt }) => finiteNumber(realizedPnlUsdt));
+  const avoidedLossUsdt = Math.abs(
+    vetoedPnls.filter((value) => value < 0).reduce((sum, value) => sum + value, 0)
+  );
+  const missedProfitUsdt = vetoedPnls
+    .filter((value) => value > 0)
+    .reduce((sum, value) => sum + value, 0);
+  return {
+    strategyId: "regime-relative-pullback-momentum",
+    evidence: "REAL_FILL_PNL_CONDITIONAL_ON_SHADOW_ENTRY_DECISION",
+    labeledTrades: labeled.length,
+    wouldEnterTrades: labeled.filter(
+      ({ entryShadow }) => entryShadow.regimeRelativePullback.decision === "WOULD_ENTER"
+    ).length,
+    vetoedTrades: vetoed.length,
+    insufficientDataTrades: labeled.filter(
+      ({ entryShadow }) => entryShadow.regimeRelativePullback.decision === "INSUFFICIENT_DATA"
+    ).length,
+    avoidedLossUsdt,
+    missedProfitUsdt,
+    netPnlImprovementUsdt: avoidedLossUsdt - missedProfitUsdt
+  };
+}
+
 function newYorkMinutes(timestamp) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
@@ -117,7 +149,20 @@ function reconstructTrades(records) {
         atr15Pct: finiteNumber(details.atr15Pct, null),
         entryShadow: {
           ...(shadowsByCycle.get(`${record.cycleId || ""}:${details.symbol || ""}`) || {}),
-          marketRegime: marketRegimeByCycle.get(record.cycleId || "") || null
+          marketRegime: marketRegimeByCycle.get(record.cycleId || "") || null,
+          regimeRelativePullback: details.shadowRegimeRelativePullbackDecision ? {
+            decision: details.shadowRegimeRelativePullbackDecision,
+            reason: details.shadowRegimeRelativePullbackReason || null,
+            relativeStrengthRank: finiteNumber(
+              details.shadowRegimeRelativePullbackRank,
+              null
+            ),
+            benchmarkRelativeReturn60mPct: finiteNumber(
+              details.shadowRegimeRelativePullbackReturn60mPct,
+              null
+            ),
+            benchmarkStates: details.shadowRegimeRelativePullbackBenchmarkStates || null
+          } : null
         }
       });
     }
@@ -234,7 +279,14 @@ function reconstructTrades(records) {
   return { trades, entries };
 }
 
-function reviewFindings(dailyTrades, dailyEntries, openPositions, systemFailures, externalMarket) {
+function reviewFindings(
+  dailyTrades,
+  dailyEntries,
+  openPositions,
+  systemFailures,
+  externalMarket,
+  regimeRelativePullback
+) {
   const findings = [];
   const cancelledStops = dailyTrades.reduce(
     (sum, trade) => sum + trade.stopRevalidationCancelledCount,
@@ -261,6 +313,13 @@ function reviewFindings(dailyTrades, dailyEntries, openPositions, systemFailures
   if (cancelledStops) findings.push(`止损触发后有 ${cancelledStops} 次因重新报价不再满足条件而取消退出。`);
   if (pullbackWarnings) findings.push(`${pullbackWarnings} 笔入场未通过趋势回撤再确认 Shadow。`);
   if (earlyExitWarnings) findings.push(`${earlyExitWarnings} 笔已平仓交易触发早期失败退出 Shadow。`);
+  if (regimeRelativePullback.vetoedTrades) {
+    findings.push(
+      `相对强度回撤 Shadow 否决 ${regimeRelativePullback.vetoedTrades} 笔真实入场；` +
+      `回溯避免亏损 ${regimeRelativePullback.avoidedLossUsdt.toFixed(4)} USDT，` +
+      `错过盈利 ${regimeRelativePullback.missedProfitUsdt.toFixed(4)} USDT。`
+    );
+  }
   if (lateEntries) findings.push(`${lateEntries} 笔入场发生在美东 15:00 以后，需关注隔夜暴露。`);
   if (invalidOpen) findings.push(`收盘后仍有 ${invalidOpen} 个信号已失效的开放仓位。`);
   if (systemFailures.length) findings.push(`交易日记录到 ${systemFailures.length} 个系统失败事件，需区分报价流动性与运行故障。`);
@@ -317,8 +376,9 @@ export function buildTradingReview({
       ...summaryForTrades(trades)
     };
   });
+  const regimeRelativePullback = regimeRelativePullbackCounterfactual(dailyTrades);
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     generatedAt,
     tradingDate,
     sources: {
@@ -332,6 +392,9 @@ export function buildTradingReview({
     },
     periods,
     trades: dailyTrades,
+    shadowCounterfactuals: {
+      regimeRelativePullbackMomentum: regimeRelativePullback
+    },
     openPositions,
     systemFailures: {
       count: failures.length,
@@ -351,7 +414,14 @@ export function buildTradingReview({
       errors: ["External market attribution was not collected."]
     },
     premarketBrief,
-    findings: reviewFindings(dailyTrades, dailyEntries, openPositions, failures, externalMarket),
+    findings: reviewFindings(
+      dailyTrades,
+      dailyEntries,
+      openPositions,
+      failures,
+      externalMarket,
+      regimeRelativePullback
+    ),
     limitations: [
       "Realized performance includes only terminal SELL fills; Shadow observations are not counted as trades.",
       "Open-position values use the latest stored executable quote and are not realized PnL.",

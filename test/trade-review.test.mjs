@@ -34,6 +34,8 @@ const records = [
       allInCostPct: 0.56,
       netEdgeProxyPct: 1.21,
       initialRiskPct: 1.27,
+      shadowRegimeRelativePullbackDecision: "WOULD_WAIT",
+      shadowRegimeRelativePullbackReason: "PULLBACK_NOT_CONFIRMED",
       orderId: "buy-msft"
     }
   },
@@ -181,7 +183,13 @@ test("builds a real-trade daily review without counting Shadow as fills", () => 
   assert.equal(report.trades[0].stopTriggerCount, 2);
   assert.equal(report.trades[0].stopRevalidationCancelledCount, 1);
   assert.equal(report.trades[0].entryShadow.pullback.decision, "WOULD_WAIT");
+  assert.equal(report.trades[0].entryShadow.regimeRelativePullback.decision, "WOULD_WAIT");
   assert.equal(report.trades[0].earlyExitShadow.decision, "WOULD_EXIT");
+  assert.equal(report.shadowCounterfactuals.regimeRelativePullbackMomentum.labeledTrades, 1);
+  assert.equal(report.shadowCounterfactuals.regimeRelativePullbackMomentum.vetoedTrades, 1);
+  assert.equal(report.shadowCounterfactuals.regimeRelativePullbackMomentum.avoidedLossUsdt, 0.8);
+  assert.equal(report.shadowCounterfactuals.regimeRelativePullbackMomentum.missedProfitUsdt, 0);
+  assert.equal(report.shadowCounterfactuals.regimeRelativePullbackMomentum.netPnlImprovementUsdt, 0.8);
   assert.equal(report.openPositions[0].symbol, "GOOGL");
   assert.equal(report.systemFailures.count, 1);
   assert.equal(report.periods.find(({ sessions }) => sessions === 5).trades, 1);
