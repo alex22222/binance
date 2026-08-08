@@ -12,7 +12,7 @@ The bot:
 - holds at most three different stock positions while serializing approvals and on-chain orders;
 - caps each order at 50 USDT;
 - stops opening positions after 10 USDT of realized daily loss;
-- discovers the full current official BSC RWA universe from Binance on every entry cycle, while treating `config.symbols` only as the explicit Live allowlist;
+- discovers the full current official BSC RWA universe from Binance on every entry cycle, while treating `config.symbols` as the monitored universe and `entryBlockedSymbols` as monitored but ineligible for Live entry;
 - blocks entries when market status, security audit, quote cost, wallet status, or Feishu setup fails;
 - retries transient read-only failures but never retries a state-changing swap submission;
 - writes an order intent before submission so a restart reconciles an ambiguous order instead of placing a duplicate;
@@ -38,6 +38,13 @@ Entry gates:
 - Binance explicitly reports the audit unsupported, the contract came from the current official BSC RWA list, and `allowUnsupportedAuditForOfficialRwa` is enabled.
 
 Network, HTTP, and API errors always fail closed. The RWA exception never applies to a contract supplied outside the official list.
+
+The example configuration expands the research universe with `AMD`, `AVGO`,
+`PLTR`, `NFLX`, `COIN`, `UBER`, `JPM`, `XOM`, `LLY`, and `COST`. These symbols,
+plus the `SPY` and `QQQ` benchmarks, remain in `entryBlockedSymbols`: regular-session
+K-line, ATR, quote, and Shadow evidence is collected, but they cannot be selected
+for a Live buy. Promotion into the Live pool requires a separate reviewed config
+change after sufficient cost-aware forward evidence is available.
 
 The planned regular-session calendar uses `America/New_York`, so UTC and
 Asia/Shanghai times follow U.S. daylight-saving changes automatically. Published

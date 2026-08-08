@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   analyzeCandles,
@@ -86,8 +87,40 @@ const config = {
   sessionWarningHours: 24
 };
 
+const expandedResearchSymbols = [
+  "AMD",
+  "AVGO",
+  "PLTR",
+  "NFLX",
+  "COIN",
+  "UBER",
+  "JPM",
+  "XOM",
+  "LLY",
+  "COST"
+];
+
 test("deduplicates the configured universe", () => {
   assert.deepEqual(uniqueSymbols(["nvda", " NVDA ", "aapl"]), ["NVDA", "AAPL"]);
+});
+
+test("monitors the expanded research universe without allowing Live entries", async () => {
+  const exampleConfig = JSON.parse(await readFile(new URL("../config.example.json", import.meta.url)));
+
+  for (const symbol of expandedResearchSymbols) {
+    assert.ok(exampleConfig.symbols.includes(symbol), `${symbol} must be monitored`);
+    assert.deepEqual(entrySymbolPolicyDecision({
+      symbol,
+      blockedSymbols: exampleConfig.entryBlockedSymbols
+    }), {
+      allowed: false,
+      reason: "CONFIGURED_SYMBOL_BLOCK"
+    });
+  }
+  assert.deepEqual(
+    ["SPY", "QQQ"].filter((symbol) => !exampleConfig.entryBlockedSymbols.includes(symbol)),
+    []
+  );
 });
 
 test("rejects limits above the user-approved risk envelope", () => {
