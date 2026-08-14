@@ -25,6 +25,9 @@ test("strategy page keeps only operational comparison and switch controls", () =
   assert.match(html, /regime-relative-pullback-momentum/);
   assert.match(html, /相对强度回撤/);
   assert.match(html, /趋势回撤/);
+  assert.match(html, /入场策略层/);
+  assert.match(html, /市场状态层/);
+  assert.match(html, /profitFactor/);
   assert.match(html, /代币扫描收盘价代理/);
   assert.match(html, /\/api\/strategy/);
   assert.doesNotMatch(html, /15-minute tokenized equities/i);

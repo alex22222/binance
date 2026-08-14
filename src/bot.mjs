@@ -2267,32 +2267,38 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
     signalValid,
     peakReturnPct: excursion.peakReturnPct,
     returnPct,
-    initialRiskPct: Number(position.initialRiskPct)
+    initialRiskPct: Number(position.initialRiskPct),
+    priorConfirmationCount: position.shadowEntryFailure?.confirmationCount
   });
-  const previousShadowDecision = position.shadowEntryFailure?.decision;
+  const previousShadowEntryFailure = position.shadowEntryFailure;
   if (
-    shadowEntryFailure.decision !== previousShadowDecision &&
     ["WOULD_EXIT", "WOULD_HOLD"].includes(shadowEntryFailure.decision)
   ) {
     position.shadowEntryFailure = {
       ...shadowEntryFailure,
       observedAt: new Date().toISOString()
     };
-    await traceAction("shadow_exit_counterfactual", "observed", {
-      symbol: position.symbol,
-      strategyId: position.strategyId || DEFAULT_STRATEGY_ID,
-      subStrategyId: shadowEntryFailure.id,
-      decision: shadowEntryFailure.decision,
-      reason: shadowEntryFailure.reason,
-      enforced: false,
-      heldMinutes: shadowEntryFailure.heldMinutes,
-      returnPct,
-      returnR: shadowEntryFailure.returnR,
-      peakReturnPct: excursion.peakReturnPct,
-      mfeR: shadowEntryFailure.mfeR,
-      signalValid,
-      conditions: shadowEntryFailure.conditions
-    }, currentCycleId);
+    if (
+      shadowEntryFailure.decision !== previousShadowEntryFailure?.decision ||
+      shadowEntryFailure.reason !== previousShadowEntryFailure?.reason
+    ) {
+      await traceAction("shadow_exit_counterfactual", "observed", {
+        symbol: position.symbol,
+        strategyId: position.strategyId || DEFAULT_STRATEGY_ID,
+        subStrategyId: shadowEntryFailure.id,
+        decision: shadowEntryFailure.decision,
+        reason: shadowEntryFailure.reason,
+        enforced: false,
+        heldMinutes: shadowEntryFailure.heldMinutes,
+        returnPct,
+        returnR: shadowEntryFailure.returnR,
+        peakReturnPct: excursion.peakReturnPct,
+        mfeR: shadowEntryFailure.mfeR,
+        signalValid,
+        confirmationCount: shadowEntryFailure.confirmationCount,
+        conditions: shadowEntryFailure.conditions
+      }, currentCycleId);
+    }
   }
   let reason = dynamicExitDecision({
     returnPct,

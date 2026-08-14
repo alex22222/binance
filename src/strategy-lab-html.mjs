@@ -136,6 +136,7 @@ export function strategyLabHtml() {
   <script>
     const money = (value) => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const pct = (value) => value == null ? "待验证" : Number(value).toFixed(1) + "%";
+    const pf = (value) => value == null ? "—" : Number(value).toFixed(2);
     const el = (tag, className, text) => {
       const node = document.createElement(tag);
       if (className) node.className = className;
@@ -200,37 +201,38 @@ export function strategyLabHtml() {
           (report.marketRegimeLabeledCandidates || 0) + " / " + report.candidates + " 个。"
       ));
       report.horizons.forEach((horizon) => {
-        const allow = horizon.cohorts.WOULD_ALLOW;
-        const block = horizon.cohorts.WOULD_BLOCK;
         const adaptive = horizon.strategyCohorts?.["adaptive-momentum"];
         const pullback = horizon.strategyCohorts?.["trend-pullback-confirmation"];
         const relativePullback = horizon.strategyCohorts?.["regime-relative-pullback-momentum"];
         const marketAllow = horizon.marketRegimeCohorts?.WOULD_ALLOW;
         const marketBlock = horizon.marketRegimeCohorts?.WOULD_BLOCK;
-        const row = el("div", "return-row");
-        row.append(
-          el("div", "return-name", horizon.horizonMinutes + " 分钟 · " + horizon.labeled + " 个"),
-          el("div", "validation-meta", adaptive && pullback
-            ? "当前动量 " + adaptive.samples + " 个 / 胜率 " + pct(adaptive.winRatePct) +
-              " / 均值 " + pct(adaptive.averageNetReturnPct) + " · 趋势回撤 " +
-              pullback.samples + " 个 / 胜率 " + pct(pullback.winRatePct) +
-              " / 均值 " + pct(pullback.averageNetReturnPct) +
-              (relativePullback
-                ? " · 相对强度回撤 " + relativePullback.samples + " 个 / 胜率 " +
-                  pct(relativePullback.winRatePct) + " / 均值 " +
-                  pct(relativePullback.averageNetReturnPct)
-                : "") +
-              (marketAllow && marketBlock
-                ? " · 市场允许 " + marketAllow.samples + " 个 / 均值 " +
-                  pct(marketAllow.averageNetReturnPct) + " · 市场阻止 " +
-                  marketBlock.samples + " 个 / 均值 " + pct(marketBlock.averageNetReturnPct)
-                : "")
-            : "WOULD_ALLOW " + allow.samples + " 个 / 胜率 " + pct(allow.winRatePct) +
-            " / 均值 " + pct(allow.averageNetReturnPct) + " · WOULD_BLOCK " + block.samples +
-            " 个 / 胜率 " + pct(block.winRatePct) + " / 均值 " + pct(block.averageNetReturnPct)),
-          el("div", "return-value", "")
+        const strategyRow = el("div", "return-row");
+        strategyRow.append(
+          el("div", "return-name", horizon.horizonMinutes + " 分钟 · 入场策略层"),
+          el("div", "validation-meta",
+            "当前动量 " + adaptive.samples + " 个 / 胜率 " + pct(adaptive.winRatePct) +
+            " / 均值 " + pct(adaptive.averageNetReturnPct) + " / PF " + pf(adaptive.profitFactor) +
+            " · 趋势回撤 " + pullback.samples + " 个 / 胜率 " + pct(pullback.winRatePct) +
+            " / 均值 " + pct(pullback.averageNetReturnPct) + " / PF " + pf(pullback.profitFactor) +
+            " · 相对强度回撤 " + relativePullback.samples + " 个 / 胜率 " +
+            pct(relativePullback.winRatePct) + " / 均值 " +
+            pct(relativePullback.averageNetReturnPct) + " / PF " + pf(relativePullback.profitFactor)),
+          el("div", "return-value", horizon.labeled + " 个")
         );
-        root.append(row);
+        root.append(strategyRow);
+        if (marketAllow && marketBlock) {
+          const marketRow = el("div", "return-row");
+          marketRow.append(
+            el("div", "return-name", horizon.horizonMinutes + " 分钟 · 市场状态层"),
+            el("div", "validation-meta",
+              "市场允许 " + marketAllow.samples + " 个 / 胜率 " + pct(marketAllow.winRatePct) +
+              " / 均值 " + pct(marketAllow.averageNetReturnPct) + " / PF " + pf(marketAllow.profitFactor) +
+              " · 市场阻止 " + marketBlock.samples + " 个 / 胜率 " + pct(marketBlock.winRatePct) +
+              " / 均值 " + pct(marketBlock.averageNetReturnPct) + " / PF " + pf(marketBlock.profitFactor)),
+            el("div", "return-value", "独立观察")
+          );
+          root.append(marketRow);
+        }
       });
     }
 

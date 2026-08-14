@@ -926,8 +926,8 @@ test("shadow trend quality flags high-volatility chop without enforcing it", () 
   assert.equal(trending.reason, "TREND_QUALITY_ACCEPTABLE");
 });
 
-test("shadow entry-failure records an early failed breakout without exiting", () => {
-  const result = shadowEntryFailureDecision({
+test("shadow entry-failure requires two consecutive failed checks without exiting live", () => {
+  const first = shadowEntryFailureDecision({
     heldMs: 20 * 60_000,
     signalValid: false,
     peakReturnPct: 0.1,
@@ -935,12 +935,36 @@ test("shadow entry-failure records an early failed breakout without exiting", ()
     initialRiskPct: 2
   });
 
-  assert.equal(result.mode, "SHADOW");
-  assert.equal(result.enforced, false);
-  assert.equal(result.decision, "WOULD_EXIT");
-  assert.equal(result.reason, "EARLY_BREAKOUT_FAILED");
-  assert.equal(result.returnR, -0.6);
-  assert.equal(result.mfeR, 0.05);
+  assert.equal(first.mode, "SHADOW");
+  assert.equal(first.enforced, false);
+  assert.equal(first.decision, "WOULD_HOLD");
+  assert.equal(first.reason, "ENTRY_FAILURE_AWAITING_CONFIRMATION");
+  assert.equal(first.confirmationCount, 1);
+  assert.equal(first.returnR, -0.6);
+  assert.equal(first.mfeR, 0.05);
+
+  const confirmed = shadowEntryFailureDecision({
+    heldMs: 21 * 60_000,
+    signalValid: false,
+    peakReturnPct: 0.1,
+    returnPct: -1.1,
+    initialRiskPct: 2,
+    priorConfirmationCount: first.confirmationCount
+  });
+  assert.equal(confirmed.decision, "WOULD_EXIT");
+  assert.equal(confirmed.reason, "EARLY_BREAKOUT_FAILED_CONFIRMED");
+  assert.equal(confirmed.confirmationCount, 2);
+
+  const recovered = shadowEntryFailureDecision({
+    heldMs: 22 * 60_000,
+    signalValid: false,
+    peakReturnPct: 0.1,
+    returnPct: -0.8,
+    initialRiskPct: 2,
+    priorConfirmationCount: first.confirmationCount
+  });
+  assert.equal(recovered.decision, "WOULD_HOLD");
+  assert.equal(recovered.confirmationCount, 0);
   assert.equal(shadowEntryFailureDecision({
     heldMs: 10 * 60_000,
     signalValid: false,

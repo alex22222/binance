@@ -33,6 +33,8 @@ install -m 644 "$project_dir/deploy/binance-agentic-stock-bot.service" "$unit_di
 install -m 644 "$project_dir/deploy/binance-agentic-dashboard.service" "$unit_dir/"
 install -m 644 "$project_dir/deploy/binance-agentic-strategy-validation.service" "$unit_dir/"
 install -m 644 "$project_dir/deploy/binance-agentic-strategy-validation.timer" "$unit_dir/"
+install -m 644 "$project_dir/deploy/binance-agentic-shadow-outcomes.service" "$unit_dir/"
+install -m 644 "$project_dir/deploy/binance-agentic-shadow-outcomes.timer" "$unit_dir/"
 install -m 644 "$project_dir/deploy/binance-agentic-trade-review.service" "$unit_dir/"
 install -m 644 "$project_dir/deploy/binance-agentic-trade-review.timer" "$unit_dir/"
 install -m 644 "$project_dir/deploy/binance-agentic-premarket-brief.service" "$unit_dir/"

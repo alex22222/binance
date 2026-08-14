@@ -2,7 +2,6 @@ import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { backtestStrategyLibrary } from "../src/strategy-backtest.mjs";
-import { writeShadowOutcomeReport } from "../src/shadow-outcomes.mjs";
 import {
   latestCompletedTradingDate,
   newYorkDate,
@@ -317,20 +316,11 @@ const report = {
 };
 await atomicJson(join(stateDirectory, "latest.json"), report);
 await atomicJson(join(reportDirectory, `${isoDate(now)}.json`), report);
-const shadowOutcomes = await writeShadowOutcomeReport({
-  marketDataDirectory: resolve(projectRoot, config.marketDataDirectory),
-  outputPath: resolve(projectRoot, "state/shadow-outcomes/latest.json"),
-  generatedAt: report.generatedAt
-});
 await writeFile(join(stateDirectory, "LOOP_STATE.md"), stateMarkdown(validationState, downloadSummary, report), { mode: 0o600 });
 console.log(JSON.stringify({
   event: "validation_finished",
   report: join(stateDirectory, "latest.json"),
   targetAt: validationState.targetAt,
-  shadowOutcomes: {
-    candidates: shadowOutcomes.candidates,
-    horizons: shadowOutcomes.horizons
-  },
   downloadSummary,
   historical: historical.strategies.map(({ id, performance }) => ({ id, ...performance })),
   forward: forward.strategies.map(({ id, performance }) => ({ id, ...performance }))

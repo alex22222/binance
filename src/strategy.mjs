@@ -878,7 +878,8 @@ export function shadowEntryFailureDecision({
   signalValid,
   peakReturnPct,
   returnPct,
-  initialRiskPct
+  initialRiskPct,
+  priorConfirmationCount = 0
 }) {
   const base = {
     id: "shadow-entry-failure-stop",
@@ -888,7 +889,8 @@ export function shadowEntryFailureDecision({
       minHeldMinutes: 15,
       maxHeldMinutes: 30,
       maxMfeR: 0.2,
-      stopR: -0.5
+      stopR: -0.5,
+      requiredConsecutiveChecks: 2
     }
   };
   if (
@@ -925,15 +927,25 @@ export function shadowEntryFailureDecision({
     noMeaningfulMfe: mfeR <= base.thresholds.maxMfeR,
     lossReached: returnR <= base.thresholds.stopR
   };
-  const wouldExit = Object.values(conditions).every(Boolean);
+  const failureObserved = Object.values(conditions).every(Boolean);
+  const previousCount = Number.isInteger(priorConfirmationCount) && priorConfirmationCount > 0
+    ? priorConfirmationCount
+    : 0;
+  const confirmationCount = failureObserved ? previousCount + 1 : 0;
+  const wouldExit = confirmationCount >= base.thresholds.requiredConsecutiveChecks;
   return {
     ...base,
     decision: wouldExit ? "WOULD_EXIT" : "WOULD_HOLD",
-    reason: wouldExit ? "EARLY_BREAKOUT_FAILED" : "ENTRY_FAILURE_NOT_CONFIRMED",
+    reason: wouldExit
+      ? "EARLY_BREAKOUT_FAILED_CONFIRMED"
+      : failureObserved
+        ? "ENTRY_FAILURE_AWAITING_CONFIRMATION"
+        : "ENTRY_FAILURE_NOT_CONFIRMED",
     heldMinutes,
     mfeR,
     returnR,
-    conditions
+    conditions,
+    confirmationCount
   };
 }
 

@@ -2,14 +2,19 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("post-close validation also refreshes non-executing Shadow outcomes", async () => {
-  const unit = await readFile(
-    new URL("../deploy/binance-agentic-strategy-validation.service", import.meta.url),
-    "utf8"
-  );
+test("post-close Shadow outcomes refresh independently from validation failures", async () => {
+  const [validationUnit, shadowUnit, shadowTimer] = await Promise.all([
+    readFile(new URL("../deploy/binance-agentic-strategy-validation.service", import.meta.url), "utf8"),
+    readFile(new URL("../deploy/binance-agentic-shadow-outcomes.service", import.meta.url), "utf8"),
+    readFile(new URL("../deploy/binance-agentic-shadow-outcomes.timer", import.meta.url), "utf8")
+  ]);
 
-  assert.match(unit, /ExecStart=\/usr\/bin\/node scripts\/run-strategy-validation\.mjs/);
-  assert.match(unit, /ExecStartPost=\/usr\/bin\/node scripts\/run-shadow-outcomes\.mjs/);
+  assert.match(validationUnit, /ExecStart=\/usr\/bin\/node scripts\/run-strategy-validation\.mjs/);
+  assert.doesNotMatch(validationUnit, /run-shadow-outcomes/);
+  assert.match(shadowUnit, /ExecStart=\/usr\/bin\/node scripts\/run-shadow-outcomes\.mjs/);
+  assert.match(shadowUnit, /ReadWritePaths=\/opt\/binance-agentic-stock-bot\/state/);
+  assert.match(shadowTimer, /OnCalendar=Mon\.\.Fri \*-\*-\* 22:25:00 UTC/);
+  assert.match(shadowTimer, /Persistent=true/);
 });
 
 test("trade review timer runs after both daylight and standard-time market close", async () => {

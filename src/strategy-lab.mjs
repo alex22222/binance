@@ -28,7 +28,7 @@ export const SHADOW_ENTRY_FAILURE_STOP = Object.freeze({
   name: "早期入场失败保护",
   mode: "SHADOW",
   enforced: false,
-  rule: "持仓15–30分钟内：原信号失效、最大浮盈≤+0.2R，且可执行收益≤-0.5R",
+  rule: "持仓15–30分钟内：原信号失效、最大浮盈≤+0.2R、可执行收益≤-0.5R，且连续两次检查均满足",
   evidence: "仅记录反事实退出，尚未证明能改善成本后收益",
   risk: "过早退出可能把正常回撤误判为突破失败"
 });

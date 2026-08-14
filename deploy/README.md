@@ -95,14 +95,16 @@ Run the initial history load manually, then enable the daily post-close timer:
 ```bash
 sudo systemctl start binance-agentic-strategy-validation
 sudo systemctl enable --now binance-agentic-strategy-validation.timer
+sudo systemctl enable --now binance-agentic-shadow-outcomes.timer
 systemctl list-timers binance-agentic-strategy-validation.timer
 ```
 
 The latest reports are `state/strategy-validation/latest.json` and
-`state/shadow-outcomes/latest.json`. The timer runs after the U.S. regular
-session, incrementally keeps already downloaded days, and then refreshes the
-non-executing adaptive-momentum versus trend-pullback comparison from recorded
-market scans.
+`state/shadow-outcomes/latest.json`. Validation incrementally keeps already
+downloaded days. Shadow outcomes run on an independent post-close timer, stream
+the retained JSONL files, and keep only records needed for the non-executing
+adaptive-momentum, market-regime, trend-pullback, and relative-strength layers.
+This keeps Shadow reporting available even if the heavier validation job fails.
 
 ## Trade reviews
 

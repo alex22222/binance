@@ -1,5 +1,14 @@
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { mkdir, readdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { createInterface } from "node:readline";
+
+const SHADOW_RECORD_TYPES = new Set([
+  "market_scan",
+  "quote_evaluation",
+  "shadow_candidate_comparison",
+  "shadow_market_regime"
+]);
 
 function finite(value) {
   const number = Number(value);
@@ -19,6 +28,12 @@ function average(values) {
 
 function cohortMetrics(outcomes) {
   const netReturns = outcomes.map(({ netReturnPct }) => netReturnPct).filter(Number.isFinite);
+  const grossProfitPct = netReturns
+    .filter((value) => value > 0)
+    .reduce((sum, value) => sum + value, 0);
+  const grossLossPct = Math.abs(netReturns
+    .filter((value) => value < 0)
+    .reduce((sum, value) => sum + value, 0));
   return {
     samples: netReturns.length,
     wins: netReturns.filter((value) => value > 0).length,
@@ -26,8 +41,64 @@ function cohortMetrics(outcomes) {
       ? netReturns.filter((value) => value > 0).length / netReturns.length * 100
       : null,
     averageNetReturnPct: average(netReturns),
-    averageNetReturnR: average(outcomes.map(({ netReturnR }) => netReturnR))
+    averageNetReturnR: average(outcomes.map(({ netReturnR }) => netReturnR)),
+    profitFactor: grossLossPct > 0 ? grossProfitPct / grossLossPct : null
   };
+}
+
+function compactShadowRecord(record) {
+  if (!SHADOW_RECORD_TYPES.has(record.recordType)) return null;
+  if (record.recordType === "market_scan") {
+    return {
+      recordType: record.recordType,
+      scanId: record.scanId,
+      cycleId: record.cycleId,
+      symbol: record.symbol,
+      recordedAt: record.recordedAt,
+      signal: { lastPrice: record.signal?.lastPrice },
+      atr: { lastPrice: record.atr?.lastPrice },
+      gates: { trendPassed: record.gates?.trendPassed },
+      shadowDowntrendVeto: record.shadowDowntrendVeto,
+      shadowTrendPullback: record.shadowTrendPullback,
+      shadowTrendQuality: record.shadowTrendQuality
+    };
+  }
+  if (record.recordType === "quote_evaluation") {
+    return {
+      recordType: record.recordType,
+      scanId: record.scanId,
+      executionCost: record.executionCost,
+      initialRisk: record.initialRisk,
+      costCoverage: record.costCoverage,
+      shadowTrendPullbackCostCoverage: record.shadowTrendPullbackCostCoverage
+    };
+  }
+  if (record.recordType === "shadow_candidate_comparison") {
+    return {
+      recordType: record.recordType,
+      scanId: record.scanId,
+      regimeRelativePullbackMomentum: record.regimeRelativePullbackMomentum
+    };
+  }
+  return {
+    recordType: record.recordType,
+    cycleId: record.cycleId,
+    decision: record.decision
+  };
+}
+
+async function readShadowRecords(path) {
+  const records = [];
+  const lines = createInterface({
+    input: createReadStream(path, { encoding: "utf8" }),
+    crlfDelay: Infinity
+  });
+  for await (const line of lines) {
+    if (!line) continue;
+    const record = compactShadowRecord(JSON.parse(line));
+    if (record) records.push(record);
+  }
+  return records;
 }
 
 function normalizedDecision(value) {
@@ -219,12 +290,10 @@ export async function writeShadowOutcomeReport({
     .filter((file) => file.endsWith(".jsonl"))
     .sort()
     .slice(-days);
-  const records = (await Promise.all(files.map(async (file) => (
-    (await readFile(join(marketDataDirectory, file), "utf8"))
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line))
-  )))).flat();
+  const records = [];
+  for (const file of files) {
+    records.push(...await readShadowRecords(join(marketDataDirectory, file)));
+  }
   const report = buildShadowOutcomeReport(records, { generatedAt });
   await mkdir(dirname(outputPath), { recursive: true });
   const temporaryPath = `${outputPath}.tmp`;

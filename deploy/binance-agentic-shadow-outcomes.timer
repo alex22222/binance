@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh Binance Shadow outcomes after the U.S. regular session
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 22:25:00 UTC
+Persistent=true
+Unit=binance-agentic-shadow-outcomes.service
+
+[Install]
+WantedBy=timers.target

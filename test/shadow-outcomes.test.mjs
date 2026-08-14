@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { buildShadowOutcomeReport } from "../src/shadow-outcomes.mjs";
+import { buildShadowOutcomeReport, writeShadowOutcomeReport } from "../src/shadow-outcomes.mjs";
 
 function scan(scanId, symbol, recordedAt, price, decision, pullbackDecision = "WOULD_WAIT") {
   return {
@@ -54,6 +57,7 @@ test("labels forward shadow outcomes and compares allow versus block cohorts", (
   assert.equal(report.horizons[0].cohorts.WOULD_ALLOW.winRatePct, 100);
   assert.ok(Math.abs(report.horizons[0].cohorts.WOULD_ALLOW.averageNetReturnPct - 1.5) < 1e-9);
   assert.equal(report.horizons[0].cohorts.WOULD_BLOCK.winRatePct, 0);
+  assert.equal(report.horizons[0].cohorts.WOULD_BLOCK.profitFactor, 0);
   assert.ok(Math.abs(report.horizons[0].cohorts.WOULD_BLOCK.averageNetReturnPct - (-2.5)) < 1e-9);
   assert.ok(Math.abs(report.outcomes[0].netReturnR - 1.5) < 1e-9);
   assert.equal(report.outcomes[0].exitReason, "HORIZON_MARK");
@@ -164,4 +168,39 @@ test("tracks the independent regime-relative pullback shadow cohort", () => {
   const outcome = report.outcomes.find(({ scanId }) => scanId === "composite");
   assert.equal(outcome.regimeRelativePullbackDecision, "WOULD_ENTER");
   assert.equal(outcome.benchmarkRelativeReturn60mPct, 1.5);
+});
+
+test("writes outcomes from JSONL while ignoring unrelated high-volume records", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "shadow-outcomes-"));
+  const marketDataDirectory = join(directory, "market-data");
+  const outputPath = join(directory, "outcomes", "latest.json");
+  await mkdir(marketDataDirectory);
+  const records = [
+    { recordType: "asset_universe_snapshot", recordedAt: "2026-08-14T13:29:00.000Z", payload: "x".repeat(100_000) },
+    scan("entry", "NVDA", "2026-08-14T13:30:00.000Z", 100, "WOULD_ALLOW"),
+    {
+      recordType: "quote_evaluation",
+      scanId: "entry",
+      symbol: "NVDA",
+      recordedAt: "2026-08-14T13:30:01.000Z",
+      executionCost: { allInCostPct: 0.5 },
+      initialRisk: { initialRiskPct: 1 },
+      costCoverage: { allowed: true }
+    },
+    scan("future", "NVDA", "2026-08-14T13:45:00.000Z", 101, "WOULD_ALLOW")
+  ];
+  await writeFile(
+    join(marketDataDirectory, "2026-08-14.jsonl"),
+    records.map((record) => JSON.stringify(record)).join("\n") + "\n"
+  );
+
+  const report = await writeShadowOutcomeReport({
+    marketDataDirectory,
+    outputPath,
+    generatedAt: "2026-08-14T22:25:00.000Z"
+  });
+
+  assert.equal(report.candidates, 1);
+  assert.equal(report.horizons[0].labeled, 1);
+  assert.equal(JSON.parse(await readFile(outputPath, "utf8")).generatedAt, "2026-08-14T22:25:00.000Z");
 });
