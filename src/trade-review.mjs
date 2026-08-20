@@ -162,7 +162,10 @@ function reconstructTrades(records) {
               null
             ),
             benchmarkStates: details.shadowRegimeRelativePullbackBenchmarkStates || null
-          } : null
+          } : null,
+          weakRebound: details.shadowRisk?.weakRebound || null,
+          netEdgeMargin: details.shadowRisk?.netEdgeMargin || null,
+          correlatedExposure: details.shadowRisk?.correlatedExposure || null
         }
       });
     }
@@ -205,7 +208,12 @@ function reconstructTrades(records) {
         reason: details.reason,
         observedAt: record.timestamp,
         returnPct: finiteNumber(details.returnPct, null),
-        returnR: finiteNumber(details.returnR, null)
+        returnR: finiteNumber(details.returnR, null),
+        executableProceedsUsdt: finiteNumber(details.executableProceedsUsdt, null),
+        estimatedExitGasUsdt: finiteNumber(details.estimatedExitGasUsdt, null),
+        estimatedNetPnlUsdt: finiteNumber(details.estimatedNetPnlUsdt, null),
+        estimatedNetR: finiteNumber(details.estimatedNetR, null),
+        quoteTimestamp: details.quoteTimestamp || null
       });
     }
     if (
@@ -245,6 +253,8 @@ function reconstructTrades(records) {
     ) {
       const entry = openBySymbol.get(details.symbol) || {};
       const stop = stopStateBySymbol.get(details.symbol) || { triggers: 0, cancelled: 0 };
+      const realizedPnlUsdt = finiteNumber(details.realizedPnlUsdt);
+      const earlyExit = earlyExitBySymbol.get(details.symbol) || null;
       trades.push({
         symbol: details.symbol,
         strategyId: details.strategyId || entry.strategyId || "unknown",
@@ -259,7 +269,7 @@ function reconstructTrades(records) {
         initialRiskPct: entry.initialRiskPct ?? null,
         grossPnlUsdt: finiteNumber(details.grossPnlUsdt),
         gasCostUsdt: finiteNumber(details.gasCostUsdt),
-        realizedPnlUsdt: finiteNumber(details.realizedPnlUsdt),
+        realizedPnlUsdt,
         exitReason: details.exitReason || "UNKNOWN",
         maePct: finiteNumber(details.maePct, null),
         mfePct: finiteNumber(details.mfePct, null),
@@ -269,7 +279,13 @@ function reconstructTrades(records) {
         stopTriggerCount: stop.triggers,
         stopRevalidationCancelledCount: stop.cancelled,
         entryShadow: entry.entryShadow || {},
-        earlyExitShadow: earlyExitBySymbol.get(details.symbol) || null
+        earlyExitShadow: earlyExit ? {
+          ...earlyExit,
+          actualRealizedPnlUsdt: realizedPnlUsdt,
+          estimatedSavingsUsdt: earlyExit.estimatedNetPnlUsdt == null
+            ? null
+            : earlyExit.estimatedNetPnlUsdt - realizedPnlUsdt
+        } : null
       });
       openBySymbol.delete(details.symbol);
       earlyExitBySymbol.delete(details.symbol);
@@ -332,6 +348,7 @@ export function buildTradingReview({
   state,
   tradingDate,
   generatedAt = new Date().toISOString(),
+  reviewPhase = "FINAL",
   sessionDates = [tradingDate],
   externalMarket = null,
   premarketBrief = null
@@ -378,9 +395,10 @@ export function buildTradingReview({
   });
   const regimeRelativePullback = regimeRelativePullbackCounterfactual(dailyTrades);
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     generatedAt,
     tradingDate,
+    reviewPhase,
     sources: {
       fills: "action-trace pending_order finished SELL",
       openPositions: "bot-state snapshot",
@@ -434,9 +452,10 @@ export function buildTradingReview({
 export function shouldGenerateTradingReview({
   currentNewYorkDate,
   tradingDate,
-  archiveExists
+  archivedPhase = null
 }) {
-  return currentNewYorkDate === tradingDate || !archiveExists;
+  const desiredPhase = currentNewYorkDate === tradingDate ? "PRELIMINARY" : "FINAL";
+  return archivedPhase !== desiredPhase;
 }
 
 export async function writeTradingReviewArchive(directory, report) {
@@ -452,6 +471,7 @@ export async function writeTradingReviewArchive(directory, report) {
     return {
       tradingDate: archived.tradingDate,
       generatedAt: archived.generatedAt,
+      reviewPhase: archived.reviewPhase || "PRELIMINARY",
       trades: archived.daily.trades,
       realizedPnlUsdt: archived.daily.realizedPnlUsdt,
       winRatePct: archived.daily.winRatePct,

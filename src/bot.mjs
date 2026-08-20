@@ -27,12 +27,15 @@ import {
   roundTripCostPct,
   shadowAtrPositionSizeDecision,
   shadowConcentrationDecision,
+  shadowCorrelatedExposureDecision,
   shadowDowntrendVetoDecision,
   shadowEntryFailureDecision,
   shadowMarketRegimeDecision,
+  shadowNetEdgeMarginDecision,
   shadowRegimeRelativePullbackDecision,
   shadowTrendPullbackDecision,
   shadowTrendQualityDecision,
+  shadowWeakReboundVetoDecision,
   simulateRoundTrip,
   uniqueSymbols,
   validateConfig
@@ -113,6 +116,8 @@ import { evaluateBstocksEligibility } from "./entry-eligibility.mjs";
 import { loadNasdaqCorporateActions } from "./corporate-actions.mjs";
 import { buildShadowBasisDecision } from "./shadow-basis-signal.mjs";
 import { createShadowBasisTracker } from "./shadow-basis-tracker.mjs";
+import { newYorkDate } from "./strategy-data.mjs";
+import { rolloverRiskDay } from "./risk-day.mjs";
 
 const execFileAsync = promisify(execFile);
 const BSC_CHAIN_ID = "56";
@@ -154,17 +159,8 @@ async function saveJson(path, value) {
   await rename(temporaryPath, path);
 }
 
-function shanghaiDate(nowMs = Date.now()) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Shanghai",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).format(new Date(nowMs));
-}
-
 function completedEntriesToday(state, symbol, nowMs = Date.now()) {
-  const date = shanghaiDate(nowMs);
+  const date = newYorkDate(nowMs);
   return (state.shadowEntryHistory || []).filter(
     (entry) => entry.date === date && entry.symbol === symbol
   ).length;
@@ -175,15 +171,15 @@ function recordShadowEntry(state, symbol, nowMs = Date.now()) {
     ...(state.shadowEntryHistory || []),
     {
       symbol,
-      date: shanghaiDate(nowMs),
+      date: newYorkDate(nowMs),
       completedAt: new Date(nowMs).toISOString()
     }
   ].slice(-100);
 }
 
-function freshState() {
+function freshState(nowMs = Date.now()) {
   return {
-    date: shanghaiDate(),
+    date: newYorkDate(nowMs),
     realizedPnlUsdt: 0,
     realizedGrossPnlUsdt: 0,
     gasCostUsdt: 0,
@@ -210,18 +206,7 @@ function freshState() {
 
 async function loadState(path) {
   try {
-    const state = migratePositionState(await loadJson(path));
-    if (state.date === shanghaiDate()) return state;
-    return {
-      ...freshState(),
-      positions: state.positions,
-      pendingOrder: state.pendingOrder,
-      approvalRequest: state.approvalRequest,
-      walletBalance: state.walletBalance || null,
-      roundTripGasHistoryUsdt: state.roundTripGasHistoryUsdt || [],
-      initialStopHistory: state.initialStopHistory || [],
-      quarantineUntilBySymbol: state.quarantineUntilBySymbol || {}
-    };
+    return migratePositionState(await loadJson(path));
   } catch (error) {
     if (error.code === "ENOENT") return freshState();
     throw error;
@@ -1869,6 +1854,7 @@ async function evaluateEntry(
     topCount: shadowRegimeRelativePullback.topCount,
     signalCount: shadowRegimeRelativePullback.signalCount
   }, currentCycleId);
+  const openSymbolsForShadow = [...heldPositionSymbols(state)];
   await Promise.all(candidates.map(async (candidate) => {
     candidate.shadowMarketRegime = shadowMarketRegime;
     const relativePullback = relativePullbackByScanId.get(candidate.scanId) || {
@@ -1887,6 +1873,20 @@ async function evaluateEntry(
       benchmarkStates: shadowRegimeRelativePullback.benchmarkStates,
       positionSize: relativePullbackPositionSize
     };
+    candidate.shadowWeakReboundVeto = shadowWeakReboundVetoDecision({
+      return60mPct: candidate.shadowDowntrendVeto?.return60mPct,
+      ema8SlopePct: candidate.shadowDowntrendVeto?.ema8SlopePct,
+      trendEfficiency: candidate.shadowTrendQuality?.trendEfficiency,
+      relativeStrengthRank: relativePullback.relativeStrengthRank,
+      stockUniverseSize: relativePullback.stockUniverseSize
+    });
+    candidate.shadowNetEdgeMargin = shadowNetEdgeMarginDecision({
+      netEdgeProxyPct: candidate.costCoverage?.netEdgeProxyPct
+    });
+    candidate.shadowCorrelatedExposure = shadowCorrelatedExposureDecision({
+      symbol: candidate.symbol,
+      openSymbols: openSymbolsForShadow
+    });
     await recordMarketData("shadow_candidate_comparison", {
       cycleId: currentCycleId,
       scanId: candidate.scanId,
@@ -1908,7 +1908,10 @@ async function evaluateEntry(
         reason: shadowMarketRegime.reason,
         enforced: false
       },
-      regimeRelativePullbackMomentum: candidate.shadowRegimeRelativePullback
+      regimeRelativePullbackMomentum: candidate.shadowRegimeRelativePullback,
+      weakReboundVeto: candidate.shadowWeakReboundVeto,
+      netEdgeMargin: candidate.shadowNetEdgeMargin,
+      correlatedExposure: candidate.shadowCorrelatedExposure
     });
   }));
 
@@ -1972,7 +1975,10 @@ async function evaluateEntry(
     enforced: false,
     concentration: shadowConcentration,
     trendQuality: selected.shadowTrendQuality,
-    positionSize: shadowPositionSize
+    positionSize: shadowPositionSize,
+    weakRebound: selected.shadowWeakReboundVeto,
+    netEdgeMargin: selected.shadowNetEdgeMargin,
+    correlatedExposure: selected.shadowCorrelatedExposure
   };
   await traceAction("shadow_risk_overlay", "observed", {
     symbol: selected.symbol,
@@ -1983,6 +1989,11 @@ async function evaluateEntry(
     positionSizeDecision: shadowPositionSize.decision,
     liveTradeUsdt: shadowPositionSize.liveTradeUsdt,
     suggestedTradeUsdt: shadowPositionSize.suggestedTradeUsdt,
+    weakReboundDecision: selected.shadowWeakReboundVeto.decision,
+    weakReboundMatchedConditions: selected.shadowWeakReboundVeto.matchedConditions,
+    netEdgeMarginDecision: selected.shadowNetEdgeMargin.decision,
+    correlatedExposureDecision: selected.shadowCorrelatedExposure.decision,
+    correlatedOpenSymbols: selected.shadowCorrelatedExposure.correlatedOpenSymbols,
     enforced: false
   }, currentCycleId);
   await traceAction("candidate_selected", "succeeded", {
@@ -2003,7 +2014,10 @@ async function evaluateEntry(
     shadowTrendQualityDecision: selected.shadowTrendQuality.decision,
     shadowTrendEfficiency: selected.shadowTrendQuality.trendEfficiency,
     shadowPositionSizeDecision: shadowPositionSize.decision,
-    shadowSuggestedTradeUsdt: shadowPositionSize.suggestedTradeUsdt
+    shadowSuggestedTradeUsdt: shadowPositionSize.suggestedTradeUsdt,
+    shadowWeakReboundDecision: selected.shadowWeakReboundVeto.decision,
+    shadowNetEdgeMarginDecision: selected.shadowNetEdgeMargin.decision,
+    shadowCorrelatedExposureDecision: selected.shadowCorrelatedExposure.decision
   }, currentCycleId);
   const auditResult = await audit(selected.asset, config);
   if (config.mode === "live" && !feishuConfigured()) {
@@ -2199,6 +2213,7 @@ async function evaluateEntry(
     shadowRegimeRelativePullbackBenchmarkStates: (
       selected.shadowRegimeRelativePullback?.benchmarkStates || null
     ),
+    shadowRisk,
     orderId: result.orderId
   }, currentCycleId);
   await notify(
@@ -2270,6 +2285,12 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
     initialRiskPct: Number(position.initialRiskPct),
     priorConfirmationCount: position.shadowEntryFailure?.confirmationCount
   });
+  const entryGasUsdt = Number.isFinite(Number(position.entryGasUsdt))
+    ? Number(position.entryGasUsdt)
+    : gasEstimate.gasUsdt / 2;
+  const estimatedExitGasUsdt = gasEstimate.gasUsdt / 2;
+  const estimatedNetPnlUsdt = proceedsUsdt - Number(position.costBasisUsdt) - entryGasUsdt - estimatedExitGasUsdt;
+  const initialRiskUsdt = Number(position.costBasisUsdt) * Number(position.initialRiskPct) / 100;
   const previousShadowEntryFailure = position.shadowEntryFailure;
   if (
     ["WOULD_EXIT", "WOULD_HOLD"].includes(shadowEntryFailure.decision)
@@ -2292,6 +2313,12 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
         heldMinutes: shadowEntryFailure.heldMinutes,
         returnPct,
         returnR: shadowEntryFailure.returnR,
+        executableProceedsUsdt: proceedsUsdt,
+        entryGasUsdt,
+        estimatedExitGasUsdt,
+        estimatedNetPnlUsdt,
+        estimatedNetR: initialRiskUsdt > 0 ? estimatedNetPnlUsdt / initialRiskUsdt : null,
+        quoteTimestamp: sellQuote.quotedAt,
         peakReturnPct: excursion.peakReturnPct,
         mfeR: shadowEntryFailure.mfeR,
         signalValid,
@@ -2641,6 +2668,19 @@ async function processTradeApproval(config, state, statePath, emergencyStopPath)
 
 async function cycle(config, state, statePath, emergencyStopPath) {
   currentCycleId = randomUUID();
+  const riskDay = rolloverRiskDay(state);
+  if (riskDay.changed) {
+    state.updatedAt = new Date().toISOString();
+    await saveJson(statePath, state);
+    await traceAction("risk_day_rollover", "succeeded", {
+      previousDate: riskDay.previousDate,
+      currentDate: riskDay.currentDate,
+      resetFields: ["realizedPnlUsdt", "realizedGrossPnlUsdt", "gasCostUsdt"],
+      positionCount: openPositions(state).length,
+      hasPendingOrder: Boolean(state.pendingOrder),
+      hasApprovalRequest: Boolean(state.approvalRequest)
+    }, currentCycleId);
+  }
   const positionCount = openPositions(state).length;
   await traceAction("cycle", "started", {
     hasPosition: positionCount > 0,

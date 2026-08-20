@@ -25,19 +25,22 @@ const outputDirectory = resolve(
 );
 const nowMs = Date.now();
 const tradingDate = latestCompletedTradingDate(nowMs);
-const archiveExists = await readFile(
+const archivedReport = await readFile(
   resolve(outputDirectory, "daily", `${tradingDate}.json`),
   "utf8"
-).then(() => true).catch((error) => error.code === "ENOENT" ? false : Promise.reject(error));
+).then(JSON.parse).catch((error) => error.code === "ENOENT" ? null : Promise.reject(error));
+const currentNewYorkDate = newYorkDate(nowMs);
+const reviewPhase = currentNewYorkDate === tradingDate ? "PRELIMINARY" : "FINAL";
 if (!shouldGenerateTradingReview({
-  currentNewYorkDate: newYorkDate(nowMs),
+  currentNewYorkDate,
   tradingDate,
-  archiveExists
+  archivedPhase: archivedReport?.reviewPhase || null
 })) {
   console.log(JSON.stringify({
     event: "trade_review_skipped",
     reason: "NO_NEW_COMPLETED_TRADING_DAY",
-    tradingDate
+    tradingDate,
+    reviewPhase
   }));
   process.exit(0);
 }
@@ -62,6 +65,7 @@ const baseReport = buildTradingReview({
   state: JSON.parse(stateText),
   tradingDate,
   generatedAt: new Date(nowMs).toISOString(),
+  reviewPhase,
   sessionDates: tradingDates(sessionStart, tradingDate)
 });
 const marketSymbols = [...new Set([
@@ -102,6 +106,7 @@ const report = buildTradingReview({
   state: JSON.parse(stateText),
   tradingDate,
   generatedAt: new Date(nowMs).toISOString(),
+  reviewPhase,
   sessionDates: tradingDates(sessionStart, tradingDate),
   externalMarket,
   premarketBrief
@@ -110,6 +115,7 @@ await writeTradingReviewArchive(outputDirectory, report);
 console.log(JSON.stringify({
   event: "trade_review_finished",
   tradingDate,
+  reviewPhase,
   report: resolve(outputDirectory, "latest.json"),
   trades: report.daily.trades,
   realizedPnlUsdt: report.daily.realizedPnlUsdt,

@@ -33,6 +33,36 @@ export const SHADOW_ENTRY_FAILURE_STOP = Object.freeze({
   risk: "过早退出可能把正常回撤误判为突破失败"
 });
 
+export const SHADOW_WEAK_REBOUND_VETO = Object.freeze({
+  id: "shadow-weak-rebound-veto",
+  name: "弱反抽否决器",
+  mode: "SHADOW",
+  enforced: false,
+  rule: "60分钟方向、EMA8斜率、趋势效率和横截面相对强度中至少两项偏弱时标记 WOULD_BLOCK",
+  evidence: "独立前向记录，尚未启用入场否决",
+  risk: "震荡后的快速反转可能被误判为弱反抽"
+});
+
+export const SHADOW_NET_EDGE_MARGIN = Object.freeze({
+  id: "shadow-net-edge-margin",
+  name: "净 Edge 安全垫",
+  mode: "SHADOW",
+  enforced: false,
+  rule: "扣除可执行价差、执行缓冲和估算 Gas 后，净 Edge 至少保留 0.25%",
+  evidence: "仅分组统计薄 Edge 与厚 Edge 的前向收益",
+  risk: "可能减少低波动时段的有效小幅机会"
+});
+
+export const SHADOW_CORRELATED_EXPOSURE_CAP = Object.freeze({
+  id: "shadow-correlated-exposure-cap",
+  name: "相关仓位上限",
+  mode: "SHADOW",
+  enforced: false,
+  rule: "大型科技/AI簇已有两个开放仓位时，第三个同簇候选标记 WOULD_BLOCK",
+  evidence: "仅记录组合层反事实，不改变最大三仓的实盘限制",
+  risk: "静态行业簇不能代替滚动收益相关系数"
+});
+
 function shadowRiskOverlays(role) {
   return [
     {
@@ -40,6 +70,18 @@ function shadowRiskOverlays(role) {
       role: "为所有只做多策略标记共同市场逆风"
     },
     { ...SHADOW_DOWNTREND_VETO, role },
+    {
+      ...SHADOW_WEAK_REBOUND_VETO,
+      role: "识别短周期转强但大级别质量仍弱的反抽"
+    },
+    {
+      ...SHADOW_NET_EDGE_MARGIN,
+      role: "比较更厚成本后安全垫是否改善实际收益"
+    },
+    {
+      ...SHADOW_CORRELATED_EXPOSURE_CAP,
+      role: "观察同一风险因子集中暴露的组合损失"
+    },
     {
       ...SHADOW_ENTRY_FAILURE_STOP,
       role: "记录入场后立即失效且没有形成有效浮盈的机会"

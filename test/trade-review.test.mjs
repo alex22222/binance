@@ -60,7 +60,11 @@ const records = [
       symbol: "MSFT",
       decision: "WOULD_EXIT",
       reason: "EARLY_BREAKOUT_FAILED",
-      returnPct: -1.34
+      returnPct: -1.34,
+      estimatedNetPnlUsdt: -0.35,
+      estimatedNetR: -0.55,
+      executableProceedsUsdt: 49.68,
+      estimatedExitGasUsdt: 0.03
     }
   },
   {
@@ -162,6 +166,7 @@ test("builds a real-trade daily review without counting Shadow as fills", () => 
     },
     tradingDate: "2026-07-30",
     generatedAt: "2026-07-30T22:15:00.000Z",
+    reviewPhase: "PRELIMINARY",
     sessionDates: ["2026-07-24", "2026-07-27", "2026-07-28", "2026-07-29", "2026-07-30"],
     externalMarket: {
       status: "AVAILABLE",
@@ -185,6 +190,9 @@ test("builds a real-trade daily review without counting Shadow as fills", () => 
   assert.equal(report.trades[0].entryShadow.pullback.decision, "WOULD_WAIT");
   assert.equal(report.trades[0].entryShadow.regimeRelativePullback.decision, "WOULD_WAIT");
   assert.equal(report.trades[0].earlyExitShadow.decision, "WOULD_EXIT");
+  assert.equal(report.trades[0].earlyExitShadow.estimatedNetPnlUsdt, -0.35);
+  assert.ok(Math.abs(report.trades[0].earlyExitShadow.estimatedSavingsUsdt - 0.45) < 1e-9);
+  assert.equal(report.reviewPhase, "PRELIMINARY");
   assert.equal(report.shadowCounterfactuals.regimeRelativePullbackMomentum.labeledTrades, 1);
   assert.equal(report.shadowCounterfactuals.regimeRelativePullbackMomentum.vetoedTrades, 1);
   assert.equal(report.shadowCounterfactuals.regimeRelativePullbackMomentum.avoidedLossUsdt, 0.8);
@@ -224,20 +232,20 @@ test("archives daily reviews and keeps a newest-first history index", async () =
   ]);
 });
 
-test("does not overwrite the latest archive on a weekday market holiday", () => {
+test("refreshes a preliminary archive once as final without repeatedly rewriting it", () => {
   assert.equal(shouldGenerateTradingReview({
     currentNewYorkDate: "2026-12-25",
     tradingDate: "2026-12-24",
-    archiveExists: true
-  }), false);
-  assert.equal(shouldGenerateTradingReview({
-    currentNewYorkDate: "2026-12-25",
-    tradingDate: "2026-12-24",
-    archiveExists: false
+    archivedPhase: "PRELIMINARY"
   }), true);
+  assert.equal(shouldGenerateTradingReview({
+    currentNewYorkDate: "2026-12-25",
+    tradingDate: "2026-12-24",
+    archivedPhase: "FINAL"
+  }), false);
   assert.equal(shouldGenerateTradingReview({
     currentNewYorkDate: "2026-12-24",
     tradingDate: "2026-12-24",
-    archiveExists: true
+    archivedPhase: null
   }), true);
 });

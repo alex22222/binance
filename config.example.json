@@ -23,7 +23,7 @@
     "COST"
   ],
   "maxTradeUsdt": 50,
-  "dailyLossLimitUsdt": 10,
+  "dailyLossLimitUsdt": 2,
   "maxOpenPositions": 3,
   "pollSeconds": 60,
   "entryIntervalMinutes": 15,

@@ -873,6 +873,105 @@ export function shadowTrendQualityDecision(candles, atr15Pct, nowMs = Date.now()
   };
 }
 
+export function shadowWeakReboundVetoDecision({
+  return60mPct,
+  ema8SlopePct,
+  trendEfficiency,
+  relativeStrengthRank,
+  stockUniverseSize
+}) {
+  const base = {
+    id: "shadow-weak-rebound-veto",
+    mode: "SHADOW",
+    enforced: false,
+    thresholds: {
+      maxReturn60mPct: 0,
+      maxEma8SlopePct: 0,
+      maxTrendEfficiency: 0.2,
+      bottomFraction: 1 / 3,
+      requiredConditions: 2
+    }
+  };
+  if (
+    ![return60mPct, ema8SlopePct, trendEfficiency, relativeStrengthRank, stockUniverseSize]
+      .every(Number.isFinite) ||
+    !(relativeStrengthRank >= 1 && stockUniverseSize >= 1)
+  ) {
+    return { ...base, decision: "INSUFFICIENT_DATA", reason: "INVALID_INPUT" };
+  }
+  const bottomThirdStartsAt = Math.floor(stockUniverseSize * (1 - base.thresholds.bottomFraction)) + 1;
+  const conditions = {
+    nonPositive60mReturn: return60mPct <= base.thresholds.maxReturn60mPct,
+    nonPositiveEma8Slope: ema8SlopePct <= base.thresholds.maxEma8SlopePct,
+    lowTrendEfficiency: trendEfficiency < base.thresholds.maxTrendEfficiency,
+    bottomThirdRelativeStrength: relativeStrengthRank >= bottomThirdStartsAt
+  };
+  const matchedConditions = Object.values(conditions).filter(Boolean).length;
+  const wouldBlock = matchedConditions >= base.thresholds.requiredConditions;
+  return {
+    ...base,
+    decision: wouldBlock ? "WOULD_BLOCK" : "WOULD_ALLOW",
+    reason: wouldBlock ? "WEAK_REBOUND_QUALITY" : "REBOUND_QUALITY_ACCEPTABLE",
+    return60mPct,
+    ema8SlopePct,
+    trendEfficiency,
+    relativeStrengthRank,
+    stockUniverseSize,
+    bottomThirdStartsAt,
+    conditions,
+    matchedConditions
+  };
+}
+
+const CORRELATED_GROWTH_CLUSTER = new Set([
+  "AAPL", "AMD", "AMZN", "AVGO", "GOOGL", "META", "MSFT", "NVDA", "PLTR", "TSLA"
+]);
+
+export function shadowCorrelatedExposureDecision({
+  symbol,
+  openSymbols = [],
+  maxClusterPositions = 2
+}) {
+  const normalizedSymbol = String(symbol || "").toUpperCase();
+  const cluster = CORRELATED_GROWTH_CLUSTER.has(normalizedSymbol) ? "MEGA_CAP_GROWTH_AI" : null;
+  const correlatedOpenSymbols = cluster
+    ? [...new Set(openSymbols.map((entry) => String(entry).toUpperCase()))]
+      .filter((entry) => CORRELATED_GROWTH_CLUSTER.has(entry))
+      .sort()
+    : [];
+  const wouldBlock = Boolean(cluster) && correlatedOpenSymbols.length >= maxClusterPositions;
+  return {
+    id: "shadow-correlated-exposure-cap",
+    mode: "SHADOW",
+    enforced: false,
+    decision: wouldBlock ? "WOULD_BLOCK" : "WOULD_ALLOW",
+    reason: wouldBlock ? "CORRELATED_CLUSTER_CAP_REACHED" : "WITHIN_CORRELATED_CLUSTER_CAP",
+    symbol: normalizedSymbol,
+    cluster,
+    correlatedOpenSymbols,
+    maxClusterPositions
+  };
+}
+
+export function shadowNetEdgeMarginDecision({ netEdgeProxyPct, minMarginPct = 0.25 }) {
+  const base = {
+    id: "shadow-net-edge-margin",
+    mode: "SHADOW",
+    enforced: false,
+    minMarginPct
+  };
+  if (!Number.isFinite(netEdgeProxyPct)) {
+    return { ...base, decision: "INSUFFICIENT_DATA", reason: "INVALID_NET_EDGE" };
+  }
+  const wouldBlock = netEdgeProxyPct < minMarginPct;
+  return {
+    ...base,
+    decision: wouldBlock ? "WOULD_BLOCK" : "WOULD_ALLOW",
+    reason: wouldBlock ? "NET_EDGE_MARGIN_TOO_THIN" : "NET_EDGE_MARGIN_COVERED",
+    netEdgeProxyPct
+  };
+}
+
 export function shadowEntryFailureDecision({
   heldMs,
   signalValid,

@@ -148,7 +148,8 @@ export function tradeReviewHtml() {
     }
     function render(report) {
       document.getElementById("title").textContent = report.tradingDate + " 收盘复盘";
-      document.getElementById("generatedAt").textContent = "生成于 " + new Date(report.generatedAt).toLocaleString("zh-CN") + " · Shadow 不计入真实成交";
+      const phase = report.reviewPhase === "FINAL" ? "终版" : "收盘预览";
+      document.getElementById("generatedAt").textContent = phase + " · 生成于 " + new Date(report.generatedAt).toLocaleString("zh-CN") + " · Shadow 不计入真实成交";
       const daily = document.getElementById("dailyMetrics");
       daily.replaceChildren();
       metric(daily, "净收益", money(report.daily.realizedPnlUsdt), report.daily.realizedPnlUsdt < 0 ? "red" : "green");

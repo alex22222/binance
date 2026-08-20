@@ -71,14 +71,17 @@ test("attaches the same non-enforcing shadow risk overlays to every strategy", (
   assert.equal(relativePullback.switchable, false);
   for (const strategy of comparison) {
     assert.equal(strategy.direction, "LONG_ONLY");
-    assert.equal(strategy.subStrategies.length, 3);
+    assert.equal(strategy.subStrategies.length, 6);
     assert.equal(strategy.subStrategies[0].id, "shadow-market-regime-filter");
     assert.equal(strategy.subStrategies[0].mode, "SHADOW");
     assert.equal(strategy.subStrategies[0].enforced, false);
     assert.ok(strategy.subStrategies[0].role.length > 0);
     assert.equal(strategy.subStrategies[1].id, "shadow-downtrend-veto");
-    assert.equal(strategy.subStrategies[2].id, "shadow-entry-failure-stop");
-    assert.equal(strategy.subStrategies[2].mode, "SHADOW");
-    assert.equal(strategy.subStrategies[2].enforced, false);
+    assert.equal(strategy.subStrategies[2].id, "shadow-weak-rebound-veto");
+    assert.equal(strategy.subStrategies[3].id, "shadow-net-edge-margin");
+    assert.equal(strategy.subStrategies[4].id, "shadow-correlated-exposure-cap");
+    assert.equal(strategy.subStrategies[5].id, "shadow-entry-failure-stop");
+    assert.equal(strategy.subStrategies[5].mode, "SHADOW");
+    assert.equal(strategy.subStrategies[5].enforced, false);
   }
 });

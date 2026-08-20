@@ -77,7 +77,10 @@ function compactShadowRecord(record) {
     return {
       recordType: record.recordType,
       scanId: record.scanId,
-      regimeRelativePullbackMomentum: record.regimeRelativePullbackMomentum
+      regimeRelativePullbackMomentum: record.regimeRelativePullbackMomentum,
+      weakReboundVeto: record.weakReboundVeto,
+      netEdgeMargin: record.netEdgeMargin,
+      correlatedExposure: record.correlatedExposure
     };
   }
   return {
@@ -195,6 +198,9 @@ export function buildShadowOutcomeReport(records, options = {}) {
         regimeRelativePullbackDecision: (
           comparison?.regimeRelativePullbackMomentum?.decision || "UNKNOWN"
         ),
+        weakReboundDecision: comparison?.weakReboundVeto?.decision || "UNKNOWN",
+        netEdgeMarginDecision: comparison?.netEdgeMargin?.decision || "UNKNOWN",
+        correlatedExposureDecision: comparison?.correlatedExposure?.decision || "UNKNOWN",
         benchmarkRelativeReturn60mPct: finite(
           comparison?.regimeRelativePullbackMomentum?.benchmarkRelativeReturn60mPct
         ),
@@ -261,6 +267,39 @@ export function buildShadowOutcomeReport(records, options = {}) {
           )),
           UNKNOWN: cohortMetrics(horizonOutcomes.filter(
             ({ marketRegimeDecision }) => !["WOULD_ALLOW", "WOULD_BLOCK"].includes(marketRegimeDecision)
+          ))
+        },
+        weakReboundCohorts: {
+          WOULD_ALLOW: cohortMetrics(horizonOutcomes.filter(
+            ({ weakReboundDecision }) => weakReboundDecision === "WOULD_ALLOW"
+          )),
+          WOULD_BLOCK: cohortMetrics(horizonOutcomes.filter(
+            ({ weakReboundDecision }) => weakReboundDecision === "WOULD_BLOCK"
+          )),
+          UNKNOWN: cohortMetrics(horizonOutcomes.filter(
+            ({ weakReboundDecision }) => !["WOULD_ALLOW", "WOULD_BLOCK"].includes(weakReboundDecision)
+          ))
+        },
+        netEdgeMarginCohorts: {
+          WOULD_ALLOW: cohortMetrics(horizonOutcomes.filter(
+            ({ netEdgeMarginDecision }) => netEdgeMarginDecision === "WOULD_ALLOW"
+          )),
+          WOULD_BLOCK: cohortMetrics(horizonOutcomes.filter(
+            ({ netEdgeMarginDecision }) => netEdgeMarginDecision === "WOULD_BLOCK"
+          )),
+          UNKNOWN: cohortMetrics(horizonOutcomes.filter(
+            ({ netEdgeMarginDecision }) => !["WOULD_ALLOW", "WOULD_BLOCK"].includes(netEdgeMarginDecision)
+          ))
+        },
+        correlatedExposureCohorts: {
+          WOULD_ALLOW: cohortMetrics(horizonOutcomes.filter(
+            ({ correlatedExposureDecision }) => correlatedExposureDecision === "WOULD_ALLOW"
+          )),
+          WOULD_BLOCK: cohortMetrics(horizonOutcomes.filter(
+            ({ correlatedExposureDecision }) => correlatedExposureDecision === "WOULD_BLOCK"
+          )),
+          UNKNOWN: cohortMetrics(horizonOutcomes.filter(
+            ({ correlatedExposureDecision }) => !["WOULD_ALLOW", "WOULD_BLOCK"].includes(correlatedExposureDecision)
           ))
         },
         cohorts: {

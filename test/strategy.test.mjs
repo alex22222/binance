@@ -25,12 +25,15 @@ import {
   nyseSessionPlan,
   shadowAtrPositionSizeDecision,
   shadowConcentrationDecision,
+  shadowCorrelatedExposureDecision,
   shadowDowntrendVetoDecision,
   shadowEntryFailureDecision,
   shadowMarketRegimeDecision,
+  shadowNetEdgeMarginDecision,
   shadowRegimeRelativePullbackDecision,
   shadowTrendPullbackDecision,
   shadowTrendQualityDecision,
+  shadowWeakReboundVetoDecision,
   simulateRoundTrip,
   uniqueSymbols,
   validateConfig
@@ -107,6 +110,7 @@ test("deduplicates the configured universe", () => {
 test("monitors the expanded research universe without allowing Live entries", async () => {
   const exampleConfig = JSON.parse(await readFile(new URL("../config.example.json", import.meta.url)));
 
+  assert.equal(exampleConfig.dailyLossLimitUsdt, 2);
   for (const symbol of expandedResearchSymbols) {
     assert.ok(exampleConfig.symbols.includes(symbol), `${symbol} must be monitored`);
     assert.deepEqual(entrySymbolPolicyDecision({
@@ -1012,6 +1016,53 @@ test("shadow ATR sizing preserves target dollar risk without changing the live a
     initialRiskPct: 0.8,
     targetRiskPct: 1
   }).decision, "WOULD_KEEP");
+});
+
+test("shadow weak-rebound veto marks low-quality rebounds without enforcing them", () => {
+  const blocked = shadowWeakReboundVetoDecision({
+    return60mPct: -0.2,
+    ema8SlopePct: -0.1,
+    trendEfficiency: 0.18,
+    relativeStrengthRank: 8,
+    stockUniverseSize: 10
+  });
+  assert.equal(blocked.id, "shadow-weak-rebound-veto");
+  assert.equal(blocked.mode, "SHADOW");
+  assert.equal(blocked.enforced, false);
+  assert.equal(blocked.decision, "WOULD_BLOCK");
+  assert.equal(blocked.matchedConditions, 4);
+
+  const allowed = shadowWeakReboundVetoDecision({
+    return60mPct: 1.2,
+    ema8SlopePct: 0.2,
+    trendEfficiency: 0.5,
+    relativeStrengthRank: 1,
+    stockUniverseSize: 10
+  });
+  assert.equal(allowed.decision, "WOULD_ALLOW");
+});
+
+test("shadow correlated-exposure cap marks a third mega-cap cluster position", () => {
+  const blocked = shadowCorrelatedExposureDecision({
+    symbol: "NVDA",
+    openSymbols: ["AMZN", "META"]
+  });
+  assert.equal(blocked.id, "shadow-correlated-exposure-cap");
+  assert.equal(blocked.enforced, false);
+  assert.equal(blocked.decision, "WOULD_BLOCK");
+  assert.deepEqual(blocked.correlatedOpenSymbols, ["AMZN", "META"]);
+
+  assert.equal(shadowCorrelatedExposureDecision({
+    symbol: "JPM",
+    openSymbols: ["AMZN", "META"]
+  }).decision, "WOULD_ALLOW");
+});
+
+test("shadow net-edge margin requires 0.25 percent beyond all estimated costs", () => {
+  assert.equal(shadowNetEdgeMarginDecision({ netEdgeProxyPct: 0.24 }).decision, "WOULD_BLOCK");
+  const allowed = shadowNetEdgeMarginDecision({ netEdgeProxyPct: 0.25 });
+  assert.equal(allowed.decision, "WOULD_ALLOW");
+  assert.equal(allowed.enforced, false);
 });
 
 test("rejects a candidate that clears the raw cost cap but not the all-in coverage gate", () => {

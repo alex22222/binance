@@ -150,7 +150,10 @@ test("tracks the independent regime-relative pullback shadow cohort", () => {
         relativeStrengthRank: 1,
         stockUniverseSize: 8,
         costAllowed: true
-      }
+      },
+      weakReboundVeto: { decision: "WOULD_BLOCK" },
+      netEdgeMargin: { decision: "WOULD_ALLOW" },
+      correlatedExposure: { decision: "WOULD_ALLOW" }
     },
     scan("composite-future", "NVDA", "2026-07-28T13:45:00.000Z", 102, "WOULD_ALLOW")
   ];
@@ -168,6 +171,10 @@ test("tracks the independent regime-relative pullback shadow cohort", () => {
   const outcome = report.outcomes.find(({ scanId }) => scanId === "composite");
   assert.equal(outcome.regimeRelativePullbackDecision, "WOULD_ENTER");
   assert.equal(outcome.benchmarkRelativeReturn60mPct, 1.5);
+  assert.equal(outcome.weakReboundDecision, "WOULD_BLOCK");
+  assert.equal(report.horizons[0].weakReboundCohorts.WOULD_BLOCK.samples, 1);
+  assert.equal(report.horizons[0].netEdgeMarginCohorts.WOULD_ALLOW.samples, 1);
+  assert.equal(report.horizons[0].correlatedExposureCohorts.WOULD_ALLOW.samples, 1);
 });
 
 test("writes outcomes from JSONL while ignoring unrelated high-volume records", async () => {
