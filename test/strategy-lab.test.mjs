@@ -6,8 +6,10 @@ import test from "node:test";
 import {
   basisExitReached,
   buildStrategyComparison,
+  entryExecutionDecision,
   executableBasisDecision,
   readStrategyControl,
+  writeEntryPauseControl,
   writeStrategyControl
 } from "../src/strategy-lab.mjs";
 
@@ -41,6 +43,30 @@ test("persists only switchable strategies", async () => {
   await writeStrategyControl(path, "executable-basis-reversion");
   assert.equal((await readStrategyControl(path)).strategyId, "executable-basis-reversion");
   await assert.rejects(() => writeStrategyControl(path, "residual-reversal"), /not switchable/);
+});
+
+test("pauses only BUY execution and preserves the pause across strategy switches", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "entry-pause-control-"));
+  const path = join(directory, "control.json");
+
+  await writeEntryPauseControl(path, true, "adaptive-momentum", "test");
+  assert.equal((await readStrategyControl(path)).entriesPaused, true);
+  assert.deepEqual(entryExecutionDecision({ entriesPaused: true, side: "BUY" }), {
+    allowed: false,
+    reason: "ENTRIES_PAUSED"
+  });
+  assert.deepEqual(entryExecutionDecision({ entriesPaused: true, side: "SELL" }), {
+    allowed: true,
+    reason: "EXIT_ALLOWED"
+  });
+
+  await writeStrategyControl(path, "executable-basis-reversion");
+  const switched = await readStrategyControl(path);
+  assert.equal(switched.strategyId, "executable-basis-reversion");
+  assert.equal(switched.entriesPaused, true);
+
+  await writeEntryPauseControl(path, false, "adaptive-momentum", "test");
+  assert.equal((await readStrategyControl(path)).entriesPaused, false);
 });
 
 test("compares realized returns by strategy without inventing missing results", () => {

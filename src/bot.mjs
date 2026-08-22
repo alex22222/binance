@@ -72,6 +72,7 @@ import {
 import {
   basisExitReached,
   DEFAULT_STRATEGY_ID,
+  entryExecutionDecision,
   executableBasisDecision,
   readStrategyControl,
   STRATEGIES
@@ -2135,6 +2136,29 @@ async function evaluateEntry(
     netEdgeProxyPct: freshCostCoverage.netEdgeProxyPct,
     audit: auditResult
   };
+  const liveEntryControl = await readStrategyControl(
+    resolve(projectRoot, config.strategyControlFile),
+    config.defaultStrategyId
+  );
+  config.activeStrategyId = liveEntryControl.strategyId;
+  const liveEntryDecision = entryExecutionDecision({
+    entriesPaused: liveEntryControl.entriesPaused,
+    side: "BUY"
+  });
+  if (!liveEntryDecision.allowed) {
+    await traceAction("entry_decision", "skipped", {
+      reason: "entries_paused",
+      symbol: selected.symbol,
+      approvedRequestInvalidated: Boolean(approvedRequest)
+    }, currentCycleId);
+    if (approvedRequest) {
+      await notify(
+        state,
+        `[Agentic Stock Bot] BUY APPROVAL INVALIDATED\n${selected.symbol} ${selected.address}\n新开仓已暂停；现有持仓退出和 Shadow 监控继续运行。`
+      );
+    }
+    return;
+  }
   if (config.mode === "live" && !approvedRequest) {
     await requestTradeApproval(config, state, statePath, approvalDetails);
     return;
@@ -2608,6 +2632,39 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
 async function processTradeApproval(config, state, statePath, emergencyStopPath) {
   const request = state.approvalRequest;
   if (!request) return false;
+  if (request.side === "BUY") {
+    const strategyControl = await readStrategyControl(
+      resolve(projectRoot, config.strategyControlFile),
+      config.defaultStrategyId
+    );
+    config.activeStrategyId = strategyControl.strategyId;
+    const entryDecision = entryExecutionDecision({
+      entriesPaused: strategyControl.entriesPaused,
+      side: request.side
+    });
+    if (!entryDecision.allowed) {
+      state.approvalRequest = null;
+      state.lastApprovalDecision = {
+        approvalId: request.approvalId,
+        side: request.side,
+        symbol: request.symbol,
+        status: entryDecision.reason,
+        decidedAt: new Date().toISOString()
+      };
+      await saveJson(statePath, state);
+      await traceAction("trade_approval", "closed", {
+        approvalId: request.approvalId,
+        side: request.side,
+        symbol: request.symbol,
+        outcome: entryDecision.reason
+      }, currentCycleId);
+      await notify(
+        state,
+        `[Agentic Stock Bot] BUY APPROVAL ENTRIES_PAUSED\n${request.symbol} ${request.address}\n未执行链上交易；现有持仓退出和 Shadow 监控继续运行。`
+      );
+      return true;
+    }
+  }
   const decisionDirectory = resolve(projectRoot, config.approvalDecisionDirectory);
   const decision = await loadApprovalDecision(decisionDirectory, request.approvalId);
   const outcome = approvalDecisionStatus(request, decision);
@@ -2745,13 +2802,17 @@ async function cycle(config, state, statePath, emergencyStopPath) {
         );
         config.activeStrategyId = strategyControl.strategyId;
         const capacity = entryCapacityDecision(state, config.maxOpenPositions);
+        const entryDecision = entryExecutionDecision({
+          entriesPaused: strategyControl.entriesPaused,
+          side: "BUY"
+        });
         await evaluateEntry(
           config,
           state,
           statePath,
           emergencyStopPath,
           null,
-          { scanOnly: !capacity.allowed }
+          { scanOnly: !entryDecision.allowed || !capacity.allowed }
         );
       }
     }

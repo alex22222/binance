@@ -214,21 +214,67 @@ export function basisExitReached({ executableSellPrice, fairTokenPrice, exitBasi
 export async function readStrategyControl(path, fallback = DEFAULT_STRATEGY_ID) {
   try {
     const control = JSON.parse(await readFile(path, "utf8"));
-    return { ...control, strategyId: assertSwitchableStrategy(control.strategyId).id };
+    return {
+      ...control,
+      strategyId: assertSwitchableStrategy(control.strategyId).id,
+      entriesPaused: control.entriesPaused === true
+    };
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
-    return { strategyId: assertSwitchableStrategy(fallback).id, updatedAt: null, updatedBy: "config" };
+    return {
+      strategyId: assertSwitchableStrategy(fallback).id,
+      entriesPaused: false,
+      updatedAt: null,
+      updatedBy: "config"
+    };
   }
 }
 
 export async function writeStrategyControl(path, strategyId, updatedBy = "dashboard") {
   assertSwitchableStrategy(strategyId);
-  const control = { strategyId, updatedAt: new Date().toISOString(), updatedBy };
+  const current = await readStrategyControl(path, strategyId);
+  const control = {
+    strategyId,
+    entriesPaused: current.entriesPaused,
+    updatedAt: new Date().toISOString(),
+    updatedBy
+  };
   await mkdir(dirname(path), { recursive: true });
   const temporaryPath = `${path}.tmp`;
   await writeFile(temporaryPath, `${JSON.stringify(control, null, 2)}\n`, { mode: 0o600 });
   await rename(temporaryPath, path);
   return control;
+}
+
+export async function writeEntryPauseControl(
+  path,
+  entriesPaused,
+  fallbackStrategyId = DEFAULT_STRATEGY_ID,
+  updatedBy = "operator"
+) {
+  if (typeof entriesPaused !== "boolean") throw new Error("entriesPaused must be boolean");
+  const current = await readStrategyControl(path, fallbackStrategyId);
+  const control = {
+    strategyId: current.strategyId,
+    entriesPaused,
+    updatedAt: new Date().toISOString(),
+    updatedBy
+  };
+  await mkdir(dirname(path), { recursive: true });
+  const temporaryPath = `${path}.tmp`;
+  await writeFile(temporaryPath, `${JSON.stringify(control, null, 2)}\n`, { mode: 0o600 });
+  await rename(temporaryPath, path);
+  return control;
+}
+
+export function entryExecutionDecision({ entriesPaused = false, side }) {
+  if (String(side).toUpperCase() === "BUY" && entriesPaused === true) {
+    return { allowed: false, reason: "ENTRIES_PAUSED" };
+  }
+  return {
+    allowed: true,
+    reason: String(side).toUpperCase() === "SELL" ? "EXIT_ALLOWED" : "ENTRY_ALLOWED"
+  };
 }
 
 function performanceFor(strategyId, traceRecords) {
