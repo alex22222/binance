@@ -40,6 +40,24 @@ test("patches the vulnerable BAW response-cookie write and is idempotent", () =>
   assert.equal(second.source, first.source);
 });
 
+test("patches the current CLI client ID recovery shape without dropping its file update", () => {
+  const vulnerableClientIdRecovery =
+    'if(this.fileData.clientId){let e=this.decryptClientId(this.fileData.clientId);if(e)return this.decryptedClientId=e,this.decryptedClientId}';
+  const vulnerable = [
+    vulnerableClientIdRecovery,
+    'this.decryptedClientId=Sr(),this.clientIdRegenerated=!0,this.fileData.clientId=Et(this.decryptedClientId),this.saveFileData();',
+    'before;',
+    'T&&(q.session("Session ID extracted, pending commit"),this.sessionManager.setPendingSessionId(T[1]))',
+    ';after'
+  ].join("");
+
+  const first = patchBawSessionPersistence(vulnerable);
+
+  assert.equal(first.changed, true);
+  assert.match(first.source, /BINANCE_INSTANCE_ID mismatch: refusing to clear the existing wallet session/);
+  assert.match(first.source, /this\.fileData\.clientId=Et\(this\.decryptedClientId\)/);
+});
+
 test("refuses to modify an unknown CLI build", () => {
   assert.throws(() => patchBawSessionPersistence("unknown build"), /unsupported BAW CLI build/);
 });

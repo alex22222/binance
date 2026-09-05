@@ -1,11 +1,17 @@
-const vulnerableCookieWrite =
-  'T&&(M.session("Session ID extracted, pending commit"),this.sessionManager.setPendingSessionId(T[1]))';
-const durableCookieWrite =
-  'T&&(M.session("Session ID extracted"),(this.sessionManager.pendingSessionId||e.endsWith("/agent-wallet/login")?this.sessionManager.setPendingSessionId(T[1]):await this.sessionManager.setSessionId(T[1])))';
+const cookieWriteVariants = [
+  {
+    vulnerable: 'T&&(M.session("Session ID extracted, pending commit"),this.sessionManager.setPendingSessionId(T[1]))',
+    durable: 'T&&(M.session("Session ID extracted"),(this.sessionManager.pendingSessionId||e.endsWith("/agent-wallet/login")?this.sessionManager.setPendingSessionId(T[1]):await this.sessionManager.setSessionId(T[1])))'
+  },
+  {
+    vulnerable: 'T&&(q.session("Session ID extracted, pending commit"),this.sessionManager.setPendingSessionId(T[1]))',
+    durable: 'T&&(q.session("Session ID extracted"),(this.sessionManager.pendingSessionId||e.endsWith("/agent-wallet/login")?this.sessionManager.setPendingSessionId(T[1]):await this.sessionManager.setSessionId(T[1])))'
+  }
+];
 const vulnerableClientIdRecovery =
-  'if(this.fileData.clientId){let e=this.decryptClientId(this.fileData.clientId);if(e)return this.decryptedClientId=e,this.decryptedClientId}this.decryptedClientId=hn(),this.clientIdRegenerated=!0';
+  'if(this.fileData.clientId){let e=this.decryptClientId(this.fileData.clientId);if(e)return this.decryptedClientId=e,this.decryptedClientId}this.decryptedClientId=';
 const guardedClientIdRecovery =
-  'if(this.fileData.clientId){let e=this.decryptClientId(this.fileData.clientId);if(e)return this.decryptedClientId=e,this.decryptedClientId;throw new Error("BINANCE_INSTANCE_ID mismatch: refusing to clear the existing wallet session")}this.decryptedClientId=hn(),this.clientIdRegenerated=!0';
+  'if(this.fileData.clientId){let e=this.decryptClientId(this.fileData.clientId);if(e)return this.decryptedClientId=e,this.decryptedClientId;throw new Error("BINANCE_INSTANCE_ID mismatch: refusing to clear the existing wallet session")}this.decryptedClientId=';
 
 export function sessionRotationAction({ endpoint, hasPendingSession }) {
   return hasPendingSession || endpoint.endsWith("/agent-wallet/login")
@@ -14,8 +20,14 @@ export function sessionRotationAction({ endpoint, hasPendingSession }) {
 }
 
 export function patchBawSessionPersistence(source) {
-  const vulnerableCount = source.split(vulnerableCookieWrite).length - 1;
-  const durableCount = source.split(durableCookieWrite).length - 1;
+  const vulnerableCount = cookieWriteVariants.reduce(
+    (count, variant) => count + source.split(variant.vulnerable).length - 1,
+    0
+  );
+  const durableCount = cookieWriteVariants.reduce(
+    (count, variant) => count + source.split(variant.durable).length - 1,
+    0
+  );
   const vulnerableIdentityCount = source.split(vulnerableClientIdRecovery).length - 1;
   const guardedIdentityCount = source.split(guardedClientIdRecovery).length - 1;
   if (
@@ -32,7 +44,10 @@ export function patchBawSessionPersistence(source) {
   if (sessionPatched && identityPatched) return { source, changed: false };
 
   let patched = source;
-  if (!sessionPatched) patched = patched.replace(vulnerableCookieWrite, durableCookieWrite);
+  if (!sessionPatched) {
+    const variant = cookieWriteVariants.find(({ vulnerable }) => patched.includes(vulnerable));
+    patched = patched.replace(variant.vulnerable, variant.durable);
+  }
   if (!identityPatched) patched = patched.replace(vulnerableClientIdRecovery, guardedClientIdRecovery);
   return {
     source: patched,
