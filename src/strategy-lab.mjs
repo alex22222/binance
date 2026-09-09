@@ -3,6 +3,33 @@ import { dirname } from "node:path";
 
 export const DEFAULT_STRATEGY_ID = "adaptive-momentum";
 
+export const STRATEGY_TAXONOMY = Object.freeze({
+  family: Object.freeze({
+    TREND_MOMENTUM: "趋势 / 动量",
+    MEAN_REVERSION: "均值回归",
+    STRUCTURAL_BASIS: "结构性折价",
+    SESSION_EFFECT: "时段效应"
+  }),
+  horizon: Object.freeze({
+    FIFTEEN_MINUTE: "15分钟",
+    INTRADAY: "日内",
+    MULTI_SESSION: "跨交易日",
+    SWING: "波段"
+  }),
+  stage: Object.freeze({
+    ACTIVE: "可切换",
+    SHADOW: "Shadow观察",
+    RESEARCH: "研究验证",
+    REJECTED: "已淘汰"
+  }),
+  riskCluster: Object.freeze({
+    CHASE_REVERSAL: "追高反转",
+    FALLING_KNIFE: "接飞刀",
+    MARKET_BETA: "市场 Beta",
+    LIQUIDITY_QUOTE: "流动性 / 报价"
+  })
+});
+
 export const SHADOW_MARKET_REGIME_FILTER = Object.freeze({
   id: "shadow-market-regime-filter",
   name: "市场状态过滤器",
@@ -96,6 +123,9 @@ export const STRATEGIES = [
     shortName: "动量",
     status: "ACTIVE",
     direction: "LONG_ONLY",
+    family: "TREND_MOMENTUM",
+    horizon: "FIFTEEN_MINUTE",
+    riskCluster: "CHASE_REVERSAL",
     thesis: "15 分钟趋势超过波动门槛，方向一致且成本可覆盖时顺势进入。",
     entry: "≥ 0.75×ATR15，且 9/15 个一分钟变化上涨",
     exit: "-1R / +2R / ATR 移动保护",
@@ -109,6 +139,9 @@ export const STRATEGIES = [
     shortName: "回撤确认",
     status: "SHADOW",
     direction: "LONG_ONLY",
+    family: "TREND_MOMENTUM",
+    horizon: "INTRADAY",
+    riskCluster: "FALLING_KNIFE",
     thesis: "先确认60分钟上升趋势，再等待0.3–0.8×ATR回撤和一分钟重新转强。",
     entry: "60分钟≥0.75×ATR15；回撤0.3–0.8×ATR15；1分钟突破此前3分钟收盘高点",
     exit: "仅记录15/30/60/120分钟反事实结果，不下单",
@@ -122,6 +155,9 @@ export const STRATEGIES = [
     shortName: "相对强度回撤",
     status: "SHADOW",
     direction: "LONG_ONLY",
+    family: "TREND_MOMENTUM",
+    horizon: "INTRADAY",
+    riskCluster: "MARKET_BETA",
     thesis: "市场状态允许时，只跟踪相对SPY/QQQ更强且完成受控回撤再确认的股票。",
     entry: "SPY/QQQ允许；60分钟相对收益为正且排名前30%；回撤再确认；可执行成本覆盖",
     exit: "仅记录15/30/60/120分钟反事实结果，不下单",
@@ -135,6 +171,9 @@ export const STRATEGIES = [
     shortName: "折价回归",
     status: "ACTIVE",
     direction: "LONG_ONLY",
+    family: "STRUCTURAL_BASIS",
+    horizon: "INTRADAY",
+    riskCluster: "LIQUIDITY_QUOTE",
     thesis: "用真实买入报价与底层美股×sharesMultiplier 比较，只买入足以覆盖全部成本的折价。",
     entry: "可执行折价净覆盖成本与最小边际",
     exit: "折价收敛，或触发统一 ATR 风控",
@@ -148,6 +187,9 @@ export const STRATEGIES = [
     shortName: "残差反转",
     status: "RESEARCH",
     direction: "LONG_ONLY",
+    family: "MEAN_REVERSION",
+    horizon: "INTRADAY",
+    riskCluster: "FALLING_KNIFE",
     thesis: "剔除 SPY/QQQ 因子后捕捉个股临时流动性冲击。",
     entry: "显著负残差且无公司行动",
     exit: "残差回归零轴",
@@ -161,12 +203,127 @@ export const STRATEGIES = [
     shortName: "时段动量",
     status: "RESEARCH",
     direction: "LONG_ONLY",
+    family: "SESSION_EFFECT",
+    horizon: "INTRADAY",
+    riskCluster: "CHASE_REVERSAL",
     thesis: "用开盘前半小时方向筛选收盘前半小时机会。",
     entry: "限定 SPY/QQQ 与美股特定时段",
     exit: "收盘前退出",
     evidence: "样本外研究支持，但不是任意 15 分钟动量",
     risk: "尾盘价差与事件日跳变",
     subStrategies: shadowRiskOverlays("标记开盘方向性下跌中的假动量机会")
+  },
+  {
+    id: "daily-rsi2-trend-reversion",
+    name: "日线 RSI(2) 趋势内反转",
+    shortName: "RSI2反转",
+    status: "RESEARCH",
+    direction: "LONG_ONLY",
+    family: "MEAN_REVERSION",
+    horizon: "MULTI_SESSION",
+    riskCluster: "FALLING_KNIFE",
+    timeframe: "DAILY_SIGNAL_REGULAR_SESSION_EXECUTION",
+    validationStatus: "LOCAL_BACKTEST_EARLY_SAMPLE",
+    thesis: "只在200日上升背景中买入极短期超卖，避免把追涨作为唯一入场方式。",
+    entry: "上一交易日收盘高于SMA200且RSI(2)<5；下一常规时段开盘后执行；ATR空间覆盖成本",
+    exit: "上一交易日收盘重新高于SMA5，或触发统一初始止损、灾难止损和保护退出",
+    evidence: "公开规则复现；本地首轮成本后回放已生成但样本极少，动态结果见验证报告，不能移植外部胜率",
+    risk: "均值回归小赚多、危机时连续接飞刀；股票代币价差可能吞掉日线优势",
+    backtestData: "Yahoo Finance 日线底层OHLCV作信号，Binance代币一分钟K线或历史可执行报价作成交",
+    sources: [
+      {
+        title: "TuringTrader Connors RSI(2) 开源规则",
+        url: "https://github.com/fbertram/TuringTrader/blob/master/BooksAndPubs/Connors_ShortTermTrading.cs"
+      }
+    ],
+    subStrategies: shadowRiskOverlays("标记长期趋势过滤仍未识别出的系统性下跌风险")
+  },
+  {
+    id: "daily-double7-trend-reversion",
+    name: "日线 Double 7 趋势回撤",
+    shortName: "Double7",
+    status: "RESEARCH",
+    direction: "LONG_ONLY",
+    family: "MEAN_REVERSION",
+    horizon: "SWING",
+    riskCluster: "FALLING_KNIFE",
+    timeframe: "DAILY_SIGNAL_REGULAR_SESSION_EXECUTION",
+    validationStatus: "LOCAL_BACKTEST_EARLY_SAMPLE",
+    thesis: "在长期上升趋势中等待七日收盘新低，持有至七日收盘新高，降低高位追入频率。",
+    entry: "上一交易日收盘高于SMA200且创7日收盘新低；下一常规时段开盘后执行；ATR空间覆盖成本",
+    exit: "上一交易日收盘创7日收盘新高，或触发统一初始止损、灾难止损和保护退出",
+    evidence: "Connors公开规则有高命中历史报告；本地首轮未复现，动态结果见验证报告",
+    risk: "趋势状态滞后，熊市初期可能连续买入；单股公司事件不一定均值回归",
+    backtestData: "Yahoo Finance 日线底层OHLCV作信号，Binance代币一分钟K线或历史可执行报价作成交",
+    sources: [
+      {
+        title: "TuringTrader Double 7 开源规则",
+        url: "https://github.com/fbertram/TuringTrader/blob/master/BooksAndPubs/Connors_ShortTermTrading.cs"
+      },
+      {
+        title: "Pinkfish Double 7 回测与日线信号示例",
+        url: "https://github.com/fja05680/pinkfish/tree/master/examples/strategies/double-7s"
+      }
+    ],
+    subStrategies: shadowRiskOverlays("识别七日新低背后的持续趋势破坏，而非普通回撤")
+  },
+  {
+    id: "daily-ibs-reversal",
+    name: "日线 IBS 指数反转",
+    shortName: "IBS反转",
+    status: "RESEARCH",
+    direction: "LONG_ONLY",
+    family: "MEAN_REVERSION",
+    horizon: "INTRADAY",
+    riskCluster: "MARKET_BETA",
+    timeframe: "DAILY_SIGNAL_REGULAR_SESSION_EXECUTION",
+    validationStatus: "LOCAL_BACKTEST_EARLY_SAMPLE",
+    thesis: "当SPY或QQQ收在当日区间底部时，观察下一交易日的短期反转，而不扩展到缺少证据的单股。",
+    entry: "仅SPY/QQQ；上一交易日IBS≤0.2且收盘高于SMA200；下一常规时段开盘后执行；日内区间覆盖成本",
+    exit: "当日15:50前退出，或更早触发统一初始止损、灾难止损和保护退出",
+    evidence: "ETF十年研究支持IBS短期反转；本地首轮为负且单股外推被禁止，动态结果见验证报告",
+    risk: "尾部损失和隔夜跳空；公开研究多为ETF且部分结果未计入本项目代币摩擦",
+    backtestData: "Yahoo Finance 日线底层OHLCV作信号，Binance代币一分钟K线或历史可执行报价作成交",
+    sources: [
+      {
+        title: "Using Internal Bar Strength as a Key Indicator for Trading Country ETFs",
+        url: "https://arxiv.org/abs/2306.12434"
+      },
+      {
+        title: "The IBS Effect: Mean Reversion in Equity ETFs",
+        url: "https://qusma.com/wp-content/uploads/2013/09/The-IBS-Effect-Mean-Reversion-in-Equity-ETFs1.pdf"
+      },
+      {
+        title: "QuantConnect LEAN IBS 开源实现",
+        url: "https://github.com/QuantConnect/Lean/blob/master/Algorithm.Python/Alphas/GlobalEquityMeanReversionIBSAlpha.py"
+      }
+    ],
+    subStrategies: shadowRiskOverlays("避免把指数尾盘弱势自动视为必然反弹")
+  },
+  {
+    id: "daily-turtle-55-20",
+    name: "日线海龟 55/20 长仓",
+    shortName: "海龟55/20",
+    status: "RESEARCH",
+    direction: "LONG_ONLY",
+    family: "TREND_MOMENTUM",
+    horizon: "SWING",
+    riskCluster: "CHASE_REVERSAL",
+    timeframe: "DAILY_SIGNAL_REGULAR_SESSION_EXECUTION",
+    validationStatus: "LOCAL_BACKTEST_INSUFFICIENT_SAMPLE",
+    thesis: "用低换手日线突破捕捉跨交易日趋势，作为短周期动量和均值回归之外的正交候选。",
+    entry: "上一交易日最高价突破此前55日最高价；下一常规时段开盘后执行；ATR20空间覆盖成本",
+    exit: "上一交易日最低价跌破此前20日最低价，或代币收益跌至-2×ATR20；无止盈、无跟踪止损、无加仓",
+    evidence: "原始海龟System 2规则的长仓简化版；本地首轮信号极少且唯一已平仓为负，动态结果见验证报告",
+    risk: "突破后反转和隔夜跳空可穿透2N止损；有限股票池、公司行动与代币流动性会削弱期货版分散优势",
+    backtestData: "Yahoo Finance 日线底层OHLCV作信号，Binance代币一分钟K线或历史可执行报价作成交",
+    sources: [
+      {
+        title: "Original Turtle Trading Rules",
+        url: "https://tradingblox.com/originalturtles/originalturtlerules.htm"
+      }
+    ],
+    subStrategies: shadowRiskOverlays("识别突破后的市场逆风、弱趋势和相关性集中风险")
   }
 ];
 
@@ -304,11 +461,23 @@ function performanceFor(strategyId, traceRecords) {
   };
 }
 
+function classificationItem(dimension, id) {
+  const label = STRATEGY_TAXONOMY[dimension]?.[id];
+  if (!label) throw new Error(`Unknown ${dimension} classification: ${id}`);
+  return { id, label };
+}
+
 export function buildStrategyComparison(activeStrategyId, traceRecords) {
   return STRATEGIES.map((strategy) => ({
     ...strategy,
     active: strategy.id === activeStrategyId,
     switchable: strategy.status === "ACTIVE",
+    classification: {
+      family: classificationItem("family", strategy.family),
+      horizon: classificationItem("horizon", strategy.horizon),
+      stage: classificationItem("stage", strategy.status),
+      riskCluster: classificationItem("riskCluster", strategy.riskCluster)
+    },
     performance: performanceFor(strategy.id, traceRecords)
   }));
 }

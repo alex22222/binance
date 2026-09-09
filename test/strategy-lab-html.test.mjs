@@ -12,6 +12,13 @@ test("strategy page keeps only operational comparison and switch controls", () =
   assert.match(html, /id="mode"/);
   assert.match(html, /id="strategyComparison"/);
   assert.match(html, /id="returnComparison"/);
+  assert.match(html, /id="strategyFilters"/);
+  assert.match(html, /id="strategyFilterSummary"/);
+  assert.match(html, /const FILTER_DIMENSIONS/);
+  assert.match(html, /function filterStrategies\(strategies\)/);
+  assert.match(html, /renderReturns\(filteredStrategies\)/);
+  assert.match(html, /strategy\.classification/);
+  assert.match(html, /主要风险/);
   assert.match(html, /id="validationComparison"/);
   assert.match(html, /function renderStrategies\(data\)/);
   assert.match(html, /function renderValidation\(report\)/);

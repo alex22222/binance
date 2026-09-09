@@ -21,7 +21,11 @@ test("reports every strategy with an explicit evidence level", () => {
     "trend-pullback-market-filtered",
     "executable-basis-reversion",
     "residual-reversal",
-    "session-momentum"
+    "session-momentum",
+    "daily-rsi2-trend-reversion",
+    "daily-double7-trend-reversion",
+    "daily-ibs-reversal",
+    "daily-turtle-55-20"
   ]);
   assert.equal(
     definitions.find(({ id }) => id === "trend-pullback-confirmation").evidenceLevel,
@@ -31,6 +35,19 @@ test("reports every strategy with an explicit evidence level", () => {
     definitions.find(({ id }) => id === "executable-basis-reversion").evidenceLevel,
     "historical-proxy"
   );
+  for (const strategyId of [
+    "daily-rsi2-trend-reversion",
+    "daily-double7-trend-reversion",
+    "daily-ibs-reversal",
+    "daily-turtle-55-20"
+  ]) {
+    const definition = definitions.find(({ id }) => id === strategyId);
+    assert.equal(definition.evidenceLevel, "external-rule-local-validation-pending");
+    assert.deepEqual(definition.dataRequirements, [
+      "underlying-daily-ohlcv",
+      "token-minute-execution"
+    ]);
+  }
 });
 
 test("calculates fixed-notional return, win rate, profit factor, and drawdown", () => {
@@ -166,13 +183,14 @@ test("backtest output never omits an untriggered strategy", () => {
     minNetEdgePct: 0.1,
     disasterStopLossPct: 8
   });
-  assert.equal(result.strategies.length, 8);
+  assert.equal(result.strategies.length, 12);
   assert.ok(result.strategies.every(({ performance }) => performance.trades === 0));
   assert.equal(result.dataCoverage.symbols, 3);
   assert.equal(result.assumptions.maxOpenPositions, 3);
   assert.equal(result.assumptions.onePositionAtATime, false);
   assert.equal(result.assumptions.exitParameters.profitProtectionR, 1);
   assert.equal(result.assumptions.exitParameters.ordinaryExitsRequireNonNegativeNetReturn, true);
+  assert.equal(result.assumptions.exitParameters.dailyResearchRuleExitsMayRealizeLoss, true);
   assert.equal(result.assumptions.costModel, "roundTripCostPct deducted from every completed trade");
   assert.equal(result.validationWindow, "UNSPECIFIED");
   assert.deepEqual(result.assumptions.entryPolicy, {
@@ -191,6 +209,228 @@ function trendingCandles(start, count, step) {
     return candle(start + index * 60_000, open, Math.max(open, close) + 0.05, Math.min(open, close) - 0.05, close);
   });
 }
+
+function dailyReversionCandles(sessionStart, { lowIbs = false } = {}) {
+  const start = sessionStart - 210 * 86_400_000;
+  let close = 100;
+  return Array.from({ length: 210 }, (_, index) => {
+    close += index < 208 ? 0.2 : -4;
+    const ibsDay = lowIbs && index === 209;
+    return {
+      openTime: start + index * 86_400_000,
+      open: close + 0.2,
+      high: close + (ibsDay ? 3 : 1),
+      low: close - (ibsDay ? 0.1 : 1),
+      close,
+      volume: 1_000_000,
+      closeTime: start + (index + 1) * 86_400_000 - 1
+    };
+  });
+}
+
+function turtleDailyCandles(sessionStart) {
+  const start = sessionStart - 56 * 86_400_000;
+  const channel = Array.from({ length: 55 }, (_, index) => ({
+    openTime: start + index * 86_400_000,
+    open: 99.5,
+    high: 100 + index * 0.01,
+    low: 98,
+    close: 99.5,
+    volume: 1_000_000
+  }));
+  return [
+    ...channel,
+    {
+      openTime: sessionStart - 86_400_000,
+      open: 99.5,
+      high: 102,
+      low: 98,
+      close: 101,
+      volume: 1_000_000
+    },
+    {
+      openTime: sessionStart,
+      open: 101,
+      high: 101.5,
+      low: 90,
+      close: 95,
+      volume: 1_000_000
+    }
+  ];
+}
+
+function dailyAtrPctForTest(candles, period = 20) {
+  const trueRanges = candles.slice(1).map((item, index) => Math.max(
+    item.high - item.low,
+    Math.abs(item.high - candles[index].close),
+    Math.abs(item.low - candles[index].close)
+  ));
+  const average = trueRanges.slice(-period).reduce((sum, value) => sum + value, 0) / period;
+  return average / candles.at(-1).close * 100;
+}
+
+test("turtle 55/20 uses completed daily breakouts and exits on the next completed 20-day low", () => {
+  const firstSession = Date.parse("2026-07-27T13:30:00.000Z");
+  const secondSession = Date.parse("2026-07-28T13:30:00.000Z");
+  const session = (start, price) => Array.from({ length: 390 }, (_, index) => candle(
+    start + index * 60_000,
+    price,
+    price + 0.1,
+    price - 0.1,
+    price
+  ));
+  const result = backtestStrategyLibrary({
+    NVDA: {
+      multiplier: 1,
+      tokenCandles: [
+        ...session(firstSession, 100),
+        ...session(secondSession, 99)
+      ],
+      underlyingCandles: [],
+      underlyingDailyCandles: turtleDailyCandles(firstSession)
+    }
+  }, {
+    maxTradeUsdt: 50,
+    roundTripCostPct: 0.1,
+    minNetEdgePct: 0,
+    maxOpenPositions: 1,
+    includeReplayEvents: true
+  });
+  const turtle = result.strategies.find(({ id }) => id === "daily-turtle-55-20");
+
+  assert.equal(turtle.entryDiagnostics.signals, 1);
+  assert.deepEqual(turtle.trades.map(({ entryTime, exitTime, reason }) => ({
+    entryTime,
+    exitTime,
+    reason
+  })), [{
+    entryTime: "2026-07-27T13:31:00.000Z",
+    exitTime: "2026-07-28T13:30:00.000Z",
+    reason: "TURTLE_20D_EXIT"
+  }]);
+});
+
+test("turtle 55/20 sizes its initial stop at two times daily ATR20", () => {
+  const firstSession = Date.parse("2026-07-27T13:30:00.000Z");
+  const dailyCandles = turtleDailyCandles(firstSession).slice(0, -1);
+  const minutes = Array.from({ length: 390 }, (_, index) => {
+    const price = index < 2 ? 100 : 90;
+    return candle(
+      firstSession + index * 60_000,
+      price,
+      price + 0.1,
+      price - 0.1,
+      price
+    );
+  });
+  const result = backtestStrategyLibrary({
+    NVDA: {
+      multiplier: 1,
+      tokenCandles: minutes,
+      underlyingCandles: [],
+      underlyingDailyCandles: dailyCandles
+    }
+  }, {
+    maxTradeUsdt: 50,
+    roundTripCostPct: 0.1,
+    minNetEdgePct: 0,
+    maxOpenPositions: 1
+  });
+  const turtle = result.strategies.find(({ id }) => id === "daily-turtle-55-20");
+  const trade = turtle.trades[0];
+  const expectedRiskPct = dailyAtrPctForTest(dailyCandles) * 2;
+
+  assert.equal(trade.reason, "TURTLE_2N_STOP");
+  assert.ok(Math.abs(trade.riskUsdt - 50 * expectedRiskPct / 100) < 1e-9);
+});
+
+test("reports an open turtle position separately from completed performance", () => {
+  const firstSession = Date.parse("2026-07-27T13:30:00.000Z");
+  const minutes = Array.from({ length: 390 }, (_, index) => candle(
+    firstSession + index * 60_000,
+    100,
+    100.1,
+    99.9,
+    100
+  ));
+  const result = backtestStrategyLibrary({
+    NVDA: {
+      multiplier: 1,
+      tokenCandles: minutes,
+      underlyingCandles: [],
+      underlyingDailyCandles: turtleDailyCandles(firstSession).slice(0, -1)
+    }
+  }, {
+    maxTradeUsdt: 50,
+    roundTripCostPct: 0.1,
+    minNetEdgePct: 0,
+    maxOpenPositions: 1
+  });
+  const turtle = result.strategies.find(({ id }) => id === "daily-turtle-55-20");
+
+  assert.equal(turtle.performance.trades, 0);
+  assert.deepEqual(turtle.openPositions, [{
+    ticker: "NVDA",
+    entryTime: "2026-07-27T13:31:00.000Z",
+    entryPrice: 100,
+    markTime: "2026-07-27T19:59:00.000Z",
+    markPrice: 100,
+    unrealizedReturnPct: -0.1,
+    unrealizedPnlUsdt: -0.05,
+    executionEvidenceLevel: "CANDLE_PROXY"
+  }]);
+});
+
+test("daily research candidates consume completed daily signals and minute execution bars", () => {
+  const start = Date.parse("2026-07-27T13:30:00.000Z");
+  const minutes = Array.from({ length: 390 }, (_, index) => candle(
+    start + index * 60_000,
+    100,
+    100.1,
+    99.9,
+    100
+  ));
+  const result = backtestStrategyLibrary({
+    NVDA: {
+      multiplier: 1,
+      tokenCandles: minutes,
+      underlyingCandles: minutes,
+      underlyingDailyCandles: dailyReversionCandles(start)
+    },
+    SPY: {
+      multiplier: 1,
+      tokenCandles: minutes,
+      underlyingCandles: minutes,
+      underlyingDailyCandles: dailyReversionCandles(start, { lowIbs: true })
+    },
+    QQQ: {
+      multiplier: 1,
+      tokenCandles: minutes,
+      underlyingCandles: minutes,
+      underlyingDailyCandles: dailyReversionCandles(start, { lowIbs: true })
+    }
+  }, {
+    maxTradeUsdt: 50,
+    roundTripCostPct: 0.1,
+    minNetEdgePct: 0,
+    maxOpenPositions: 1,
+    includeReplayEvents: true
+  });
+
+  for (const strategyId of [
+    "daily-rsi2-trend-reversion",
+    "daily-double7-trend-reversion",
+    "daily-ibs-reversal"
+  ]) {
+    const strategy = result.strategies.find(({ id }) => id === strategyId);
+    assert.equal(strategy.entryDiagnostics.signals, 1);
+    assert.equal(strategy.replay.eventCounts.POSITION_OPENED, 1);
+  }
+  const ibs = result.strategies.find(({ id }) => id === "daily-ibs-reversal");
+  assert.equal(ibs.replay.eventCounts.POSITION_CLOSED, 1);
+  assert.equal(ibs.trades[0].reason, "SESSION_CLOSE");
+  assert.equal(ibs.trades[0].exitTime, "2026-07-27T19:50:00.000Z");
+});
 
 test("historical simulator applies the configured symbol block", () => {
   const start = Date.parse("2026-07-27T13:30:00.000Z");

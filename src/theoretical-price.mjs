@@ -79,6 +79,9 @@ export function parseNasdaqStockQuote(payload, retrievedAt = new Date().toISOStr
     companyName: data.companyName || null,
     assetClass: data.assetClass,
     price,
+    changePct: primary?.percentageChange == null || String(primary.percentageChange).trim() === ""
+      ? null
+      : numericText(primary.percentageChange),
     bidPrice: positiveNumber(numericText(primary?.bidPrice)),
     askPrice: positiveNumber(numericText(primary?.askPrice)),
     bidSize: positiveNumber(numericText(primary?.bidSize)),

@@ -56,6 +56,7 @@ test("dashboard records one exact approval without writing the bot state", async
       BOT_CONFIG: configPath,
       DASHBOARD_PORT: String(port),
       DASHBOARD_MARKET_INDEX_DISABLED: "1",
+      DASHBOARD_STOCK_MARKET_DISABLED: "1",
       DASHBOARD_WALLET_BALANCE_DISABLED: "1",
       TRADE_REVIEW_DIR: join(directory, "trade-reviews")
     },
@@ -262,6 +263,7 @@ test("dashboard protects public access with basic auth and an exact HTTPS origin
       BOT_CONFIG: configPath,
       DASHBOARD_PORT: String(port),
       DASHBOARD_MARKET_INDEX_DISABLED: "1",
+      DASHBOARD_STOCK_MARKET_DISABLED: "1",
       DASHBOARD_WALLET_BALANCE_DISABLED: "1",
       DASHBOARD_USERNAME: "operator",
       DASHBOARD_PASSWORD: "server-secret",

@@ -18,9 +18,11 @@ const stateDirectory = resolve(
   process.env.STRATEGY_VALIDATION_DIR || "state/strategy-validation"
 );
 const dataDirectory = join(stateDirectory, "data");
+const dailyDataDirectory = join(stateDirectory, "daily");
 const reportDirectory = join(stateDirectory, "reports");
 const validationStatePath = join(stateDirectory, "state.json");
 const historyDays = Number(process.env.STRATEGY_HISTORY_DAYS || 28);
+const dailyHistoryDays = Number(process.env.STRATEGY_DAILY_HISTORY_DAYS || 450);
 const binanceHeaders = {
   "Accept-Encoding": "identity",
   "User-Agent": "binance-web3/1.1 (Skill)"
@@ -124,6 +126,21 @@ async function downloadUnderlying(asset, dates) {
   return candlesByDate;
 }
 
+async function downloadUnderlyingDaily(asset, endDate) {
+  const end = Date.parse(`${endDate}T00:00:00.000Z`) + 2 * 86_400_000;
+  const start = end - dailyHistoryDays * 86_400_000;
+  const url = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(asset.ticker)}`);
+  url.searchParams.set("period1", String(Math.floor(start / 1000)));
+  url.searchParams.set("period2", String(Math.floor(end / 1000)));
+  url.searchParams.set("interval", "1d");
+  url.searchParams.set("includePrePost", "false");
+  url.searchParams.set("events", "div,splits");
+  const payload = await fetchJson(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+  const result = payload.chart?.result?.[0];
+  if (!result) throw new Error(`Underlying daily K-line ${asset.ticker} failed`);
+  return parseYahooChart(result, 86_400_000);
+}
+
 async function fileExists(path) {
   try {
     await readFile(path, "utf8");
@@ -173,6 +190,28 @@ async function collectAsset(asset, dates) {
   return { ticker: asset.ticker, downloaded };
 }
 
+async function collectUnderlyingDaily(asset, endDate) {
+  const path = join(dailyDataDirectory, `${asset.ticker}.json`);
+  try {
+    const cached = JSON.parse(await readFile(path, "utf8"));
+    if (cached.throughDate === endDate && cached.underlyingDailyCandles?.length >= 200) {
+      return 0;
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  const underlyingDailyCandles = await downloadUnderlyingDaily(asset, endDate);
+  await atomicJson(path, {
+    schemaVersion: 1,
+    ticker: asset.ticker,
+    throughDate: endDate,
+    downloadedAt: new Date().toISOString(),
+    underlyingSource: "Yahoo Finance daily chart",
+    underlyingDailyCandles
+  });
+  return 1;
+}
+
 async function mapWithConcurrency(values, concurrency, operation) {
   const results = [];
   let next = 0;
@@ -200,10 +239,17 @@ async function loadDataset() {
     const records = await Promise.all(files.map(async (file) => (
       JSON.parse(await readFile(join(tickerDirectory, file), "utf8"))
     )));
+    let dailyRecord = null;
+    try {
+      dailyRecord = JSON.parse(await readFile(join(dailyDataDirectory, `${ticker}.json`), "utf8"));
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
     dataset[ticker] = {
       multiplier: records.at(-1)?.multiplier || 1,
       tokenCandles: records.flatMap(({ tokenCandles }) => tokenCandles),
-      underlyingCandles: records.flatMap(({ underlyingCandles }) => underlyingCandles)
+      underlyingCandles: records.flatMap(({ underlyingCandles }) => underlyingCandles),
+      underlyingDailyCandles: dailyRecord?.underlyingDailyCandles || []
     };
   }
   return dataset;
@@ -214,6 +260,7 @@ function filterDataset(dataset, predicate) {
     ...item,
     tokenCandles: item.tokenCandles.filter((candle) => predicate(candle.openTime)),
     underlyingCandles: item.underlyingCandles.filter((candle) => predicate(candle.openTime)),
+    underlyingDailyCandles: item.underlyingDailyCandles,
     executionQuotes: (item.executionQuotes || []).filter((quote) => predicate(Number(quote.executionTime)))
   }]));
 }
@@ -244,7 +291,7 @@ Compare all ${report.forward.strategies.length} historical strategy variants ove
 - Started: ${state.startedAt}
 - Target: ${state.targetAt}
 - Last run: ${report.generatedAt}
-- Downloaded this run: ${downloadSummary.reduce((sum, item) => sum + item.downloaded, 0)} symbol-days
+- Downloaded this run: ${downloadSummary.reduce((sum, item) => sum + item.downloaded, 0)} symbol-days and ${downloadSummary.reduce((sum, item) => sum + item.dailyDownloaded, 0)} daily histories
 - Production trading configuration changed: no
 
 | Strategy | Forward trades | Forward return | Max drawdown |
@@ -263,7 +310,10 @@ const startDate = isoDate(Date.parse(`${endDate}T00:00:00.000Z`) - (historyDays 
 const dates = tradingDates(startDate, endDate);
 const assets = await loadAssets();
 console.log(JSON.stringify({ event: "collection_started", startDate, endDate, tradingDays: dates.length }));
-const downloadSummary = await mapWithConcurrency(assets, 2, (asset) => collectAsset(asset, dates));
+const downloadSummary = await mapWithConcurrency(assets, 2, async (asset) => ({
+  ...await collectAsset(asset, dates),
+  dailyDownloaded: await collectUnderlyingDaily(asset, endDate)
+}));
 const validationState = await loadValidationState();
 await atomicJson(validationStatePath, validationState);
 const dataset = await loadDataset();
@@ -302,6 +352,7 @@ const report = {
   sources: {
     token: "Binance Web3 token K-line",
     underlying: "Yahoo Finance chart",
+    underlyingDaily: "Yahoo Finance daily chart",
     executableQuoteHistoryAvailable: false
   },
   limitations: [
@@ -309,6 +360,7 @@ const report = {
     "All historical strategies use a conservative fixed round-trip cost assumption.",
     "The simulator matches production position count, configured exits, pre-close cutoff, symbol blocks, and initial-stop reentry policy, but candle closes remain proxies for executable quotes and intrabar fills.",
     "Market-filtered variants suppress only explicit WOULD_BLOCK states; insufficient benchmark history remains eligible and is not counted as a successful filter.",
+    "Daily research candidates use completed underlying daily candles for signals and regular-session token minute candles for delayed execution; they do not assume the underlying close was directly tradable.",
     "Research strategies are validation-only and are not enabled in production."
   ],
   historical,

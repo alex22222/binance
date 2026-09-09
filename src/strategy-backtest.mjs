@@ -21,6 +21,7 @@ import {
   executionMetrics,
   performanceMetrics as calculatePerformanceMetrics
 } from "./performance-report.mjs";
+import { newYorkDate, newYorkSessionBounds } from "./strategy-data.mjs";
 
 export { executionMetrics } from "./performance-report.mjs";
 
@@ -90,6 +91,34 @@ const definitions = [
     name: "开收盘时段动量",
     evidenceLevel: "research-rule",
     rule: "SPY/QQQ开盘30分钟上涨超过0.2%，10:00进入并在15:50退出"
+  },
+  {
+    id: "daily-rsi2-trend-reversion",
+    name: "日线 RSI(2) 趋势内反转",
+    evidenceLevel: "external-rule-local-validation-pending",
+    dataRequirements: ["underlying-daily-ohlcv", "token-minute-execution"],
+    rule: "上一交易日收盘高于SMA200且RSI(2)<5；下一常规时段开盘执行；收盘重新高于SMA5后退出"
+  },
+  {
+    id: "daily-double7-trend-reversion",
+    name: "日线 Double 7 趋势回撤",
+    evidenceLevel: "external-rule-local-validation-pending",
+    dataRequirements: ["underlying-daily-ohlcv", "token-minute-execution"],
+    rule: "上一交易日收盘高于SMA200且创7日收盘新低；下一常规时段开盘执行；7日收盘新高后退出"
+  },
+  {
+    id: "daily-ibs-reversal",
+    name: "日线 IBS 指数反转",
+    evidenceLevel: "external-rule-local-validation-pending",
+    dataRequirements: ["underlying-daily-ohlcv", "token-minute-execution"],
+    rule: "仅SPY/QQQ；上一交易日IBS≤0.2且收盘高于SMA200；下一常规时段开盘执行并在15:50前退出"
+  },
+  {
+    id: "daily-turtle-55-20",
+    name: "日线海龟 55/20 长仓",
+    evidenceLevel: "external-rule-local-validation-pending",
+    dataRequirements: ["underlying-daily-ohlcv", "token-minute-execution"],
+    rule: "上一交易日最高价突破此前55日最高价；下一常规时段开盘执行；最低价跌破此前20日最低价或亏损达到2×ATR20后退出；单仓且不加仓"
   }
 ];
 
@@ -131,8 +160,76 @@ function aggregate15MinuteCandles(candles) {
   return [...buckets.values()].sort((left, right) => left.openTime - right.openTime);
 }
 
+function aggregateDailyCandles(candles) {
+  const buckets = new Map();
+  for (const candle of candles) {
+    const date = newYorkDate(candle.openTime);
+    const existing = buckets.get(date);
+    if (!existing) {
+      buckets.set(date, {
+        ...candle,
+        date,
+        closeTime: newYorkSessionBounds(date).closeMs - 1
+      });
+    } else {
+      existing.high = Math.max(existing.high, candle.high);
+      existing.low = Math.min(existing.low, candle.low);
+      existing.close = candle.close;
+      existing.volume += candle.volume || 0;
+    }
+  }
+  return [...buckets.values()].sort((left, right) => left.openTime - right.openTime);
+}
+
+function normalizeDailyCandles(candles) {
+  return [...candles].map((candle) => {
+    const date = candle.date || newYorkDate(candle.openTime);
+    return {
+      ...candle,
+      date,
+      closeTime: newYorkSessionBounds(date).closeMs - 1
+    };
+  }).sort((left, right) => left.openTime - right.openTime);
+}
+
 function atrPct(candles, timestamp, period = 14) {
   return calculateAtrPct(candles, period, timestamp)?.atrPct ?? null;
+}
+
+function simpleMovingAverage(values, period) {
+  if (values.length < period) return null;
+  const selected = values.slice(-period);
+  return selected.reduce((sum, value) => sum + value, 0) / period;
+}
+
+function relativeStrengthIndex(values, period = 2) {
+  if (values.length <= period) return null;
+  let averageGain = 0;
+  let averageLoss = 0;
+  for (let index = 1; index <= period; index += 1) {
+    const change = values[index] - values[index - 1];
+    averageGain += Math.max(change, 0) / period;
+    averageLoss += Math.max(-change, 0) / period;
+  }
+  for (let index = period + 1; index < values.length; index += 1) {
+    const change = values[index] - values[index - 1];
+    averageGain = (averageGain * (period - 1) + Math.max(change, 0)) / period;
+    averageLoss = (averageLoss * (period - 1) + Math.max(-change, 0)) / period;
+  }
+  if (averageLoss === 0) return 100;
+  return 100 - 100 / (1 + averageGain / averageLoss);
+}
+
+function dailyAtrPct(candles, period = 14) {
+  if (candles.length <= period) return null;
+  const trueRanges = candles.slice(1).map((candle, index) => Math.max(
+    candle.high - candle.low,
+    Math.abs(candle.high - candles[index].close),
+    Math.abs(candle.low - candles[index].close)
+  ));
+  const average = simpleMovingAverage(trueRanges, period);
+  const close = candles.at(-1)?.close;
+  return average != null && close > 0 ? average / close * 100 : null;
 }
 
 function momentumFeature(market, ticker, timestamp) {
@@ -198,6 +295,10 @@ function marketView(dataset) {
     const underlying = [...(item.underlyingCandles || [])].sort((left, right) => left.openTime - right.openTime);
     const executionQuotes = [...(item.executionQuotes || [])];
     const fifteenMinute = aggregate15MinuteCandles(candles);
+    const suppliedDaily = item.underlyingDailyCandles || [];
+    const underlyingDaily = suppliedDaily.length
+      ? normalizeDailyCandles(suppliedDaily)
+      : aggregateDailyCandles(underlying);
     return [ticker, {
       multiplier: Number(item.multiplier || 1),
       candles,
@@ -208,6 +309,7 @@ function marketView(dataset) {
       ])),
       index: new Map(candles.map((candle, index) => [candle.openTime, index])),
       underlyingIndex: new Map(underlying.map((candle, index) => [candle.openTime, index])),
+      underlyingDaily,
       fifteenMinute,
       fifteenIndex: new Map(fifteenMinute.map((candle, index) => [candle.openTime, index]))
     }];
@@ -371,6 +473,161 @@ function sessionEntry(market, timestamp, eligible = () => true) {
     .sort((left, right) => right.feature.openingReturnPct - left.feature.openingReturnPct)[0] || null;
 }
 
+function completedDailyCandles(market, ticker, timestamp) {
+  return (market[ticker]?.underlyingDaily || []).filter(({ closeTime }) => closeTime < timestamp);
+}
+
+function dailyRsi2Feature(market, ticker, timestamp) {
+  const candles = completedDailyCandles(market, ticker, timestamp);
+  if (candles.length < 200) return null;
+  const closes = candles.map(({ close }) => close);
+  const sma200 = simpleMovingAverage(closes, 200);
+  const sma5 = simpleMovingAverage(closes, 5);
+  const rsi2 = relativeStrengthIndex(closes, 2);
+  const currentAtrPct = dailyAtrPct(candles, 14);
+  const price = alignedPrice(market[ticker], timestamp);
+  if (![sma200, sma5, rsi2, currentAtrPct, price].every(Number.isFinite)) return null;
+  return {
+    price,
+    atr15Pct: currentAtrPct,
+    dailyAtrPct: currentAtrPct,
+    close: closes.at(-1),
+    sma5,
+    sma200,
+    rsi2
+  };
+}
+
+function dailyRsi2Entry(market, timestamp, costPct, minNetEdgePct, eligible = () => true) {
+  if (sessionMinute(timestamp) !== 9 * 60 + 30) return null;
+  return Object.keys(market).filter(eligible).map((ticker) => {
+    const feature = dailyRsi2Feature(market, ticker, timestamp);
+    return feature ? { ticker, feature } : null;
+  }).filter(Boolean).filter(({ feature }) => (
+    feature.close > feature.sma200 &&
+    feature.rsi2 < 5 &&
+    feature.dailyAtrPct >= costPct + minNetEdgePct
+  )).sort((left, right) => (
+    left.feature.rsi2 - right.feature.rsi2 ||
+    right.feature.dailyAtrPct - left.feature.dailyAtrPct
+  ))[0] || null;
+}
+
+function dailyDouble7Feature(market, ticker, timestamp) {
+  const candles = completedDailyCandles(market, ticker, timestamp);
+  if (candles.length < 200) return null;
+  const closes = candles.map(({ close }) => close);
+  const previousSix = closes.slice(-7, -1);
+  const currentAtrPct = dailyAtrPct(candles, 14);
+  const price = alignedPrice(market[ticker], timestamp);
+  const sma200 = simpleMovingAverage(closes, 200);
+  if (previousSix.length < 6 || ![currentAtrPct, price, sma200].every(Number.isFinite)) return null;
+  return {
+    price,
+    atr15Pct: currentAtrPct,
+    dailyAtrPct: currentAtrPct,
+    close: closes.at(-1),
+    sma200,
+    previousSixLow: Math.min(...previousSix),
+    previousSixHigh: Math.max(...previousSix)
+  };
+}
+
+function dailyDouble7Entry(market, timestamp, costPct, minNetEdgePct, eligible = () => true) {
+  if (sessionMinute(timestamp) !== 9 * 60 + 30) return null;
+  return Object.keys(market).filter(eligible).map((ticker) => {
+    const feature = dailyDouble7Feature(market, ticker, timestamp);
+    return feature ? { ticker, feature } : null;
+  }).filter(Boolean).filter(({ feature }) => (
+    feature.close > feature.sma200 &&
+    feature.close < feature.previousSixLow &&
+    feature.dailyAtrPct >= costPct + minNetEdgePct
+  )).sort((left, right) => (
+    left.feature.close / left.feature.previousSixLow -
+      right.feature.close / right.feature.previousSixLow
+  ))[0] || null;
+}
+
+function dailyIbsFeature(market, ticker, timestamp) {
+  const candles = completedDailyCandles(market, ticker, timestamp);
+  if (candles.length < 200) return null;
+  const latest = candles.at(-1);
+  const range = latest.high - latest.low;
+  const closes = candles.map(({ close }) => close);
+  const sma200 = simpleMovingAverage(closes, 200);
+  const price = alignedPrice(market[ticker], timestamp);
+  if (!(range > 0) || ![sma200, price].every(Number.isFinite)) return null;
+  return {
+    price,
+    atr15Pct: dailyAtrPct(candles, 14),
+    close: latest.close,
+    sma200,
+    ibs: (latest.close - latest.low) / range,
+    rangePct: range / latest.close * 100
+  };
+}
+
+function dailyIbsEntry(market, timestamp, costPct, minNetEdgePct, eligible = () => true) {
+  if (sessionMinute(timestamp) !== 9 * 60 + 30) return null;
+  return ["SPY", "QQQ"].filter((ticker) => market[ticker] && eligible(ticker)).map((ticker) => {
+    const feature = dailyIbsFeature(market, ticker, timestamp);
+    return feature ? { ticker, feature } : null;
+  }).filter(Boolean).filter(({ feature }) => (
+    feature.close > feature.sma200 &&
+    feature.ibs <= 0.2 &&
+    feature.rangePct >= costPct + minNetEdgePct
+  )).sort((left, right) => left.feature.ibs - right.feature.ibs)[0] || null;
+}
+
+function dailyRsi2Normalized(market, ticker, timestamp) {
+  const feature = dailyRsi2Feature(market, ticker, timestamp);
+  return feature ? feature.close > feature.sma5 : false;
+}
+
+function dailyDouble7Normalized(market, ticker, timestamp) {
+  const feature = dailyDouble7Feature(market, ticker, timestamp);
+  return feature ? feature.close > feature.previousSixHigh : false;
+}
+
+function dailyTurtle55Feature(market, ticker, timestamp) {
+  const candles = completedDailyCandles(market, ticker, timestamp);
+  if (candles.length < 56) return null;
+  const latest = candles.at(-1);
+  const previous55 = candles.slice(-56, -1);
+  const previous20 = candles.slice(-21, -1);
+  const currentAtrPct = dailyAtrPct(candles, 20);
+  const price = alignedPrice(market[ticker], timestamp);
+  if (![currentAtrPct, price].every(Number.isFinite)) return null;
+  return {
+    price,
+    atr15Pct: currentAtrPct,
+    dailyAtrPct: currentAtrPct,
+    high: latest.high,
+    low: latest.low,
+    entryHigh: Math.max(...previous55.map(({ high }) => high)),
+    exitLow: Math.min(...previous20.map(({ low }) => low))
+  };
+}
+
+function dailyTurtle55Entry(market, timestamp, costPct, minNetEdgePct, eligible = () => true) {
+  if (sessionMinute(timestamp) !== 9 * 60 + 30) return null;
+  return Object.keys(market).filter(eligible).map((ticker) => {
+    const feature = dailyTurtle55Feature(market, ticker, timestamp);
+    return feature ? { ticker, feature } : null;
+  }).filter(Boolean).filter(({ feature }) => (
+    feature.high > feature.entryHigh &&
+    feature.dailyAtrPct >= costPct + minNetEdgePct
+  )).sort((left, right) => (
+    right.feature.high / right.feature.entryHigh -
+      left.feature.high / left.feature.entryHigh
+  ))[0] || null;
+}
+
+function dailyTurtle55Exit(market, ticker, timestamp) {
+  const feature = dailyTurtle55Feature(market, ticker, timestamp);
+  return feature ? feature.low < feature.exitLow : false;
+}
+
 function strategySignal(definition, market, timestamp, options, eligible) {
   const strategyId = definition.baseStrategyId || definition.id;
   const marketRegime = definition.marketFilter
@@ -395,7 +652,15 @@ function strategySignal(definition, market, timestamp, options, eligible) {
         ? basisEntry(market, timestamp, roundTripCostPct, minNetEdgePct, eligible)
         : strategyId === "residual-reversal"
           ? residualEntry(market, timestamp, roundTripCostPct, minNetEdgePct, eligible)
-          : sessionEntry(market, timestamp, eligible);
+          : strategyId === "session-momentum"
+            ? sessionEntry(market, timestamp, eligible)
+            : strategyId === "daily-rsi2-trend-reversion"
+              ? dailyRsi2Entry(market, timestamp, roundTripCostPct, minNetEdgePct, eligible)
+              : strategyId === "daily-double7-trend-reversion"
+                ? dailyDouble7Entry(market, timestamp, roundTripCostPct, minNetEdgePct, eligible)
+                : strategyId === "daily-ibs-reversal"
+                  ? dailyIbsEntry(market, timestamp, roundTripCostPct, minNetEdgePct, eligible)
+                  : dailyTurtle55Entry(market, timestamp, roundTripCostPct, minNetEdgePct, eligible);
   let payoffBlocked = false;
   let plannedNetPayoffRatio = null;
   if (signal && definition.researchControls) {
@@ -440,7 +705,16 @@ function signalStillValid(strategyId, market, position, timestamp, costPct, minN
   if (baseStrategyId === "residual-reversal") {
     return (residualFeature(market, position.ticker, timestamp)?.zScore ?? 0) < 0;
   }
-  return sessionMinute(timestamp) < 15 * 60 + 50;
+  if (baseStrategyId === "session-momentum" || baseStrategyId === "daily-ibs-reversal") {
+    return sessionMinute(timestamp) < 15 * 60 + 50;
+  }
+  if (baseStrategyId === "daily-rsi2-trend-reversion") {
+    return !dailyRsi2Normalized(market, position.ticker, timestamp);
+  }
+  if (baseStrategyId === "daily-turtle-55-20") {
+    return !dailyTurtle55Exit(market, position.ticker, timestamp);
+  }
+  return !dailyDouble7Normalized(market, position.ticker, timestamp);
 }
 
 function replayExitReason(type) {
@@ -456,6 +730,7 @@ function replayQuote(market, ticker, side, executionTime) {
 function simulateStrategy(definition, market, timestamps, options) {
   const strategyId = definition.id;
   const baseStrategyId = definition.baseStrategyId || strategyId;
+  const turtleStrategy = baseStrategyId === "daily-turtle-55-20";
   const researchControls = definition.researchControls || null;
   const {
     notionalUsdt,
@@ -504,7 +779,7 @@ function simulateStrategy(definition, market, timestamps, options) {
       const candle = market[pending.ticker]?.candles[market[pending.ticker].index.get(timestamp)];
       if (candle && !positions.some(({ ticker }) => ticker === pending.ticker)) {
         const feature = momentumFeature(market, pending.ticker, timestamp);
-        const currentAtrPct = feature?.atr15Pct || pending.feature.atr15Pct || 1;
+        const currentAtrPct = pending.feature.atr15Pct || feature?.atr15Pct || 1;
         const quote = replayQuote(market, pending.ticker, "BUY", timestamp);
         const execution = executeReplayOrder({
           model: executionModel,
@@ -538,7 +813,9 @@ function simulateStrategy(definition, market, timestamps, options) {
             entryValueUsdt: execution.inputAmount,
             entryGasUsdt: execution.gasUsdt,
             entryExecutionEvidenceLevel: execution.evidenceLevel,
-            initialRiskPct: Math.min(maxInitialStopPct, Math.max(minInitialStopPct, currentAtrPct * atrStopMultiplier)),
+            initialRiskPct: turtleStrategy
+              ? currentAtrPct * 2
+              : Math.min(maxInitialStopPct, Math.max(minInitialStopPct, currentAtrPct * atrStopMultiplier)),
             peakGrossReturnPct: 0,
             peakNetReturnPct: -replayCostPct,
             worstNetReturnPct: -replayCostPct
@@ -602,7 +879,13 @@ function simulateStrategy(definition, market, timestamps, options) {
         (basisFeature(market, position.ticker, timestamp)?.basisPct ?? -Infinity) >= -0.1;
       const residualNormalized = baseStrategyId === "residual-reversal" &&
         (residualFeature(market, position.ticker, timestamp)?.zScore ?? -Infinity) >= 0;
-      const sessionClose = baseStrategyId === "session-momentum" &&
+      const rsi2Normalized = baseStrategyId === "daily-rsi2-trend-reversion" &&
+        dailyRsi2Normalized(market, position.ticker, timestamp);
+      const double7Normalized = baseStrategyId === "daily-double7-trend-reversion" &&
+        dailyDouble7Normalized(market, position.ticker, timestamp);
+      const turtle20DayExit = turtleStrategy &&
+        dailyTurtle55Exit(market, position.ticker, timestamp);
+      const sessionClose = ["session-momentum", "daily-ibs-reversal"].includes(baseStrategyId) &&
         sessionMinute(timestamp) >= 15 * 60 + 50;
       const heldMs = timestamp - position.entryTime;
       const earlyFailure = researchControls &&
@@ -610,7 +893,7 @@ function simulateStrategy(definition, market, timestamps, options) {
         !valid &&
         position.peakNetReturnPct <= 0 &&
         grossReturnPct <= -position.initialRiskPct * researchControls.earlyFailureLossR;
-      const sharedExit = researchControls ? null : dynamicExitDecision({
+      const sharedExit = researchControls || turtleStrategy ? null : dynamicExitDecision({
         returnPct: grossReturnPct,
         initialRiskPct: position.initialRiskPct,
         atr15Pct: currentAtrPct,
@@ -626,8 +909,12 @@ function simulateStrategy(definition, market, timestamps, options) {
         signalReviewMinR,
         profitFloorPct: replayCostPct + minNetEdgePct
       });
-      const rawReason = researchControls
-        ? grossReturnPct <= -disasterStopLossPct ? "DISASTER_STOP"
+      const rawReason = turtleStrategy
+        ? grossReturnPct <= -position.initialRiskPct ? "TURTLE_2N_STOP"
+          : turtle20DayExit ? "TURTLE_20D_EXIT"
+            : null
+        : researchControls
+          ? grossReturnPct <= -disasterStopLossPct ? "DISASTER_STOP"
           : grossReturnPct <= -position.initialRiskPct ? "INITIAL_STOP"
             : grossReturnPct >= position.initialRiskPct * finalTakeProfitR ? "TAKE_PROFIT"
               : protectedStop != null && grossReturnPct <= protectedStop ? "TRAILING_STOP"
@@ -636,13 +923,24 @@ function simulateStrategy(definition, market, timestamps, options) {
                     !valid &&
                     grossReturnPct < position.initialRiskPct * signalReviewMinR ? "SIGNAL_REVIEW"
                     : null
-        : replayExitReason(sharedExit.type) ||
+        : (rsi2Normalized ? "RSI2_NORMALIZED"
+          : double7Normalized ? "DOUBLE7_NORMALIZED"
+            : sessionClose ? "SESSION_CLOSE"
+              : replayExitReason(sharedExit.type) ||
           (basisNormalized ? "BASIS_NORMALIZED"
             : residualNormalized ? "RESIDUAL_NORMALIZED"
-              : sessionClose ? "SESSION_CLOSE"
-                : null);
+              : null));
+      const dailyResearchRuleExit =
+        [
+          "RSI2_NORMALIZED",
+          "DOUBLE7_NORMALIZED",
+          "TURTLE_2N_STOP",
+          "TURTLE_20D_EXIT"
+        ].includes(rawReason) ||
+        (baseStrategyId === "daily-ibs-reversal" && rawReason === "SESSION_CLOSE");
       const reason = rawReason && (
         ["INITIAL_STOP", "DISASTER_STOP", "EARLY_FAILURE_STOP"].includes(rawReason) ||
+        dailyResearchRuleExit ||
         returnPct >= 0
       ) ? rawReason : null;
       if (reason) {
@@ -800,8 +1098,32 @@ function simulateStrategy(definition, market, timestamps, options) {
       }
     }
   }
+  const openPositions = positions.map((position) => {
+    const mark = market[position.ticker]?.candles.at(-1);
+    const grossReturnPct = mark
+      ? (mark.close / position.entryPrice - 1) * 100
+      : null;
+    const unrealizedReturnPct = grossReturnPct == null
+      ? null
+      : grossReturnPct - replayCostPct - position.entryGasUsdt / notionalUsdt * 100;
+    return {
+      ticker: position.ticker,
+      entryTime: new Date(position.entryTime).toISOString(),
+      entryPrice: position.entryPrice,
+      markTime: mark ? new Date(mark.openTime).toISOString() : null,
+      markPrice: mark?.close ?? null,
+      unrealizedReturnPct,
+      unrealizedPnlUsdt: unrealizedReturnPct == null
+        ? null
+        : notionalUsdt * unrealizedReturnPct / 100,
+      executionEvidenceLevel: executionModel === "CANDLE_PROXY"
+        ? "CANDLE_PROXY"
+        : "MIXED"
+    };
+  });
   return {
     trades,
+    openPositions,
     entryDiagnostics,
     replay: recorder.snapshot()
   };
@@ -842,7 +1164,7 @@ export function backtestStrategyLibrary(dataset, options = {}) {
     candles.map(({ openTime }) => openTime)
   )))].sort((left, right) => left - right);
   const strategies = definitions.map((definition) => {
-    const { trades, entryDiagnostics, replay } = simulateStrategy(
+    const { trades, openPositions, entryDiagnostics, replay } = simulateStrategy(
       definition,
       market,
       timestamps,
@@ -855,6 +1177,7 @@ export function backtestStrategyLibrary(dataset, options = {}) {
       entryDiagnostics,
       replay,
       executionPerformance: executionMetrics(replay, trades),
+      openPositions,
       trades
     };
   });
@@ -883,7 +1206,8 @@ export function backtestStrategyLibrary(dataset, options = {}) {
         returnOnTurnoverPct: "net PnL divided by fixed entry notional per completed trade",
         returnOnExecutedTurnoverPct: "net PnL divided by summed entry and exit executed values",
         maeMfe: "minute-close mark-to-market after fixed model cost and before gas",
-        realizedPnl: "completed fills only, after fixed model cost and recorded gas"
+        realizedPnl: "completed fills only, after fixed model cost and recorded gas",
+        openPositions: "separate end-of-window candle marks; excluded from completed performance"
       },
       maxOpenPositions: simulationOptions.maxOpenPositions,
       onePositionAtATime: simulationOptions.maxOpenPositions === 1,
@@ -910,7 +1234,16 @@ export function backtestStrategyLibrary(dataset, options = {}) {
         signalReviewHours: simulationOptions.signalReviewHours,
         signalReviewMinR: simulationOptions.signalReviewMinR,
         disasterStopLossPct: simulationOptions.disasterStopLossPct,
-        ordinaryExitsRequireNonNegativeNetReturn: true
+        ordinaryExitsRequireNonNegativeNetReturn: true,
+        dailyResearchRuleExitsMayRealizeLoss: true,
+        turtle55_20: {
+          entryLookbackDays: 55,
+          exitLookbackDays: 20,
+          atrPeriodDays: 20,
+          stopAtrMultiple: 2,
+          longOnly: true,
+          pyramiding: false
+        }
       }
     },
     dataCoverage: {

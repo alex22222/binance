@@ -151,7 +151,7 @@ export function liveDashboardHtml() {
     .section-refresh:hover { color: var(--text); border-color: #465365; }
     .section-refresh:disabled { cursor: wait; opacity: .55; }
     .empty { min-height: 118px; display: grid; place-items: center; padding: 22px; text-align: center; color: var(--muted); background: radial-gradient(circle at 50% 50%, rgba(120,169,255,.04), transparent 55%); }
-    .signals { overflow: hidden; }
+    .signals { overflow: visible; }
     .signal-table-head, .signal { display: grid; grid-template-columns: 1.05fr .65fr 1.15fr .9fr .85fr; gap: 10px; align-items: center; }
     .signal-table-head { padding: 12px 16px; border-bottom: 1px solid var(--line); color: var(--muted); background: rgba(255,255,255,.018); font-size: 10px; letter-spacing: .05em; }
     .signal { min-height: 60px; padding: 10px 16px; border-bottom: 1px solid rgba(255,255,255,.055); transition: background-color .2s; }
@@ -160,10 +160,13 @@ export function liveDashboardHtml() {
     .signal.historical { background: rgba(245,193,79,.025); }
     .signal.strong-signal { animation: strong-signal-pulse 1.5s ease-in-out infinite; box-shadow: inset 3px 0 0 rgba(245,193,79,.72); }
     .signal-code { display: flex; flex-direction: column; gap: 3px; font-weight: 780; }
+    .signal-identity { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
     .signal-symbol-link { width: max-content; color: var(--text); text-decoration-color: rgba(120,169,255,.45); text-underline-offset: 3px; }
     .signal-symbol-link:hover { color: var(--blue); text-decoration-color: currentColor; }
     .signal-symbol-link:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-radius: 3px; }
     .signal-source { color: var(--gold); font-size: 9px; font-weight: 700; }
+    .signal-daily-change { font-size: 10px; font-weight: 760; letter-spacing: -.01em; white-space: nowrap; }
+    .signal-daily-change.muted { color: var(--muted); }
     .signal-shadow { color: var(--gold); font-size: 9px; font-weight: 700; }
     .signal-strong { width: max-content; padding: 2px 5px; border-radius: 5px; color: #171108; background: var(--gold); font-size: 9px; font-weight: 800; letter-spacing: .04em; }
     .signal-context { color: var(--muted); font-size: 11px; }
@@ -171,7 +174,7 @@ export function liveDashboardHtml() {
     .signal-strength, .signal-time { color: var(--muted); font-size: 11px; }
     .signal-change { font-size: 14px; letter-spacing: -.02em; }
     .signal-journey { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.045); }
-    .signal-stage { min-width: 0; padding: 7px 8px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.018); }
+    .signal-stage { position: relative; min-width: 0; padding: 7px 8px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.018); cursor: help; }
     .signal-stage strong, .signal-stage small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .signal-stage strong { font-size: 10px; }
     .signal-stage small { margin-top: 4px; color: currentColor; opacity: .76; font-size: 9px; }
@@ -179,6 +182,8 @@ export function liveDashboardHtml() {
     .signal-stage.pending { color: var(--gold); border-color: rgba(245,193,79,.38); background: rgba(245,193,79,.06); }
     .signal-stage.passed { color: var(--green); border-color: rgba(81,214,163,.32); background: rgba(81,214,163,.055); }
     .signal-stage.idle { color: var(--muted); }
+    .signal-stage-tooltip { position: absolute; z-index: 4; left: 0; bottom: calc(100% + 8px); width: max-content; max-width: min(300px, calc(100vw - 48px)); padding: 9px 10px; border: 1px solid rgba(120,169,255,.38); border-radius: 9px; color: var(--text); background: rgba(7,9,13,.98); box-shadow: 0 12px 28px rgba(0,0,0,.38); font-size: 11px; line-height: 1.45; white-space: normal; opacity: 0; visibility: hidden; transform: translateY(4px); transition: opacity .16s, transform .16s, visibility .16s; pointer-events: none; }
+    .signal-stage:hover .signal-stage-tooltip, .signal-stage:focus-visible .signal-stage-tooltip { opacity: 1; visibility: visible; transform: translateY(0); }
     .signal-toggle { display: none; width: 100%; min-height: 44px; border: 0; border-top: 1px solid var(--line); color: var(--muted); background: transparent; cursor: pointer; font-weight: 700; }
     .action-head-tools { display: flex; align-items: center; gap: 10px; }
     .timeline-filters { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.02); }
@@ -1018,17 +1023,28 @@ export function liveDashboardHtml() {
         const status = ["failed", "pending", "passed"].includes(decision?.status) ? decision.status : "idle";
         const chip = el("div", "signal-stage " + status);
         const eventLabel = decision ? actionEventLabels[decision.event] || decision.event : "无事件";
+        const reason = decision?.reason ? actionValue("reason", decision.reason) : null;
         const summary = decision
           ? eventLabel + " · " + shortTime(decision.timestamp) + (decision.count > 1 ? " · " + decision.count + "次" : "")
           : "今日无事件";
+        const tooltipText = !decision
+          ? symbol + " · " + stageLabels[stage] + " · 今日尚未到达该阶段"
+          : status === "failed"
+            ? "未通过原因：" + (reason || "系统未返回具体原因") + " · " + eventLabel + " · " + shortTime(decision.timestamp)
+            : reason
+              ? "原因：" + reason + " · " + eventLabel
+              : "当前状态：" + (actionStatusLabels[status] || status) + " · " + eventLabel + " · " + shortTime(decision.timestamp);
+        const tooltipId = "signal-stage-" + symbol + "-" + stage;
+        const tooltip = el("span", "signal-stage-tooltip", tooltipText);
+        tooltip.id = tooltipId;
+        tooltip.setAttribute("role", "tooltip");
+        chip.tabIndex = 0;
+        chip.setAttribute("aria-describedby", tooltipId);
         chip.append(
           el("strong", "", stage + " · " + stageLabels[stage]),
-          el("small", "", summary)
+          el("small", "", summary),
+          tooltip
         );
-        chip.title = decision
-          ? symbol + " · " + stageLabels[stage] + " · 今日 " + decision.count + " 次" +
-            (decision.reason ? " · " + (actionReasonLabels[decision.reason] || decision.reason) : "")
-          : symbol + " · " + stageLabels[stage] + " · 今日无事件";
         journey.append(chip);
       });
       return journey;
@@ -1060,6 +1076,7 @@ export function liveDashboardHtml() {
         const direction = !signal ? "—" : signal.trend15mPct > 0 ? "↑" : signal.trend15mPct < 0 ? "↓" : "—";
         const row = el("article", "signal" + (historical ? " historical" : "") + (strongSignal ? " strong-signal" : ""));
         const code = el("span", "signal-code");
+        const identity = el("span", "signal-identity");
         const chartUrl = stockChartUrl(symbol);
         if (chartUrl) {
           const symbolLink = el("a", "signal-symbol-link", symbol);
@@ -1068,10 +1085,23 @@ export function liveDashboardHtml() {
           symbolLink.rel = "noopener noreferrer";
           symbolLink.title = symbol + " 美股实时走势图 · TradingView";
           symbolLink.setAttribute("aria-label", symbolLink.title);
-          code.append(symbolLink);
+          identity.append(symbolLink);
         } else {
-          code.append(el("strong", "", symbol));
+          identity.append(el("strong", "", symbol));
         }
+        const dailyChange = data.stockMarketChanges?.[symbol];
+        const dailyChangePct = Number(dailyChange?.changePct);
+        const dailyChangeAvailable = Number.isFinite(dailyChangePct);
+        const dailyChangeLabel = el(
+          "small",
+          "signal-daily-change " + (dailyChangeAvailable ? (dailyChangePct >= 0 ? "green" : "red") : "muted"),
+          dailyChangeAvailable ? "今日 " + pct(dailyChangePct) : "今日 —"
+        );
+        dailyChangeLabel.title = dailyChangeAvailable
+          ? "Nasdaq 官方美股日涨跌 · " + (dailyChange.providerTimestamp || "时间未提供")
+          : "等待 Nasdaq 官方美股行情";
+        identity.append(dailyChangeLabel);
+        code.append(identity);
         if (historical) code.append(el("small", "signal-source", "本地历史"));
         if (strongSignal) code.append(el("small", "signal-strong", "强信号"));
         if (signal && !historical) {

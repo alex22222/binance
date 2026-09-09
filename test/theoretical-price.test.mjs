@@ -19,6 +19,7 @@ const nasdaqPayload = {
       askPrice: "$196.57",
       bidSize: "54",
       askSize: "40",
+      percentageChange: "+0.31%",
       lastTradeTimestamp: "Jul 31, 2026 12:14 PM ET",
       isRealTime: true
     }
@@ -40,6 +41,7 @@ test("parses a real-time official Nasdaq stock quote with an absolute provider t
       companyName: "NVIDIA Corporation Common Stock",
       assetClass: "STOCKS",
       price: 196.56,
+      changePct: 0.31,
       bidPrice: 196.55,
       askPrice: 196.57,
       bidSize: 54,

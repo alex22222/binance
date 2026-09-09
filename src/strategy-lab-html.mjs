@@ -36,12 +36,18 @@ export function strategyLabHtml() {
     .mark { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 11px; background: var(--blue); color: #08101e; font-weight: 900; }
     .back-link { padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--text); background: var(--panel-2); text-decoration: none; transition: background-color .2s, border-color .2s; }
     .back-link:hover { border-color: rgba(120,169,255,.65); background: rgba(120,169,255,.12); }
-    .back-link:focus-visible, .strategy-switch:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+    .back-link:focus-visible, .strategy-switch:focus-visible, .filter-control select:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
     main { padding: 18px 0 44px; }
     main section + section { margin-top: 18px; }
     .section-head { margin-bottom: 8px; }
     h2 { margin: 0; font-size: 18px; letter-spacing: -.03em; }
     .panel { border: 1px solid var(--line); border-radius: 17px; background: rgba(17,21,28,.88); }
+    .filter-panel { padding: 14px; }
+    .strategy-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .filter-control { display: grid; gap: 6px; }
+    .filter-control span { color: var(--muted); font-size: 11px; }
+    .filter-control select { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 10px; color: var(--text); background: var(--panel-2); }
+    .filter-summary { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
     .return-panel { padding: 12px 14px; }
     .return-row { display: grid; grid-template-columns: 160px minmax(180px, 1fr) 100px; gap: 14px; align-items: center; min-height: 36px; border-bottom: 1px solid rgba(255,255,255,.055); }
     .return-row:last-child { border-bottom: 0; }
@@ -64,6 +70,8 @@ export function strategyLabHtml() {
     .strategy-card.active { border-color: rgba(81,214,163,.55); box-shadow: inset 0 0 0 1px rgba(81,214,163,.1); }
     .strategy-title { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
     .strategy-title h3 { margin: 0; font-size: 20px; letter-spacing: -.035em; }
+    .classification-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .classification-tag { padding: 5px 7px; border: 1px solid rgba(120,169,255,.2); border-radius: 8px; color: #b8c9e8; background: rgba(120,169,255,.06); font-size: 10px; }
     .badge { display: inline-flex; align-items: center; padding: 6px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font: 700 10px ui-monospace, SFMono-Regular, monospace; white-space: nowrap; }
     .badge.green { color: var(--green); border-color: rgba(81,214,163,.35); }
     .badge.blue { color: var(--blue); border-color: rgba(120,169,255,.35); }
@@ -79,10 +87,12 @@ export function strategyLabHtml() {
     .strategy-switch:hover:not(:disabled) { border-color: rgba(120,169,255,.75); background: rgba(120,169,255,.17); }
     .strategy-switch:disabled { border-color: var(--line); color: var(--muted); cursor: not-allowed; opacity: .72; }
     .status { min-height: 20px; margin-top: 12px; color: var(--gold); font-size: 12px; }
+    .empty-state { padding: 18px; color: var(--muted); text-align: center; }
     .error { color: var(--red); }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
     @media (max-width: 820px) {
       .strategy-grid, .validation-grid { grid-template-columns: 1fr; }
+      .strategy-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .metrics { grid-template-columns: repeat(2, 1fr); }
     }
     @media (max-width: 560px) {
@@ -90,6 +100,7 @@ export function strategyLabHtml() {
       .nav { align-items: flex-start; flex-direction: column; padding: 12px 0; }
       .nav-actions { width: 100%; flex-wrap: wrap; justify-content: space-between; }
       .back-link { width: 100%; text-align: center; }
+      .strategy-filters { grid-template-columns: 1fr; }
       .return-row { grid-template-columns: 1fr 76px; padding: 9px 0; }
       .bar-area { grid-column: 1 / -1; grid-row: 2; }
     }
@@ -108,6 +119,14 @@ export function strategyLabHtml() {
     </div>
   </header>
   <main class="shell">
+    <section aria-labelledby="classificationTitle">
+      <div class="section-head"><h2 id="classificationTitle">策略分类</h2></div>
+      <div class="panel filter-panel">
+        <div class="strategy-filters" id="strategyFilters"></div>
+        <p class="filter-summary" id="strategyFilterSummary">正在读取策略分类…</p>
+      </div>
+    </section>
+
     <section>
       <div class="section-head"><h2>30天策略验证</h2></div>
       <div class="panel return-panel" id="validationComparison">
@@ -143,8 +162,58 @@ export function strategyLabHtml() {
       if (text != null) node.textContent = text;
       return node;
     };
+    const FILTER_DIMENSIONS = [
+      { key: "family", label: "策略家族" },
+      { key: "horizon", label: "持有周期" },
+      { key: "stage", label: "成熟阶段" },
+      { key: "riskCluster", label: "主要风险" }
+    ];
+    const strategyFilters = Object.fromEntries(FILTER_DIMENSIONS.map(({ key }) => [key, "ALL"]));
     let latestSnapshot = null;
+    let renderedFilterSignature = null;
     let switchingStrategyId = null;
+
+    function filterStrategies(strategies) {
+      return strategies.filter((strategy) => FILTER_DIMENSIONS.every(({ key }) => (
+        strategyFilters[key] === "ALL" || strategy.classification?.[key]?.id === strategyFilters[key]
+      )));
+    }
+
+    function renderFilterControls(strategies, filteredStrategies) {
+      const root = document.getElementById("strategyFilters");
+      const signature = JSON.stringify(strategies.map((strategy) => [strategy.id, strategy.classification]));
+      if (signature !== renderedFilterSignature) {
+        root.replaceChildren();
+        FILTER_DIMENSIONS.forEach(({ key, label }) => {
+          const control = el("label", "filter-control");
+          const select = el("select", "");
+          select.setAttribute("aria-label", label);
+          const all = el("option", "", "全部");
+          all.value = "ALL";
+          select.append(all);
+          const values = new Map();
+          strategies.forEach((strategy) => {
+            const item = strategy.classification?.[key];
+            if (item?.id && item?.label) values.set(item.id, item.label);
+          });
+          values.forEach((itemLabel, id) => {
+            const option = el("option", "", itemLabel);
+            option.value = id;
+            select.append(option);
+          });
+          select.value = strategyFilters[key];
+          select.addEventListener("change", () => {
+            strategyFilters[key] = select.value;
+            renderStrategies(latestSnapshot);
+          });
+          control.append(el("span", "", label), select);
+          root.append(control);
+        });
+        renderedFilterSignature = signature;
+      }
+      document.getElementById("strategyFilterSummary").textContent =
+        "显示 " + filteredStrategies.length + " / " + strategies.length + " 个策略；下方收益同步按当前筛选范围比较。";
+    }
 
     function validationCards(title, strategies) {
       const block = el("div", "");
@@ -239,6 +308,10 @@ export function strategyLabHtml() {
     function renderReturns(strategies) {
       const root = document.getElementById("returnComparison");
       root.replaceChildren();
+      if (!strategies.length) {
+        root.append(el("p", "empty-state", "没有符合当前分类的策略。"));
+        return;
+      }
       const maxAbsPnl = Math.max(1, ...strategies.map((strategy) => Math.abs(strategy.performance.realizedPnlUsdt)));
       strategies.forEach((strategy) => {
         const pnl = strategy.performance.realizedPnlUsdt;
@@ -258,19 +331,26 @@ export function strategyLabHtml() {
 
     function renderStrategies(data) {
       const strategies = Array.isArray(data.strategies) ? data.strategies : [];
+      const filteredStrategies = filterStrategies(strategies);
       const root = document.getElementById("strategyComparison");
       root.replaceChildren();
       const active = strategies.find((strategy) => strategy.active);
       document.getElementById("activeStrategy").textContent = active?.name || data.strategy.activeStrategyId;
       document.getElementById("mode").textContent = data.mode.toUpperCase();
-      strategies.forEach((strategy) => {
+      renderFilterControls(strategies, filteredStrategies);
+      filteredStrategies.forEach((strategy) => {
         const card = el("article", "strategy-card" + (strategy.active ? " active" : ""));
         const title = el("div", "strategy-title");
         title.append(
           el("h3", "", strategy.name),
-          el("span", "badge " + (strategy.active ? "green" : strategy.switchable ? "blue" : "gold"), strategy.active ? "运行中" : strategy.status)
+          el("span", "badge " + (strategy.active ? "green" : strategy.switchable ? "blue" : "gold"), strategy.active ? "运行中" : strategy.classification.stage.label)
         );
         card.append(title);
+        const classification = el("div", "classification-tags");
+        FILTER_DIMENSIONS.forEach(({ key, label }) => {
+          classification.append(el("span", "classification-tag", label + "：" + strategy.classification[key].label));
+        });
+        card.append(classification);
         const metrics = el("div", "metrics");
         [
           ["累计收益", (strategy.performance.realizedPnlUsdt >= 0 ? "+" : "") + money(strategy.performance.realizedPnlUsdt) + " U"],
@@ -306,7 +386,8 @@ export function strategyLabHtml() {
         card.append(button);
         root.append(card);
       });
-      renderReturns(strategies);
+      if (!filteredStrategies.length) root.append(el("p", "empty-state", "没有符合当前分类的策略。"));
+      renderReturns(filteredStrategies);
     }
 
     async function switchStrategy(strategyId) {

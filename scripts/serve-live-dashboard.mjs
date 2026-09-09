@@ -8,6 +8,8 @@ import { promisify } from "node:util";
 import { buildBawEnvironment } from "../src/baw-runtime.mjs";
 import { loadDashboardSnapshot } from "../src/dashboard.mjs";
 import { loadNasdaqCompositeIndex } from "../src/nasdaq-index.mjs";
+import { createNasdaqStockMarketLoader } from "../src/nasdaq-stock-market.mjs";
+import { fetchNasdaqStockQuote } from "../src/theoretical-price.mjs";
 import { createAvailableUsdtLoader } from "../src/wallet-balance.mjs";
 import { liveDashboardHtml } from "../src/live-dashboard-html.mjs";
 import { dashboardLoginHtml } from "../src/dashboard-login-html.mjs";
@@ -74,6 +76,9 @@ const loadAvailableUsdt = createAvailableUsdtLoader({
     "--binanceChainId",
     "56"
   ])
+});
+const loadStockMarketChanges = createNasdaqStockMarketLoader({
+  fetchQuote: fetchNasdaqStockQuote
 });
 
 async function loadConfig() {
@@ -242,6 +247,9 @@ const server = createServer(async (request, response) => {
       const walletAvailableBalance = process.env.DASHBOARD_WALLET_BALANCE_DISABLED === "1"
         ? null
         : await loadAvailableUsdt();
+      const stockMarketChanges = process.env.DASHBOARD_STOCK_MARKET_DISABLED === "1"
+        ? {}
+        : await loadStockMarketChanges(config.symbols);
       const snapshot = await loadDashboardSnapshot({
         configPath,
         statePath: resolve(projectRoot, config.stateFile),
@@ -249,6 +257,7 @@ const server = createServer(async (request, response) => {
         signalHistoryPath: resolve(projectRoot, "state/dashboard-signal-history.jsonl"),
         walletAvailableBalance,
         marketIndex,
+        stockMarketChanges,
         approvalControlPath: approvalControlPath(config),
         emergencyStopPath: resolve(projectRoot, config.emergencyStopFile),
         strategyControlPath: resolve(projectRoot, config.strategyControlFile)

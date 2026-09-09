@@ -244,6 +244,7 @@ export function buildDashboardSnapshot({
   walletBalanceHistory = [],
   walletAvailableBalance = null,
   marketIndex = null,
+  stockMarketChanges = {},
   approvalControl = null,
   strategyControl = null,
   nowMs = Date.now()
@@ -338,6 +339,7 @@ export function buildDashboardSnapshot({
       : null,
     assetTrend: buildAssetTrend(walletBalanceHistory, state.walletBalance, 30),
     marketIndex,
+    stockMarketChanges,
     risk: {
       maxTradeUsdt: finiteNumber(config.maxTradeUsdt),
       dailyLossLimitUsdt,
@@ -397,6 +399,7 @@ export async function loadDashboardSnapshot({
   signalHistoryPath = null,
   walletAvailableBalance = null,
   marketIndex = null,
+  stockMarketChanges = {},
   approvalControlPath = null,
   emergencyStopPath,
   strategyControlPath,
@@ -433,6 +436,7 @@ export async function loadDashboardSnapshot({
     walletBalanceHistory,
     walletAvailableBalance,
     marketIndex,
+    stockMarketChanges,
     approvalControl,
     strategyControl,
     nowMs

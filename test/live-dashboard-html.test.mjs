@@ -153,6 +153,10 @@ test("live dashboard provides an approval-first iPhone layout and compact signal
   assert.match(html, /symbolLink\.target = "_blank"/);
   assert.match(html, /symbolLink\.rel = "noopener noreferrer"/);
   assert.match(html, /美股实时走势图 · TradingView/);
+  assert.match(html, /el\("span", "signal-identity"\)/);
+  assert.match(html, /data\.stockMarketChanges\?\.\[symbol\]/);
+  assert.match(html, /"今日 " \+ pct\(dailyChangePct\)/);
+  assert.match(html, /Nasdaq 官方美股日涨跌/);
   assert.match(html, /id="signalToggle"/);
   assert.match(html, /id="signalContext"/);
   assert.match(html, /休市中 · 显示本地历史信号/);
@@ -214,7 +218,14 @@ test("live dashboard shows today's execution stages two through five on every si
   assert.match(html, /\.signal-stage\.pending \{[^}]*color: var\(--gold\)/);
   assert.match(html, /\.signal-stage\.passed \{[^}]*color: var\(--green\)/);
   assert.match(html, /\.signal-stage\.idle \{/);
-  assert.match(html, /今日 " \+ decision\.count \+ " 次/);
+  assert.match(html, /\.signal-stage-tooltip \{/);
+  assert.match(html, /\.signal-stage:hover \.signal-stage-tooltip, \.signal-stage:focus-visible \.signal-stage-tooltip/);
+  assert.match(html, /tooltip\.setAttribute\("role", "tooltip"\)/);
+  assert.match(html, /chip\.setAttribute\("aria-describedby", tooltipId\)/);
+  assert.match(html, /chip\.tabIndex = 0/);
+  assert.match(html, /"未通过原因："/);
+  assert.match(html, /actionValue\("reason", decision\.reason\)/);
+  assert.match(html, /decision\.count > 1 \? " · " \+ decision\.count \+ "次"/);
   assert.match(html, /renderSignalDecisionStages\(symbol, data\.signalDecisionStages\?\.\[symbol\]\)/);
   assert.match(html, /\.signal-journey \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
 });

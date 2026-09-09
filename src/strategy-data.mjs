@@ -107,7 +107,7 @@ export function parseBinanceCandles(klineInfos) {
   ));
 }
 
-export function parseYahooChart(chart) {
+export function parseYahooChart(chart, intervalMs = 60_000) {
   const timestamps = chart?.timestamp || [];
   const quote = chart?.indicators?.quote?.[0] || {};
   return timestamps.map((timestamp, index) => ({
@@ -117,7 +117,7 @@ export function parseYahooChart(chart) {
     low: Number(quote.low?.[index]),
     close: Number(quote.close?.[index]),
     volume: Number(quote.volume?.[index] || 0),
-    closeTime: Number(timestamp) * 1000 + 59_999
+    closeTime: Number(timestamp) * 1000 + intervalMs - 1
   })).filter((candle) => (
     Number.isFinite(candle.openTime) &&
     [candle.open, candle.high, candle.low, candle.close].every(Number.isFinite)

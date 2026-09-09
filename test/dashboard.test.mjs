@@ -98,6 +98,9 @@ test("builds a live position snapshot from the latest executable sell quote", ()
       isRealTime: false,
       source: "NASDAQ_OFFICIAL"
     },
+    stockMarketChanges: {
+      NVDA: { changePct: 1.23, source: "NASDAQ_OFFICIAL" }
+    },
     nowMs
   });
 
@@ -136,6 +139,9 @@ test("builds a live position snapshot from the latest executable sell quote", ()
     changePct: 0.22,
     isRealTime: false,
     source: "NASDAQ_OFFICIAL"
+  });
+  assert.deepEqual(snapshot.stockMarketChanges, {
+    NVDA: { changePct: 1.23, source: "NASDAQ_OFFICIAL" }
   });
 });
 

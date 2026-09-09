@@ -9,6 +9,7 @@ import {
   entryExecutionDecision,
   executableBasisDecision,
   readStrategyControl,
+  STRATEGY_TAXONOMY,
   writeEntryPauseControl,
   writeStrategyControl
 } from "../src/strategy-lab.mjs";
@@ -86,7 +87,7 @@ test("compares realized returns by strategy without inventing missing results", 
 test("attaches the same non-enforcing shadow risk overlays to every strategy", () => {
   const comparison = buildStrategyComparison("adaptive-momentum", []);
 
-  assert.equal(comparison.length, 6);
+  assert.equal(comparison.length, 10);
   const pullback = comparison.find((strategy) => strategy.id === "trend-pullback-confirmation");
   const relativePullback = comparison.find(
     (strategy) => strategy.id === "regime-relative-pullback-momentum"
@@ -110,4 +111,70 @@ test("attaches the same non-enforcing shadow risk overlays to every strategy", (
     assert.equal(strategy.subStrategies[5].mode, "SHADOW");
     assert.equal(strategy.subStrategies[5].enforced, false);
   }
+});
+
+test("registers the three daily high-hit-rate candidates as research only", () => {
+  const comparison = buildStrategyComparison("adaptive-momentum", []);
+  const candidates = [
+    "daily-rsi2-trend-reversion",
+    "daily-double7-trend-reversion",
+    "daily-ibs-reversal"
+  ].map((strategyId) => comparison.find(({ id }) => id === strategyId));
+
+  assert.ok(candidates.every(Boolean));
+  for (const strategy of candidates) {
+    assert.equal(strategy.status, "RESEARCH");
+    assert.equal(strategy.switchable, false);
+    assert.equal(strategy.direction, "LONG_ONLY");
+    assert.equal(strategy.timeframe, "DAILY_SIGNAL_REGULAR_SESSION_EXECUTION");
+    assert.equal(strategy.validationStatus, "LOCAL_BACKTEST_EARLY_SAMPLE");
+    assert.ok(strategy.backtestData.includes("Yahoo Finance 日线"));
+    assert.ok(strategy.sources.length >= 1);
+  }
+});
+
+test("registers turtle 55/20 as a non-switchable long-only research strategy", () => {
+  const turtle = buildStrategyComparison("adaptive-momentum", [])
+    .find(({ id }) => id === "daily-turtle-55-20");
+
+  assert.ok(turtle);
+  assert.equal(turtle.status, "RESEARCH");
+  assert.equal(turtle.switchable, false);
+  assert.equal(turtle.direction, "LONG_ONLY");
+  assert.equal(turtle.family, "TREND_MOMENTUM");
+  assert.equal(turtle.horizon, "SWING");
+  assert.equal(turtle.timeframe, "DAILY_SIGNAL_REGULAR_SESSION_EXECUTION");
+  assert.equal(turtle.validationStatus, "LOCAL_BACKTEST_INSUFFICIENT_SAMPLE");
+  assert.ok(turtle.backtestData.includes("Yahoo Finance 日线"));
+  assert.ok(turtle.sources.length >= 1);
+});
+
+test("classifies every strategy by family, horizon, stage, and primary risk", () => {
+  const comparison = buildStrategyComparison("adaptive-momentum", []);
+
+  for (const strategy of comparison) {
+    for (const dimension of ["family", "horizon", "stage", "riskCluster"]) {
+      assert.equal(typeof strategy.classification[dimension].id, "string");
+      assert.equal(typeof strategy.classification[dimension].label, "string");
+      assert.equal(
+        strategy.classification[dimension].label,
+        STRATEGY_TAXONOMY[dimension][strategy.classification[dimension].id]
+      );
+    }
+    assert.equal(strategy.classification.stage.id, strategy.status);
+  }
+
+  const momentum = comparison.find(({ id }) => id === "adaptive-momentum");
+  assert.equal(momentum.classification.family.id, "TREND_MOMENTUM");
+  assert.equal(momentum.classification.horizon.id, "FIFTEEN_MINUTE");
+  assert.equal(momentum.classification.riskCluster.id, "CHASE_REVERSAL");
+
+  const basis = comparison.find(({ id }) => id === "executable-basis-reversion");
+  assert.equal(basis.classification.family.id, "STRUCTURAL_BASIS");
+  assert.equal(basis.classification.riskCluster.id, "LIQUIDITY_QUOTE");
+
+  const rsi2 = comparison.find(({ id }) => id === "daily-rsi2-trend-reversion");
+  assert.equal(rsi2.classification.family.id, "MEAN_REVERSION");
+  assert.equal(rsi2.classification.horizon.id, "MULTI_SESSION");
+  assert.equal(rsi2.classification.stage.id, "RESEARCH");
 });
