@@ -145,6 +145,22 @@ open, so daylight time gets the 13:15 collection and standard time gets a
 13:15 collection plus a 14:15 refresh. External data or headline failures are
 recorded as missing research inputs and do not stop the bot or change entries.
 
+## Turtle Paper
+
+The Turtle Paper service is isolated from the bot and wallet. During the U.S.
+regular session it evaluates completed underlying daily bars for a 55-day high,
+simulates one fixed-notional token position from the latest completed public
+one-minute token candle, and exits on a completed 20-day low or a 2 x ATR20
+stop. Results are explicitly labeled `PAPER_CANDLE_PROXY` and written only to
+`state/turtle-paper/`; they are not executable-quote or Live evidence.
+
+```bash
+sudo install -d -o binancebot -g binancebot -m 700 \
+  /opt/binance-agentic-stock-bot/state/turtle-paper
+sudo systemctl enable --now binance-agentic-turtle-paper.timer
+systemctl list-timers binance-agentic-turtle-paper.timer
+```
+
 ## Explicit live cutover
 
 Never run the local Mac and server with `BOT_LIVE=1` at the same time. Before

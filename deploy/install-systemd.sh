@@ -39,6 +39,8 @@ install -m 644 "$project_dir/deploy/binance-agentic-trade-review.service" "$unit
 install -m 644 "$project_dir/deploy/binance-agentic-trade-review.timer" "$unit_dir/"
 install -m 644 "$project_dir/deploy/binance-agentic-premarket-brief.service" "$unit_dir/"
 install -m 644 "$project_dir/deploy/binance-agentic-premarket-brief.timer" "$unit_dir/"
+install -m 644 "$project_dir/deploy/binance-agentic-turtle-paper.service" "$unit_dir/"
+install -m 644 "$project_dir/deploy/binance-agentic-turtle-paper.timer" "$unit_dir/"
 systemctl disable --now binance-agentic-watch.service >/dev/null 2>&1 || true
 rm -f "$unit_dir/binance-agentic-watch.service"
 systemctl daemon-reload

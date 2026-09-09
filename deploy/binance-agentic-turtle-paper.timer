@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Turtle Paper during possible U.S. regular-session hours
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 13..21:00/5:00 UTC
+AccuracySec=10s
+Persistent=true
+Unit=binance-agentic-turtle-paper.service
+
+[Install]
+WantedBy=timers.target

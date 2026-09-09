@@ -11,6 +11,7 @@
     "dashboard:live": "node scripts/serve-live-dashboard.mjs",
     "strategy:validate": "node scripts/run-strategy-validation.mjs",
     "strategy:shadow-outcomes": "node scripts/run-shadow-outcomes.mjs",
+    "strategy:turtle-paper": "node scripts/run-turtle-paper.mjs",
     "strategy:bstocks-readiness": "node scripts/run-shadow-basis-readiness.mjs",
     "trade:review": "node scripts/run-trade-review.mjs",
     "premarket:brief": "node scripts/run-premarket-brief.mjs",

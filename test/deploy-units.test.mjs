@@ -41,3 +41,16 @@ test("premarket timer covers daylight and standard time without changing executi
   assert.match(timer, /OnCalendar=Mon\.\.Fri \*-\*-\* 14:15:00 UTC/);
   assert.match(timer, /Persistent=true/);
 });
+
+test("Turtle Paper runs independently without wallet or bot service access", async () => {
+  const [service, timer] = await Promise.all([
+    readFile(new URL("../deploy/binance-agentic-turtle-paper.service", import.meta.url), "utf8"),
+    readFile(new URL("../deploy/binance-agentic-turtle-paper.timer", import.meta.url), "utf8")
+  ]);
+  assert.match(service, /ExecStart=\/usr\/bin\/node scripts\/run-turtle-paper\.mjs/);
+  assert.match(service, /ReadWritePaths=\/opt\/binance-agentic-stock-bot\/state\/turtle-paper/);
+  assert.doesNotMatch(service, /EnvironmentFile|BAW|BOT_LIVE/);
+  assert.match(service, /ProtectSystem=strict/);
+  assert.match(timer, /OnCalendar=Mon\.\.Fri/);
+  assert.match(timer, /turtle-paper\.service/);
+});

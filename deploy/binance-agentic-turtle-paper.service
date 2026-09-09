@@ -1,0 +1,20 @@
+[Unit]
+Description=Binance Agentic Stock Turtle Paper
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=binancebot
+Group=binancebot
+WorkingDirectory=/opt/binance-agentic-stock-bot
+Environment=HOME=/var/lib/binance-agentic-stock-bot
+UnsetEnvironment=HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+ExecStart=/usr/bin/node scripts/run-turtle-paper.mjs
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/binance-agentic-stock-bot/state/turtle-paper
+UMask=0077
