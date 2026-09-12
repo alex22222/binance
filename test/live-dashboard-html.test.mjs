@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { liveDashboardHtml } from "../src/live-dashboard-html.mjs";
+import { dashboardStrongSignals, liveDashboardHtml } from "../src/live-dashboard-html.mjs";
 
 test("live dashboard makes unavailable-audit acknowledgement explicit in the approval card", () => {
   const html = liveDashboardHtml();
@@ -77,8 +77,9 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.match(html, /\/api\/wallet-login\/status/);
   assert.doesNotMatch(html, /id="metrics"/);
   assert.match(html, /class="dashboard-grid"/);
-  assert.match(html, /\.dashboard-grid \{ display: grid; grid-template-columns: minmax\(0, 1\.35fr\) minmax\(340px, \.85fr\);/);
-  assert.doesNotMatch(html, /\.positions-section \{ grid-column: 1 \/ -1; \}/);
+  assert.match(html, /\.dashboard-grid \{ display: grid; grid-template-columns: minmax\(0, 1fr\);/);
+  assert.match(html, /\.signals-section, \.positions-section, \.actions-section \{ grid-column: 1 \/ -1; \}/);
+  assert.match(html, /\.position \{ padding: 16px; display: grid; grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
   assert.match(html, /class="actions-section"/);
   assert.match(html, /\.actions-section \{ grid-column: 1 \/ -1; \}/);
   assert.match(html, /\.actions-section \.timeline \{ max-height: 560px;/);
@@ -113,9 +114,9 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.match(html, /\.event \{ grid-template-columns: 54px minmax\(0, 1fr\);/);
   assert.match(html, /id="strategyRisk"/);
   assert.match(html, /id="workflow"/);
-  assert.ok(html.indexOf('id="position"') > html.indexOf('id="signals"'));
+  assert.ok(html.indexOf('id="position"') < html.indexOf('id="signals"'));
   assert.ok(html.indexOf('class="actions-section"') > html.indexOf('id="position"'));
-  assert.ok(html.indexOf('id="strategyRisk"') > html.indexOf('class="actions-section"'));
+  assert.ok(html.indexOf('id="strategyRisk"') < html.indexOf('class="actions-section"'));
   assert.match(html, /function renderStrategyRisk\(data\)/);
   assert.match(html, /Shadow 风控/);
   assert.match(html, /仅观测，不改变下单/);
@@ -138,12 +139,8 @@ test("live dashboard provides an approval-first iPhone layout and compact signal
   assert.match(html, /env\(safe-area-inset-top\)/);
   assert.match(html, /href="\/favicon\.svg"/);
   assert.match(html, /env\(safe-area-inset-bottom\)/);
-  assert.match(html, /class="signal-table-head"/);
-  assert.match(html, />代码<\/span>/);
-  assert.match(html, />方向<\/span>/);
-  assert.match(html, />强度 \/ 15分钟<\/span>/);
-  assert.match(html, />变化<\/span>/);
-  assert.match(html, />拉取时间<\/span>/);
+  assert.match(html, /el\("div", "signal-table-head"\)/);
+  assert.match(html, /\["代码", "方向", "强度 \/ 15分钟", "变化", "拉取时间"\]/);
   assert.match(html, /signal\?\.dataFetchedAt/);
   assert.match(html, /const tradingViewSymbols = \{/);
   assert.match(html, /CRCL: "NYSE:CRCL"/);
@@ -158,11 +155,20 @@ test("live dashboard provides an approval-first iPhone layout and compact signal
   assert.match(html, /"今日 " \+ pct\(dailyChangePct\)/);
   assert.match(html, /Nasdaq 官方美股日涨跌/);
   assert.match(html, /id="signalToggle"/);
+  assert.match(html, /const ETF_SYMBOLS = new Set\(\["SPY", "QQQ", "IWM", "DGRW", "IEI"\]\)/);
+  assert.match(html, /const signalAssetType = \(symbol\) => ETF_SYMBOLS\.has\(symbol\) \? "ETF" : "股票"/);
+  assert.match(html, /const signalGroups = \["股票", "ETF"\]/);
+  assert.match(html, /className = "signal-group"/);
+  assert.match(html, /role="tablist" aria-label="标的分类"/);
+  assert.match(html, /aria-controls="signalPanelEtf"/);
+  assert.match(html, /"role", "tabpanel"/);
+  assert.match(html, /signal-mobile-overflow/);
   assert.match(html, /id="signalContext"/);
   assert.match(html, /休市中 · 显示本地历史信号/);
   assert.match(html, /本地历史/);
   assert.match(html, /signal\.source/);
   assert.match(html, /signals\.classList\.toggle\("expanded"\)/);
+  assert.match(html, /#signals:not\(\.expanded\) \.signal\.signal-mobile-overflow \{ display: none; \}/);
   assert.match(html, /\.approval-button \{[^}]*min-height: 52px;/);
   assert.match(html, /@media \(max-width: 600px\)/);
   assert.match(html, /\.signal-table-head, \.signal \{ display: grid; grid-template-columns: 1\.05fr \.65fr 1\.15fr \.9fr \.85fr;/);
@@ -172,7 +178,7 @@ test("live dashboard embeds collapsed approvals in workflow stage four", () => {
   const html = liveDashboardHtml();
 
   assert.match(html, /class="top-asset-trend"/);
-  assert.ok(html.indexOf('class="top-asset-trend"') < html.indexOf("</header>"));
+  assert.ok(html.indexOf('class="top-asset-trend"') > html.indexOf("</header>"));
   assert.doesNotMatch(html, /class="asset-trend-section"/);
   assert.match(html, /class="panel workflow-rail" id="workflowRail"/);
   assert.match(html, /id="workflow"[\s\S]*class="workflow-approval approval-section" id="approvalSection"/);
@@ -186,9 +192,9 @@ test("live dashboard embeds collapsed approvals in workflow stage four", () => {
   assert.match(html, /const approvalStageCopy = data\.approvalRequest/);
   assert.match(html, /el\("small", "workflow-stage-status", approvalStageCopy\)/);
   assert.match(html, /approvalToggle\.addEventListener\("click"/);
-  assert.ok(html.indexOf('id="signals"') < html.indexOf('id="position"'));
+  assert.ok(html.indexOf('id="signals"') > html.indexOf('id="position"'));
   assert.ok(html.indexOf('id="position"') < html.indexOf('class="actions-section"'));
-  assert.ok(html.indexOf('class="actions-section"') < html.indexOf('id="strategyRisk"'));
+  assert.ok(html.indexOf('class="actions-section"') > html.indexOf('id="strategyRisk"'));
 });
 
 test("live dashboard pulses only live executable strong signals and clears the style on refresh", () => {
@@ -196,11 +202,30 @@ test("live dashboard pulses only live executable strong signals and clears the s
 
   assert.match(html, /@keyframes strong-signal-pulse/);
   assert.match(html, /\.signal\.strong-signal \{[^}]*animation: strong-signal-pulse/);
-  assert.match(html, /const strongSignal = Boolean\(signalPassed && costsCovered && !historical && !marketClosed\)/);
+  assert.match(html, /const strongSignal = strongSymbols.includes\(symbol\)/);
   assert.match(html, /" strong-signal" : ""/);
   assert.match(html, /el\("small", "signal-strong", "强信号"\)/);
   assert.match(html, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.signal\.strong-signal \{ animation: none;/);
   assert.match(html, /root\.replaceChildren\(\)/);
+});
+
+test("strong signal summaries rank fresh cost-covered momentum and exclude historical, stale or closed sessions", () => {
+  const now = Date.parse("2026-09-14T15:00:00Z");
+  const signal = { trend15mPct: 1, atr15Pct: 0.5, upMinutes: 10, costCoverageAllowed: true, dataFetchedAt: new Date(now - 60000).toISOString() };
+  const data = {
+    marketSession: "regular", health: { status: "RUNNING" },
+    strategy: { symbols: ["NVDA", "QQQ", "OLD", "HIST", "COST", "FUTURE", "BAD"], entryIntervalMinutes: 15, entryAtrMultiplier: 0.75, minDirectionalMinutes: 9 },
+    signals: {
+      NVDA: signal, QQQ: { ...signal, trend15mPct: 1.5 },
+      OLD: { ...signal, dataFetchedAt: new Date(now - 18 * 60000).toISOString() },
+      HIST: { ...signal, source: "local-history" }, COST: { ...signal, costCoverageAllowed: false },
+      FUTURE: { ...signal, dataFetchedAt: new Date(now + 60000).toISOString() }, BAD: { ...signal, atr15Pct: 0 }
+    }
+  };
+  assert.deepEqual(dashboardStrongSignals(data, now), ["QQQ", "NVDA"]);
+  for (const marketSession of ["offhours", "closed", "unknown"]) assert.deepEqual(dashboardStrongSignals({ ...data, marketSession }, now), []);
+  assert.deepEqual(dashboardStrongSignals({ ...data, health: { status: "STALE" } }, now), []);
+  assert.deepEqual(dashboardStrongSignals(data, now + 19 * 60000), []);
 });
 
 test("live dashboard shows today's execution stages two through five on every signal row", () => {

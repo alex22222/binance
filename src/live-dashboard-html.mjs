@@ -1,3 +1,18 @@
+export function dashboardStrongSignals(data, nowMs = Date.now()) {
+  if (data.marketSession !== "regular" || data.health?.status !== "RUNNING") return [];
+  const maxAgeMs = ((data.strategy.entryIntervalMinutes || 15) * 60 + 120) * 1000;
+  return data.strategy.symbols.filter((symbol) => {
+    const signal = data.signals?.[symbol];
+    if (!signal || signal.source === "local-history" || signal.costCoverageAllowed !== true) return false;
+    const ageMs = nowMs - Date.parse(signal.dataFetchedAt);
+    return ageMs >= 0 && ageMs <= maxAgeMs &&
+      Number.isFinite(signal.atr15Pct) && signal.atr15Pct > 0 &&
+      Number.isFinite(signal.trend15mPct) && Number.isFinite(signal.upMinutes) &&
+      signal.trend15mPct >= signal.atr15Pct * data.strategy.entryAtrMultiplier &&
+      signal.upMinutes >= data.strategy.minDirectionalMinutes;
+  }).sort((a, b) => data.signals[b].trend15mPct / data.signals[b].atr15Pct - data.signals[a].trend15mPct / data.signals[a].atr15Pct);
+}
+
 export function liveDashboardHtml() {
   return `<!doctype html>
 <html lang="zh-CN">
@@ -25,7 +40,7 @@ export function liveDashboardHtml() {
         linear-gradient(90deg, rgba(255,255,255,.012) 1px, transparent 1px), var(--bg);
       background-size: auto, auto, 32px 32px, 32px 32px, auto;
     }
-    .shell { width: min(1220px, calc(100% - 40px)); margin: 0 auto; }
+    .shell { width: min(1440px, calc(100% - 48px)); margin: 0 auto; }
     header {
       position: sticky; top: 0; z-index: 5; padding: 12px 0 0;
       background: linear-gradient(var(--bg) 0%, rgba(7,9,13,.92) 72%, transparent);
@@ -37,24 +52,24 @@ export function liveDashboardHtml() {
       backdrop-filter: blur(18px);
     }
     .brand { grid-column: 1; grid-row: 1; display: flex; align-items: center; gap: 11px; font-weight: 750; white-space: nowrap; }
-    .top-command { grid-column: 1 / -1; grid-row: 2; display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 1px; padding-top: 10px; border-top: 1px solid var(--line); background: var(--line); }
+    .top-command { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; margin-bottom: 20px; }
     .top-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; background: var(--line); }
     .mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 12px; background: var(--gold); color: #171108; font-weight: 900; box-shadow: 0 0 24px rgba(245,193,79,.18); }
     .nav-link { margin-left: 6px; padding: 8px 11px; border: 1px solid rgba(120,169,255,.35); border-radius: 9px; color: #d8e5ff; background: rgba(120,169,255,.08); text-decoration: none; font-size: 12px; transition: background-color .2s, border-color .2s; }
     .nav-link:hover { border-color: rgba(120,169,255,.65); background: rgba(120,169,255,.16); }
     .nav-link:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
-    .top-stat { display: inline-flex; align-items: baseline; justify-content: center; gap: 6px; min-width: 0; white-space: nowrap; padding: 7px 9px; background: #0f1319; }
+    .top-stat { display: flex; flex-direction: column; justify-content: center; gap: 10px; min-width: 0; padding: 18px 14px; background: #0f1319; }
     .top-stat span { color: var(--muted); font-size: 11px; }
-    .top-stat strong { font-size: 14px; letter-spacing: -.02em; }
+    .top-stat strong { font-size: clamp(15px, 1.5vw, 22px); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
     .badges { grid-column: 2; grid-row: 1; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
     .badge { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: rgba(255,255,255,.018); font: 700 11px ui-monospace, SFMono-Regular, monospace; }
     .market-index-badge strong { font: inherit; }
     .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 10px currentColor; }
-    .top-asset-trend { position: relative; min-width: 0; height: 58px; padding: 6px 10px 4px; overflow: hidden; background: #0f1319; }
+    .top-asset-trend { position: relative; min-width: 0; height: 100px; padding: 10px; overflow: hidden; background: #0f1319; border: 1px solid var(--line); border-radius: 14px; }
     .top-asset-trend-head { position: absolute; z-index: 2; inset: 6px 10px auto; display: flex; justify-content: space-between; gap: 8px; pointer-events: none; }
     .top-asset-trend-head span:first-child { color: var(--muted); font-size: 10px; }
     .asset-trend-summary { color: var(--muted); font-size: 10px; text-align: right; }
-    .asset-trend-chart { display: block; width: 100%; height: 48px; margin-top: 6px; touch-action: pan-y; }
+    .asset-trend-chart { display: block; width: 100%; height: 76px; margin-top: 6px; touch-action: pan-y; }
     .asset-trend-empty { position: absolute; inset: 23px 10px 4px; display: grid; place-items: center; color: var(--muted); font-size: 10px; pointer-events: none; }
     .asset-trend-empty[hidden] { display: none; }
     .asset-trend-tooltip { position: absolute; z-index: 3; min-width: 104px; padding: 8px 10px; border: 1px solid rgba(120,169,255,.32); border-radius: 9px; color: var(--text); background: rgba(7,9,13,.94); box-shadow: 0 10px 30px rgba(0,0,0,.3); pointer-events: none; transform: translateY(-50%); font-size: 11px; }
@@ -72,7 +87,41 @@ export function liveDashboardHtml() {
     .control-button.resume { border-color: rgba(81,214,163,.35); color: var(--green); background: rgba(81,214,163,.07); }
     .control-button.auto-on { border-color: rgba(255,108,120,.55); color: #ffadb4; background: rgba(255,108,120,.12); }
     .control-button[hidden] { display: none; }
-    .workflow-section { margin-bottom: 14px; }
+    .workflow-section { min-width: 0; }
+    .operations-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; margin-bottom: 24px; align-items: start; }
+    .operations-grid .positions-section { grid-column: auto; }
+    .operations-grid .position { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .operations-grid .workflow { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .top-stats { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+    .page-intro { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 16px; }
+    .page-intro h1 { margin: 0; font-size: 23px; letter-spacing: -.04em; }
+    .page-intro p { margin: 0; color: var(--muted); font-size: 11px; }
+    .signal-tabs { display: flex; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+    .signal-tab { min-height: 44px; padding: 9px 20px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--muted); font-weight: 750; cursor: pointer; }
+    .signal-tab[aria-selected="true"] { color: var(--gold); background: rgba(245,193,79,.09); border-color: rgba(245,193,79,.3); }
+    .signal-tab:hover { color: var(--text); }
+    .signal-tab span { margin-left: 8px; font: 11px ui-monospace, monospace; }
+    .signal-tab:focus-visible, .ticker-pause:focus-visible, .ticker-item:focus-visible, .signal-details summary:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+    .signal-group[hidden] { display: none; }
+    .signal-details { grid-column: 1 / -1; min-width: 0; }
+    .signal-details summary { width: fit-content; padding: 6px 0; color: var(--muted); font-size: 11px; cursor: pointer; }
+    .signal-details[open] summary { color: var(--blue); }
+    .signal-details .signal-journey { padding-bottom: 6px; }
+    .signal-ticker { display: flex; align-items: center; gap: 14px; padding: 10px 14px; margin-bottom: 22px; border: 1px solid rgba(245,193,79,.2); border-radius: 12px; background: #11151c; }
+    .ticker-label { flex: 0 0 auto; color: var(--gold); font-size: 12px; font-weight: 750; }
+    .ticker-window { min-width: 0; flex: 1; overflow: hidden; }
+    .ticker-track { display: flex; width: max-content; min-width: 200%; animation: ticker-scroll var(--ticker-duration, 40s) linear infinite; }
+    .ticker-track[data-empty="true"] { animation: none; width: auto; min-width: 0; }
+    .ticker-set { display: flex; flex: 0 0 auto; min-width: 50%; justify-content: space-around; }
+    .ticker-item { display: flex; align-items: center; gap: 12px; padding: 10px 22px; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--text); font: inherit; cursor: pointer; white-space: nowrap; }
+    .ticker-item strong { color: var(--gold); font-size: 13px; }
+    .ticker-item span { font-size: 11px; color: var(--muted); }
+    .ticker-item .green { color: var(--green); }
+    .ticker-empty { color: var(--muted); font-size: 12px; padding: 9px 0; }
+    .ticker-pause { flex: 0 0 auto; min-height: 40px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; }
+    .ticker-pause:disabled { opacity: .4; cursor: default; }
+    .signal-ticker:hover .ticker-track, .signal-ticker:focus-within .ticker-track, .signal-ticker[data-paused="true"] .ticker-track { animation-play-state: paused; }
+    @keyframes ticker-scroll { to { transform: translateX(-50%); } }
     .workflow-rail { overflow: hidden; box-shadow: none; }
     .workflow { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; padding: 0; background: var(--line); }
     .workflow-step { position: relative; min-height: 68px; padding: 11px 12px; color: var(--muted); background: #10151c; }
@@ -124,9 +173,9 @@ export function liveDashboardHtml() {
     .label { color: var(--muted); font-size: 11px; letter-spacing: .11em; text-transform: uppercase; }
     .value { display: block; margin-top: 12px; font-size: 25px; letter-spacing: -.04em; }
     .green { color: var(--green); } .red { color: var(--red); } .gold { color: var(--gold); }
-    .dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(340px, .85fr); gap: 18px; align-items: start; }
+    .dashboard-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-items: start; }
     section { margin: 0; min-width: 0; }
-    .actions-section { grid-column: 1 / -1; }
+    .signals-section, .positions-section, .actions-section { grid-column: 1 / -1; }
     .actions-section .action-section-head { align-items: flex-start; flex-wrap: wrap; }
     .actions-section .action-section-head::after { display: none; }
     .actions-section .action-head-tools { width: 100%; align-items: stretch; flex-direction: column; gap: 6px; }
@@ -139,7 +188,7 @@ export function liveDashboardHtml() {
     .section-head > :last-child:not(:first-child) { order: 2; }
     h2 { margin: 0; font-size: 17px; letter-spacing: -.025em; white-space: nowrap; }
     .muted { color: var(--muted); }
-    .position { padding: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: center; }
+    .position { padding: 16px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: center; }
     .position + .position { border-top: 1px solid var(--line); }
     .position-symbol { font-size: 24px; font-weight: 780; letter-spacing: -.045em; }
     .position > :first-child { grid-column: 1 / -1; }
@@ -150,7 +199,7 @@ export function liveDashboardHtml() {
     .section-refresh { min-height: 32px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); background: rgba(255,255,255,.025); cursor: pointer; font-size: 11px; font-weight: 720; }
     .section-refresh:hover { color: var(--text); border-color: #465365; }
     .section-refresh:disabled { cursor: wait; opacity: .55; }
-    .empty { min-height: 118px; display: grid; place-items: center; padding: 22px; text-align: center; color: var(--muted); background: radial-gradient(circle at 50% 50%, rgba(120,169,255,.04), transparent 55%); }
+    .empty { min-height: 92px; display: grid; place-items: center; padding: 22px; text-align: center; color: var(--muted); background: radial-gradient(circle at 50% 50%, rgba(120,169,255,.04), transparent 55%); }
     .signals { overflow: visible; }
     .signal-table-head, .signal { display: grid; grid-template-columns: 1.05fr .65fr 1.15fr .9fr .85fr; gap: 10px; align-items: center; }
     .signal-table-head { padding: 12px 16px; border-bottom: 1px solid var(--line); color: var(--muted); background: rgba(255,255,255,.018); font-size: 10px; letter-spacing: .05em; }
@@ -217,16 +266,19 @@ export function liveDashboardHtml() {
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+      .ticker-track { animation: none; }
+      .ticker-window { overflow-x: auto; }
+      .ticker-set[aria-hidden="true"] { display: none; }
       .signal.strong-signal { animation: none; background: rgba(245,193,79,.11); box-shadow: inset 3px 0 0 var(--gold); }
     }
     @media (max-width: 900px) {
+      .operations-grid { grid-template-columns: 1fr; }
       .nav { display: flex; align-items: stretch; flex-direction: column; }
       .badges { justify-content: flex-start; }
       .top-command { width: 100%; grid-template-columns: 1fr; }
       .top-asset-trend { height: 68px; }
       .asset-trend-chart { height: 58px; }
       .dashboard-grid { grid-template-columns: 1fr; }
-      .positions-section { grid-column: auto; }
       .position { grid-template-columns: 1fr 1fr; }
       .position > :first-child { grid-column: 1 / -1; }
     }
@@ -258,6 +310,11 @@ export function liveDashboardHtml() {
       .top-stat + .top-stat { border-left: 1px solid var(--line); }
       .top-stat:nth-child(odd) { border-left: 0; }
       .top-stat:nth-child(n+3) { border-top: 1px solid var(--line); }
+      .top-stat:first-child { grid-column: 1 / -1; align-items: flex-start; padding: 14px; text-align: left; }
+      .top-stat:first-child strong { font-size: 25px; }
+      .top-stat:nth-child(2) { border-left: 0; border-top: 1px solid var(--line); }
+      .top-stat:nth-child(3), .top-stat:nth-child(5) { border-left: 1px solid var(--line); }
+      .top-stat:nth-child(4) { border-left: 0; }
       .top-stat strong { font-size: 15px; }
       .top-asset-trend { height: 72px; }
       .asset-trend-chart { height: 62px; }
@@ -272,6 +329,12 @@ export function liveDashboardHtml() {
       .approval-button { min-height: 56px; padding: 10px 8px; }
       .position { grid-template-columns: 1fr 1fr; }
       .position-cell strong { font-size: 16px; }
+      .page-intro { align-items: flex-start; flex-direction: column; gap: 6px; }
+      .signal-ticker { flex-wrap: wrap; gap: 4px 10px; }
+      .ticker-window { order: 3; flex-basis: 100%; }
+      .ticker-pause { margin-left: auto; }
+      .operations-grid .workflow { min-width: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .signal-identity { flex-direction: column; gap: 3px; }
       .signal-table-head, .signal { grid-template-columns: 1.05fr .65fr 1.15fr .9fr .85fr; gap: 6px; }
       .signal-table-head { padding: 10px 9px; font-size: 9px; letter-spacing: 0; }
       .signal { min-height: 58px; padding: 10px 9px; }
@@ -279,7 +342,7 @@ export function liveDashboardHtml() {
       .signal-direction { font-size: 16px; }
       .signal-strength, .signal-time { font-size: 10px; }
       .signal-journey { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
-      #signals:not(.expanded) .signal:nth-child(n+6) { display: none; }
+      #signals:not(.expanded) .signal.signal-mobile-overflow { display: none; }
       .signal-toggle { display: block; }
       .timeline { max-height: 300px; }
       .actions-section .timeline { max-height: 300px; }
@@ -292,6 +355,10 @@ export function liveDashboardHtml() {
     <div class="shell nav">
       <div class="brand"><span class="mark">A</span><span>Agentic Wallet</span><a class="nav-link" href="/strategies">策略</a><a class="nav-link" href="/reviews">复盘</a></div>
       <div class="badges"><span class="badge market-index-badge" id="marketIndexStatus"><span>纳斯达克</span><strong id="nasdaqIndex">—</strong></span><span class="badge" id="walletStatus" aria-live="polite"><span class="dot"></span><span>钱包 未检测</span></span><span class="badge" id="mode"><span class="dot"></span><span></span></span><span class="badge" id="health"><span class="dot"></span><span></span></span><div class="control-actions"><button class="control-button" id="autoApprovalToggle" type="button" role="switch" aria-checked="false">自动审批：关</button><button class="control-button stop" id="stopButton" type="button">停机</button><button class="control-button resume" id="resumeButton" type="button" hidden>恢复</button></div></div>
+    </div>
+  </header>
+  <main class="shell">
+    <div class="page-intro"><h1>交易总览</h1><p>账户概况 · 实时信号 · 执行监控</p></div>
       <div class="top-command">
         <div class="top-stats"><span class="top-stat"><span>钱包总资产</span><strong id="walletBalance">—</strong></span><span class="top-stat"><span>可用余额</span><strong id="walletAvailableBalance">—</strong></span><span class="top-stat"><span>盈亏</span><strong class="green" id="realizedPnl">—</strong></span><span class="top-stat"><span>日亏余量</span><strong id="dailyLossRemaining">—</strong></span><span class="top-stat"><span>单笔上限</span><strong id="maxTrade">—</strong></span></div>
         <div class="top-asset-trend">
@@ -301,9 +368,11 @@ export function liveDashboardHtml() {
           <div class="asset-trend-tooltip" id="assetTrendTooltip" hidden></div>
         </div>
       </div>
-    </div>
-  </header>
-  <main class="shell">
+    <section class="signal-ticker" id="signalTicker" aria-label="强信号概要" data-paused="false">
+      <span class="ticker-label">强信号速览</span>
+      <div class="ticker-window"><div class="ticker-track" id="tickerTrack" data-empty="true"><span class="ticker-empty">正在读取信号…</span></div></div>
+      <button class="ticker-pause" id="tickerPause" type="button" aria-pressed="false" disabled>暂停滚动</button>
+    </section>
     <section class="panel wallet-login" id="walletLogin" hidden>
       <h2>钱包已断开</h2>
       <p class="muted">生成一次性 Binance 授权页面。同一台手机可直接打开；使用另一台设备时可在官方页面扫码。</p>
@@ -312,6 +381,11 @@ export function liveDashboardHtml() {
         <a id="walletLoginLink" target="_blank" rel="noopener noreferrer" hidden>打开 Binance 授权页面</a>
       </div>
       <div class="approval-result" id="walletLoginStatus"></div>
+    </section>
+    <div class="operations-grid">
+    <section class="positions-section">
+      <div class="section-head"><h2>持仓</h2><button class="section-refresh" id="positionRefresh" type="button" title="读取 Bot 最新可执行卖出报价">刷新</button></div>
+      <div class="panel" id="position"></div>
     </section>
     <section class="workflow-section">
       <div class="section-head"><h2>执行流程</h2><span class="signal-context" id="workflowStatus">读取当前阶段…</span></div>
@@ -328,19 +402,23 @@ export function liveDashboardHtml() {
       </div>
     </section>
 
+    </div>
     <div class="dashboard-grid">
     <section class="signals-section">
       <div class="section-head"><h2>信号</h2><span class="signal-context" id="signalContext">读取市场状态…</span></div>
       <div class="panel signals">
-        <div class="signal-table-head" aria-hidden="true"><span>代码</span><span>方向</span><span>强度 / 15分钟</span><span>变化</span><span>拉取时间</span></div>
+        <div class="signal-tabs" role="tablist" aria-label="标的分类">
+          <button class="signal-tab" id="signalTabStock" type="button" role="tab" aria-selected="true" aria-controls="signalPanelStock">股票 <span id="signalCountStock">0</span></button>
+          <button class="signal-tab" id="signalTabEtf" type="button" role="tab" aria-selected="false" aria-controls="signalPanelEtf" tabindex="-1">ETF <span id="signalCountEtf">0</span></button>
+        </div>
         <div id="signals"></div>
         <button class="signal-toggle" id="signalToggle" type="button" aria-expanded="false">查看全部</button>
       </div>
     </section>
 
-    <section class="positions-section">
-      <div class="section-head"><h2>持仓</h2><button class="section-refresh" id="positionRefresh" type="button" title="读取 Bot 最新可执行卖出报价">刷新</button></div>
-      <div class="panel" id="position"></div>
+    <section class="risk-section">
+      <div class="section-head"><h2>策略与风控</h2></div>
+      <div id="strategyRisk"></div>
     </section>
 
     <section class="actions-section">
@@ -348,12 +426,9 @@ export function liveDashboardHtml() {
       <div class="panel timeline" id="timeline"></div>
     </section>
     </div>
-    <section class="risk-section">
-      <div class="section-head"><h2>策略与风控</h2></div>
-      <div id="strategyRisk"></div>
-    </section>
   </main>
   <script>
+    ${dashboardStrongSignals.toString()}
     const money = (value) => value == null ? "—" : Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const pct = (value) => value == null ? "—" : (Number(value) >= 0 ? "+" : "") + Number(value).toFixed(3) + "%";
     const time = (value) => value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "等待首次心跳";
@@ -380,6 +455,71 @@ export function liveDashboardHtml() {
       SPY: "AMEX:SPY",
       QQQ: "NASDAQ:QQQ"
     };
+    const ETF_SYMBOLS = new Set(["SPY", "QQQ", "IWM", "DGRW", "IEI"]);
+    const signalAssetType = (symbol) => ETF_SYMBOLS.has(symbol) ? "ETF" : "股票";
+    let selectedSignalTab = "股票";
+    let tickerSignature = null;
+    let signalRenderSignature = null;
+    const openSignalDetails = new Set();
+    function selectSignalTab(assetType, focus = false) {
+      selectedSignalTab = assetType;
+      [["股票", "Stock"], ["ETF", "Etf"]].forEach(([type, suffix]) => {
+        const selected = type === assetType;
+        const tab = document.getElementById("signalTab" + suffix);
+        tab.setAttribute("aria-selected", String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+        const panel = document.getElementById("signalPanel" + suffix);
+        if (panel) panel.hidden = !selected;
+        if (selected && focus) tab.focus();
+      });
+    }
+    function renderSignalTicker(data, strongSymbols) {
+      const items = strongSymbols.slice(0, 8).map((symbol) => ({
+        symbol, trend: pct(data.signals[symbol].trend15mPct),
+        strength: data.signals[symbol].upMinutes + "/15 上涨",
+        atr: (data.signals[symbol].trend15mPct / data.signals[symbol].atr15Pct).toFixed(2) + "×ATR",
+        fetched: shortTime(data.signals[symbol].dataFetchedAt)
+      }));
+      const emptyText = data.marketSession !== "regular"
+        ? "休市中 · 常规交易时段恢复强信号速览"
+        : data.health?.status !== "RUNNING"
+          ? "服务状态异常 · 强信号展示已暂停"
+          : "暂无新鲜且覆盖成本的强信号 · 等待下一轮扫描";
+      const signature = JSON.stringify([items, emptyText]);
+      if (signature === tickerSignature) return;
+      tickerSignature = signature;
+      const track = document.getElementById("tickerTrack");
+      track.replaceChildren();
+      track.dataset.empty = String(!items.length);
+      document.getElementById("tickerPause").disabled = !items.length;
+      if (!items.length) {
+        track.append(el("span", "ticker-empty", emptyText));
+        return;
+      }
+      const set = el("div", "ticker-set");
+      items.forEach((item) => {
+        const button = el("button", "ticker-item");
+        button.type = "button";
+        button.setAttribute("aria-label", "查看 " + item.symbol + " 信号详情");
+        button.append(el("strong", "", item.symbol), el("span", "green", "15m " + item.trend), el("span", "", item.strength), el("span", "", item.atr), el("span", "", "成本已覆盖 · " + item.fetched));
+        button.addEventListener("click", () => {
+          selectSignalTab(signalAssetType(item.symbol));
+          document.getElementById("signals").classList.add("expanded");
+          const toggle = document.getElementById("signalToggle");
+          toggle.setAttribute("aria-expanded", "true");
+          toggle.textContent = "收起";
+          const row = document.getElementById("signal-row-" + item.symbol);
+          row?.scrollIntoView({ block: "center" });
+          row?.focus({ preventScroll: true });
+        });
+        set.append(button);
+      });
+      const duplicate = set.cloneNode(true);
+      duplicate.setAttribute("aria-hidden", "true");
+      duplicate.inert = true;
+      track.style.setProperty("--ticker-duration", Math.max(24, items.length * 12) + "s");
+      track.append(set, duplicate);
+    }
     const stockChartUrl = (symbol) => {
       const tradingViewSymbol = tradingViewSymbols[symbol];
       return tradingViewSymbol
@@ -1051,6 +1191,11 @@ export function liveDashboardHtml() {
     }
     function renderSignals(data) {
       const root = document.getElementById("signals");
+      const strongSymbols = dashboardStrongSignals(data);
+      renderSignalTicker(data, strongSymbols);
+      const signature = JSON.stringify([data.signals, data.strategy, data.stockMarketChanges, data.signalDecisionStages, data.marketSession, strongSymbols]);
+      if (signature === signalRenderSignature) return;
+      signalRenderSignature = signature;
       root.replaceChildren();
       const availableSignals = Object.values(data.signals);
       const historicalCount = availableSignals.filter((signal) => signal.source === "local-history").length;
@@ -1067,14 +1212,32 @@ export function liveDashboardHtml() {
           : liveCount
             ? "服务器实时信号"
             : "等待首次常规时段扫描";
-      data.strategy.symbols.forEach((symbol) => {
+      const signalGroups = ["股票", "ETF"];
+      signalGroups.forEach((assetType) => {
+        const symbols = data.strategy.symbols.filter((symbol) => signalAssetType(symbol) === assetType);
+        const suffix = assetType === "ETF" ? "Etf" : "Stock";
+        document.getElementById("signalCount" + suffix).textContent = symbols.length;
+        const group = document.createElement("section");
+        group.className = "signal-group";
+        group.id = "signalPanel" + suffix;
+        group.setAttribute("role", "tabpanel");
+        group.setAttribute("aria-labelledby", "signalTab" + suffix);
+        group.tabIndex = 0;
+        group.hidden = assetType !== selectedSignalTab;
+        const tableHead = el("div", "signal-table-head");
+        tableHead.setAttribute("aria-hidden", "true");
+        ["代码", "方向", "强度 / 15分钟", "变化", "拉取时间"].forEach((label) => tableHead.append(el("span", "", label)));
+        const list = el("div", "signal-list");
+        symbols.forEach((symbol, signalIndex) => {
         const signal = data.signals[symbol];
         const historical = signal?.source === "local-history";
         const costsCovered = signal?.costCoverageAllowed === true;
         const signalPassed = signal && signal.trend15mPct >= signal.atr15Pct * data.strategy.entryAtrMultiplier && signal.upMinutes >= data.strategy.minDirectionalMinutes;
-        const strongSignal = Boolean(signalPassed && costsCovered && !historical && !marketClosed);
+        const strongSignal = strongSymbols.includes(symbol);
         const direction = !signal ? "—" : signal.trend15mPct > 0 ? "↑" : signal.trend15mPct < 0 ? "↓" : "—";
-        const row = el("article", "signal" + (historical ? " historical" : "") + (strongSignal ? " strong-signal" : ""));
+        const row = el("article", "signal" + (historical ? " historical" : "") + (strongSignal ? " strong-signal" : "") + (signalIndex >= 3 ? " signal-mobile-overflow" : ""));
+        row.id = "signal-row-" + symbol;
+        row.tabIndex = -1;
         const code = el("span", "signal-code");
         const identity = el("span", "signal-identity");
         const chartUrl = stockChartUrl(symbol);
@@ -1130,10 +1293,21 @@ export function liveDashboardHtml() {
           el("span", "signal-direction " + (!signal ? "muted" : signal.trend15mPct >= 0 ? "green" : "red"), direction),
           el("span", "signal-strength", signal ? (signal.upMinutes ?? "—") + "/15 ↑" : "—"),
           el("span", "signal-change " + (signalPassed ? "green" : signal ? "red" : "muted"), signal ? pct(signal.trend15mPct) : "—"),
-          fetchedTime,
-          renderSignalDecisionStages(symbol, data.signalDecisionStages?.[symbol])
+          fetchedTime
         );
-        root.append(row);
+        const details = el("details", "signal-details");
+        details.open = openSignalDetails.has(symbol);
+        details.append(el("summary", "", "决策链路 · " + row.title), renderSignalDecisionStages(symbol, data.signalDecisionStages?.[symbol]));
+        details.addEventListener("toggle", () => {
+          if (details.open) openSignalDetails.add(symbol);
+          else openSignalDetails.delete(symbol);
+        });
+        row.append(details);
+          list.append(row);
+        });
+        if (!symbols.length) list.append(el("div", "empty", "当前分类暂无观察标的"));
+        group.append(tableHead, list);
+        root.append(group);
       });
     }
     function renderTimeline(data) {
@@ -1291,7 +1465,7 @@ export function liveDashboardHtml() {
     }
     async function refresh() {
       try {
-        const response = await fetch("/api/snapshot", { cache: "no-store" });
+        const response = await fetch("/api/snapshot", { cache: "no-store", signal: AbortSignal.timeout(15000) });
         if (!response.ok) throw new Error("HTTP " + response.status);
         const data = await response.json();
         autoApprovalEnabled = data.autoApproval?.enabled === true;
@@ -1340,6 +1514,7 @@ export function liveDashboardHtml() {
         renderStrategyRisk(data);
         renderWorkflow(data);
       } catch (error) {
+        renderSignalTicker({ marketSession: "regular", health: { status: "STALE" } }, []);
         const health = document.getElementById("health");
         health.className = "badge red";
         health.querySelector("span:last-child").textContent = "DASHBOARD ERROR";
@@ -1388,6 +1563,22 @@ export function liveDashboardHtml() {
         body: JSON.stringify({ confirm: "RESUME" })
       });
       await refresh();
+    });
+    [["股票", "Stock"], ["ETF", "Etf"]].forEach(([type, suffix]) => {
+      const tab = document.getElementById("signalTab" + suffix);
+      tab.addEventListener("click", () => selectSignalTab(type));
+      tab.addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        selectSignalTab(event.key === "Home" ? "股票" : event.key === "End" ? "ETF" : type === "股票" ? "ETF" : "股票", true);
+      });
+    });
+    document.getElementById("tickerPause").addEventListener("click", (event) => {
+      const ticker = document.getElementById("signalTicker");
+      const paused = ticker.dataset.paused !== "true";
+      ticker.dataset.paused = String(paused);
+      event.currentTarget.setAttribute("aria-pressed", String(paused));
+      event.currentTarget.textContent = paused ? "继续滚动" : "暂停滚动";
     });
     document.getElementById("signalToggle").addEventListener("click", (event) => {
       const signals = document.getElementById("signals");
