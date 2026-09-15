@@ -60,7 +60,6 @@ to the same 1220 px width for the full available visual-target comparison.
    P0/P1/P2 layout, typography, color, asset, or copy issue.
 
 final result: passed
-
 ---
 
 ## Asset trend dashboard
@@ -250,3 +249,63 @@ The selected combined mock and the implemented Dashboard were normalized to the 
 ## Final result
 
 passed
+
+---
+
+# Reviews Strategy Health Design QA
+
+## Evidence
+
+- Source visual truth: `/Users/henry/.codex/generated_images/019fb673-679f-7112-ba05-c0f7bf2d62d9/exec-1355f7f5-0e36-4b8b-90f0-bf292495b0e3.png`
+- Browser-rendered implementation: `/tmp/binance-review-audit.CWa4Co/screens/18-strategy-health-desktop-final-raw.png`
+- Normalized implementation: `/tmp/binance-review-audit.CWa4Co/screens/19-strategy-health-desktop-final.png`
+- Full-view side-by-side comparison: `/tmp/binance-review-audit.CWa4Co/screens/20-design-qa-final-comparison.png`
+- Main-content focused comparison: `/tmp/binance-review-audit.CWa4Co/screens/21-design-qa-main-focus.png`
+- Evidence-rail focused comparison: `/tmp/binance-review-audit.CWa4Co/screens/22-design-qa-rail-focus.png`
+- Mobile implementation: `/tmp/binance-review-audit.CWa4Co/screens/17-strategy-health-mobile-final-raw.png`
+
+## Viewport and state
+
+- Source pixels: 1487 x 1058.
+- Implementation CSS viewport: 1486 x 1058; browser capture surface: 2218 x 1579; reported device pixel ratio: 0.67.
+- Density normalization: cropped the active 1110 x 790 capture region and scaled it to 1487 x 1058 with Lanczos before side-by-side comparison. Both compared panels therefore represent the same desktop viewport and top-of-page state.
+- Desktop state: `/reviews`, latest archive selected (`2026-08-24`), all optional evidence details collapsed, scroll position 0.
+- Mobile state: 389 x 845 CSS viewport, latest archive selected, document width 389 with no page-level horizontal overflow. The comparison table owns its horizontal scroll and displays a visible swipe instruction.
+
+## Findings
+
+- No actionable P0, P1, or P2 differences remain.
+- Typography: heading scale, numeric monospace treatment, weights, line-height, and information hierarchy match the source direction. Chinese system-font fallback is expected and readable.
+- Spacing and layout: the desktop two-column split, 380 px evidence rail, health summary, comparison matrix, ranked diagnosis, card radii, borders, and vertical rhythm preserve the source composition. Mobile collapses to one column without clipped controls or document overflow.
+- Colors and tokens: dark neutral surfaces, gold primary action, green realized gains, red losses/freshness, blue Shadow evidence, and muted descriptive evidence match the intended semantics and retain contrast.
+- Image quality and assets: the existing project favicon remains the only production brand asset. The source-only decorative heartbeat illustration was not replaced with CSS, emoji, text, or an approximate SVG. Generated raster candidates were rejected because they contained visible artifacts or an invalid baked checkerboard. Its omission is P3 because the health-status hierarchy and meaning remain complete without it.
+- Copy and content: the implementation intentionally uses live report values rather than inaccurate mock values. It also distinguishes real fills, non-executing Shadow evidence, and descriptive low-sample attribution in every relevant section.
+- Interactions: date selection loaded `2026-08-21` and returned to `2026-08-24`; the diagnosis action scrolled to the ranked issues; the evidence action opened all four supplemental evidence groups; trade and grouped-incident details remain independently expandable.
+- Console: no browser errors or warnings.
+
+## Comparison history
+
+### Iteration 1
+
+- P2: review-phase metadata sat above the title, shifting the page hierarchy and main regions below the source target.
+- Fix: moved phase metadata into the right action column so the title and freshness warning lead the page.
+- P2: the mobile comparison table allowed horizontal scrolling without telling the reader that the 20-day and judgement columns continued off-screen.
+- Fix: added a mobile-only instruction and verified that horizontal overflow remains contained inside the table wrapper.
+- Post-fix evidence: desktop `/tmp/binance-review-audit.CWa4Co/screens/20-design-qa-final-comparison.png`; mobile `/tmp/binance-review-audit.CWa4Co/screens/17-strategy-health-mobile-final-raw.png`.
+
+## Implementation checklist
+
+- [x] Health conclusion precedes raw metrics.
+- [x] Today, 5-day, and 20-day evidence share one aligned comparison matrix.
+- [x] Problems are ranked by impact and carry explicit evidence labels.
+- [x] Repeated incidents are grouped by root cause with raw events expandable.
+- [x] Real fills, Shadow research, and descriptive attribution remain separate.
+- [x] Desktop and mobile layouts are verified.
+- [x] Primary interactions and date switching are verified.
+- [x] Browser console and full automated test suite are clean.
+
+## Follow-up polish
+
+- P3: add the heartbeat illustration only after a clean, approved production asset is available; do not approximate it in code.
+
+final result: passed
