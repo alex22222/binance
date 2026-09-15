@@ -2,6 +2,7 @@ import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises
 import { dirname, resolve } from "node:path";
 import { nyseSessionPlan } from "../src/strategy.mjs";
 import { newYorkSessionBounds } from "../src/strategy-data.mjs";
+import { TURTLE_ETF_UNIVERSE, turtleEtfAssets } from "../src/turtle-etf-universe.mjs";
 import {
   advanceTurtlePaper,
   initialTurtlePaperState,
@@ -12,6 +13,8 @@ const projectRoot = resolve(import.meta.dirname, "..");
 const config = JSON.parse(await readFile(resolve(projectRoot, process.env.BOT_CONFIG || "config.json"), "utf8"));
 const statePath = resolve(projectRoot, process.env.TURTLE_PAPER_STATE || "state/turtle-paper/latest.json");
 const eventsPath = resolve(projectRoot, process.env.TURTLE_PAPER_EVENTS || "state/turtle-paper/events.jsonl");
+const screeningPath = resolve(dirname(statePath), "etf-screening.json");
+const screenOnly = process.argv.includes("--screen-only");
 const nowMs = process.env.TURTLE_PAPER_NOW ? Date.parse(process.env.TURTLE_PAPER_NOW) : Date.now();
 const now = new Date(nowMs).toISOString();
 const roundTripCostPct = config.maxRoundTripCostPct + config.executionBufferPct +
@@ -88,15 +91,19 @@ async function dailyCandles(symbol, sessionDate) {
   const result = (await fetchJson(url)).chart?.result?.[0];
   if (!result) throw new Error(`Yahoo daily data unavailable: ${symbol}`);
   const quote = result.indicators?.quote?.[0] || {};
-  return (result.timestamp || []).map((timestamp, index) => ({
+  const candles = (result.timestamp || []).map((timestamp, index) => ({
     openTime: Number(timestamp) * 1000,
     high: Number(quote.high?.[index]),
     low: Number(quote.low?.[index]),
     close: Number(quote.close?.[index])
   })).filter((candle) => (
     newYorkDate(candle.openTime) < sessionDate &&
-    [candle.high, candle.low, candle.close].every(Number.isFinite)
+    [candle.high, candle.low, candle.close].every((value) => Number.isFinite(value) && value > 0)
   ));
+  await atomicJson(resolve(dirname(statePath), "daily", `${symbol}.json`), {
+    symbol, collectedAt: now, sessionDate, source: "Yahoo Finance daily chart", candles
+  });
+  return candles;
 }
 
 async function assetsByTicker() {
@@ -105,8 +112,7 @@ async function assetsByTicker() {
   if (payload.code !== "000000" || !Array.isArray(payload.data)) {
     throw new Error(`Binance asset list failed: ${payload.code || "unknown"}`);
   }
-  return new Map(payload.data.filter(({ chainId }) => chainId === "56")
-    .map((asset) => [asset.ticker, asset]));
+  return payload.data;
 }
 
 async function latestTokenPrice(asset, sessionPlan) {
@@ -130,7 +136,7 @@ async function latestTokenPrice(asset, sessionPlan) {
   return { price: candle.close, observedAt: new Date(candle.closeTime).toISOString() };
 }
 
-const state = await loadState();
+const state = screenOnly ? initialTurtlePaperState(now) : await loadState();
 const sessionDate = newYorkDate(nowMs);
 const plan = nyseSessionPlan(nowMs);
 const bounds = newYorkSessionBounds(sessionDate);
@@ -139,7 +145,7 @@ const sessionPlan = {
   openMs: bounds.openMs,
   closeMs: plan.closeTime === "13:00" ? bounds.openMs + 3.5 * 60 * 60_000 : bounds.closeMs
 };
-if (!plan.regularOpen || nowMs < sessionPlan.openMs + 60_000) {
+if (!screenOnly && (!plan.regularOpen || nowMs < sessionPlan.openMs + 60_000)) {
   const result = advanceTurtlePaper(state, {
     at: now,
     sessionDate,
@@ -154,13 +160,34 @@ if (!plan.regularOpen || nowMs < sessionPlan.openMs + 60_000) {
   process.exit(0);
 }
 
-const blockedSymbols = config.entryBlockedSymbols || [];
-const eligibleSymbols = config.symbols.filter((symbol) => !blockedSymbols.includes(symbol));
-const daily = new Map(await mapWithConcurrency(eligibleSymbols, 4, async (symbol) => [
-  symbol,
-  turtleDailyFeature(await dailyCandles(symbol, sessionDate))
-]));
-const assets = await assetsByTicker();
+const assetList = await assetsByTicker();
+const etfAssets = turtleEtfAssets(assetList);
+// This independently authorized Paper pool does not inherit the Live momentum blacklist.
+const eligibleSymbols = TURTLE_ETF_UNIVERSE.map(({ symbol }) => symbol);
+// Preserve exits for a position opened before the ETF universe was selected.
+const observedSymbols = [...new Set([...eligibleSymbols, ...(state.position ? [state.position.symbol] : [])])];
+const dailyRows = await mapWithConcurrency(observedSymbols, 4, async (symbol) => {
+  const candles = await dailyCandles(symbol, sessionDate);
+  return { symbol, bars: candles.length, feature: turtleDailyFeature(candles) };
+});
+const daily = new Map(dailyRows.map(({ symbol, feature }) => [symbol, feature]));
+const assets = new Map(assetList.filter(({ chainId }) => chainId === "56").map((asset) => [asset.ticker, asset]));
+const screening = {
+  at: now, sessionDate, strategyId: state.strategyId, mode: "paper",
+  evidenceLevel: "DAILY_SIGNAL_ONLY", roundTripCostPct,
+  universe: etfAssets.map((asset) => ({
+    symbol: asset.symbol, exposure: asset.exposure, cluster: asset.cluster,
+    chainId: asset.chainId, contractAddress: asset.contractAddress,
+    multiplier: asset.multiplier, entryEligible: eligibleSymbols.includes(asset.symbol),
+    ...dailyRows.find(({ symbol }) => symbol === asset.symbol)
+  }))
+};
+await atomicJson(screeningPath, screening);
+if (screenOnly) {
+  console.log(JSON.stringify(screening));
+  process.exit(0);
+}
+state.universe = { id: "turtle-etf-v1", symbols: eligibleSymbols, observedAt: now };
 let positionObservation = null;
 if (state.position) {
   const asset = assets.get(state.position.symbol);
@@ -173,7 +200,9 @@ if (state.position) {
     exitBreakout: daily.get(state.position.symbol)?.exitBreakout === true
   };
 }
-const breakoutFeatures = [...daily.entries()].filter(([, feature]) => feature?.entryBreakout);
+const breakoutFeatures = [...daily.entries()].filter(([symbol, feature]) => (
+  eligibleSymbols.includes(symbol) && feature?.entryBreakout
+));
 const candidates = state.position || state.lastEntryEvaluationDate === sessionDate
   ? []
   : await mapWithConcurrency(breakoutFeatures, 3, async ([symbol, feature]) => {

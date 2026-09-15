@@ -100,7 +100,10 @@ const expandedResearchSymbols = [
   "JPM",
   "XOM",
   "LLY",
-  "COST"
+  "COST",
+  "IWM",
+  "DGRW",
+  "IEI"
 ];
 
 test("deduplicates the configured universe", () => {

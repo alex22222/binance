@@ -84,10 +84,10 @@ test("compares realized returns by strategy without inventing missing results", 
   assert.equal(basis.performance.winRatePct, null);
 });
 
-test("attaches the same non-enforcing shadow risk overlays to every strategy", () => {
+test("attaches shared overlays to existing strategies but not isolated defensive Paper", () => {
   const comparison = buildStrategyComparison("adaptive-momentum", []);
 
-  assert.equal(comparison.length, 10);
+  assert.equal(comparison.length, 12);
   const pullback = comparison.find((strategy) => strategy.id === "trend-pullback-confirmation");
   const relativePullback = comparison.find(
     (strategy) => strategy.id === "regime-relative-pullback-momentum"
@@ -98,6 +98,12 @@ test("attaches the same non-enforcing shadow risk overlays to every strategy", (
   assert.equal(relativePullback.switchable, false);
   for (const strategy of comparison) {
     assert.equal(strategy.direction, "LONG_ONLY");
+    if (strategy.id === "weekly-etf-dual-momentum-defense") {
+      assert.equal(strategy.switchable, false);
+      assert.equal(strategy.validationStatus, "PAPER_TRACKING");
+      assert.deepEqual(strategy.subStrategies, []);
+      continue;
+    }
     assert.equal(strategy.subStrategies.length, 6);
     assert.equal(strategy.subStrategies[0].id, "shadow-market-regime-filter");
     assert.equal(strategy.subStrategies[0].mode, "SHADOW");
@@ -147,6 +153,21 @@ test("registers turtle 55/20 as a non-switchable long-only research strategy", (
   assert.equal(turtle.validationStatus, "LOCAL_BACKTEST_INSUFFICIENT_SAMPLE");
   assert.ok(turtle.backtestData.includes("Yahoo Finance 日线"));
   assert.ok(turtle.sources.length >= 1);
+});
+
+test("registers weekly ETF rotation as a non-switchable Paper strategy", () => {
+  const rotation = buildStrategyComparison("adaptive-momentum", [])
+    .find(({ id }) => id === "weekly-etf-momentum-rsi-rotation");
+
+  assert.ok(rotation);
+  assert.equal(rotation.status, "RESEARCH");
+  assert.equal(rotation.switchable, false);
+  assert.equal(rotation.direction, "LONG_ONLY");
+  assert.equal(rotation.family, "TREND_MOMENTUM");
+  assert.equal(rotation.horizon, "SWING");
+  assert.equal(rotation.timeframe, "WEEKLY_SIGNAL_REGULAR_SESSION_EXECUTION");
+  assert.equal(rotation.validationStatus, "PAPER_TRACKING");
+  assert.ok(rotation.backtestData.includes("Yahoo Finance"));
 });
 
 test("classifies every strategy by family, horizon, stage, and primary risk", () => {

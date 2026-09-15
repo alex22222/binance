@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Weekly ETF Rotation Paper during possible U.S. regular-session hours
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 13..21:00/15:00 UTC
+AccuracySec=10s
+Persistent=true
+Unit=binance-agentic-weekly-etf-paper.service
+
+[Install]
+WantedBy=timers.target

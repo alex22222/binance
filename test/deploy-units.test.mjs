@@ -54,3 +54,16 @@ test("Turtle Paper runs independently without wallet or bot service access", asy
   assert.match(timer, /OnCalendar=Mon\.\.Fri/);
   assert.match(timer, /turtle-paper\.service/);
 });
+
+test("weekly ETF Paper runs independently without wallet or Live access", async () => {
+  const [service, timer] = await Promise.all([
+    readFile(new URL("../deploy/binance-agentic-weekly-etf-paper.service", import.meta.url), "utf8"),
+    readFile(new URL("../deploy/binance-agentic-weekly-etf-paper.timer", import.meta.url), "utf8")
+  ]);
+  assert.match(service, /ExecStart=\/usr\/bin\/node scripts\/run-weekly-etf-rotation-paper\.mjs/);
+  assert.match(service, /ReadWritePaths=\/opt\/binance-agentic-stock-bot\/state\/weekly-etf-rotation-paper/);
+  assert.doesNotMatch(service, /EnvironmentFile|BAW|BOT_LIVE/);
+  assert.match(service, /ProtectSystem=strict/);
+  assert.match(timer, /OnCalendar=Mon\.\.Fri/);
+  assert.match(timer, /weekly-etf-paper\.service/);
+});

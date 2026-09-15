@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { WEEKLY_ETF_DEFENSE_CATALOG } from "./weekly-etf-defense-catalog.mjs";
 
 export const DEFAULT_STRATEGY_ID = "adaptive-momentum";
 
@@ -117,6 +118,7 @@ function shadowRiskOverlays(role) {
 }
 
 export const STRATEGIES = [
+  WEEKLY_ETF_DEFENSE_CATALOG,
   {
     id: DEFAULT_STRATEGY_ID,
     name: "自适应动量",
@@ -324,6 +326,31 @@ export const STRATEGIES = [
       }
     ],
     subStrategies: shadowRiskOverlays("识别突破后的市场逆风、弱趋势和相关性集中风险")
+  },
+  {
+    id: "weekly-etf-momentum-rsi-rotation",
+    name: "周频 ETF 动量 RSI 轮动",
+    shortName: "ETF周轮动",
+    status: "RESEARCH",
+    direction: "LONG_ONLY",
+    family: "TREND_MOMENTUM",
+    horizon: "SWING",
+    riskCluster: "MARKET_BETA",
+    timeframe: "WEEKLY_SIGNAL_REGULAR_SESSION_EXECUTION",
+    validationStatus: "PAPER_TRACKING",
+    thesis: "在币安可用 ETF 中每周持有近期动量最强且 RSI 未转弱的风险资产，全体转弱时持有中期美国国债。",
+    entry: "QQQ/IWM/DGRW/SPY 按20日动量排序且 RSI(14)≥40；每周首个常规时段用上一交易日信号换仓",
+    exit: "下一次周度决策切换目标；全体风险 ETF 的 RSI<40 时切换到 IEI",
+    evidence: "底层 ETF 历史回测年化10.23%、最大回撤34.56%，仍落后主要被动基准；仅进入独立 Paper 跟踪",
+    risk: "短周期反复换仓、系统性回撤、代币价差和 Gas；IWM/DGRW 不是原始 IWO/VYM 的精确风格替代",
+    backtestData: "Yahoo Finance 复权日线生成信号，Binance BSC 代币已完成常规时段分钟K线作为 Paper 成交代理",
+    sources: [
+      {
+        title: "年化27%的ETF轮动策略（用户提供原帖）",
+        url: "https://xhslink.cn/o/2UxzokRe41V"
+      }
+    ],
+    subStrategies: shadowRiskOverlays("标记风险资产共同走弱和高换手成本")
   }
 ];
 

@@ -1,0 +1,11 @@
+{
+  "mode": "paper",
+  "symbols": ["SPY", "QQQ", "IWM", "EFA", "EEM", "TLT", "GLD", "DBC"],
+  "maxTradeUsdt": 50,
+  "maxOpenPositions": 1,
+  "maxRoundTripCostPct": 0.7,
+  "executionBufferPct": 0.1,
+  "estimatedRoundTripGasUsdt": 0.1,
+  "minNetEdgePct": 0.1,
+  "entryBlockedSymbols": []
+}

@@ -161,6 +161,26 @@ sudo systemctl enable --now binance-agentic-turtle-paper.timer
 systemctl list-timers binance-agentic-turtle-paper.timer
 ```
 
+## Weekly ETF Rotation Paper
+
+The weekly rotation service is isolated from both the Live bot and Turtle
+Paper. On the first NYSE trading day of each week it ranks QQQ, IWM, DGRW, and
+SPY by 20-day adjusted-close momentum, excludes assets below Wilder RSI(14) 40,
+and uses IEI when every risk ETF is excluded. Yahoo adjusted daily closes are
+signals; the latest completed Binance BSC token minute is a simulated fill.
+
+The state, event log, daily inputs, and screening snapshot are written only to
+`state/weekly-etf-rotation-paper/`. Results remain `PAPER_CANDLE_PROXY`: the
+service never accesses the wallet or submits a swap, and its fixed cost proxy
+is not executable-quote evidence.
+
+```bash
+sudo install -d -o binancebot -g binancebot -m 700 \
+  /opt/binance-agentic-stock-bot/state/weekly-etf-rotation-paper
+sudo systemctl enable --now binance-agentic-weekly-etf-paper.timer
+systemctl list-timers binance-agentic-weekly-etf-paper.timer
+```
+
 ## Explicit live cutover
 
 Never run the local Mac and server with `BOT_LIVE=1` at the same time. Before

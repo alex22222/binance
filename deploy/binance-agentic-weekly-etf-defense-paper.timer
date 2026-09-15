@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Weekly ETF Dual Momentum Defense Paper
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 13..21:00/15:30 UTC
+AccuracySec=10s
+Persistent=true
+Unit=binance-agentic-weekly-etf-defense-paper.service
+
+[Install]
+WantedBy=timers.target
