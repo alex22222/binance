@@ -6,6 +6,10 @@ const cookieWriteVariants = [
   {
     vulnerable: 'T&&(q.session("Session ID extracted, pending commit"),this.sessionManager.setPendingSessionId(T[1]))',
     durable: 'T&&(q.session("Session ID extracted"),(this.sessionManager.pendingSessionId||e.endsWith("/agent-wallet/login")?this.sessionManager.setPendingSessionId(T[1]):await this.sessionManager.setSessionId(T[1])))'
+  },
+  {
+    vulnerable: 'T&&(F.session("Session ID extracted, pending commit"),this.sessionManager.setPendingSessionId(T[1]))',
+    durable: 'T&&(F.session("Session ID extracted"),(this.sessionManager.pendingSessionId||e.endsWith("/agent-wallet/login")?this.sessionManager.setPendingSessionId(T[1]):await this.sessionManager.setSessionId(T[1])))'
   }
 ];
 const vulnerableClientIdRecovery =

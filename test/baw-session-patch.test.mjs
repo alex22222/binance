@@ -58,6 +58,23 @@ test("patches the current CLI client ID recovery shape without dropping its file
   assert.match(first.source, /this\.fileData\.clientId=Et\(this\.decryptedClientId\)/);
 });
 
+test("patches the BAW 1.10 response-cookie write shape", () => {
+  const vulnerableClientIdRecovery =
+    'if(this.fileData.clientId){let e=this.decryptClientId(this.fileData.clientId);if(e)return this.decryptedClientId=e,this.decryptedClientId}this.decryptedClientId=hn(),this.clientIdRegenerated=!0';
+  const vulnerable = [
+    vulnerableClientIdRecovery,
+    "before;",
+    'T&&(F.session("Session ID extracted, pending commit"),this.sessionManager.setPendingSessionId(T[1]))',
+    ";after"
+  ].join("");
+
+  const first = patchBawSessionPersistence(vulnerable);
+
+  assert.equal(first.changed, true);
+  assert.match(first.source, /F\.session\("Session ID extracted"\)/);
+  assert.match(first.source, /await this\.sessionManager\.setSessionId/);
+});
+
 test("refuses to modify an unknown CLI build", () => {
   assert.throws(() => patchBawSessionPersistence("unknown build"), /unsupported BAW CLI build/);
 });
