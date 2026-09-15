@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { latestCompletedTradingDate, newYorkDate, tradingDates } from "../src/strategy-data.mjs";
 import {
   buildTradingReview,
+  readTradingReviewRecords,
   shouldGenerateTradingReview,
   writeTradingReviewArchive
 } from "../src/trade-review.mjs";
@@ -47,19 +48,11 @@ if (!shouldGenerateTradingReview({
 const sessionStart = new Date(
   Date.parse(`${tradingDate}T00:00:00.000Z`) - 60 * 86_400_000
 ).toISOString().slice(0, 10);
-const [stateText, traceText] = await Promise.all([
+const [stateText, trace] = await Promise.all([
   readFile(statePath, "utf8").catch((error) => error.code === "ENOENT" ? "{}" : Promise.reject(error)),
-  readFile(tracePath, "utf8").catch((error) => error.code === "ENOENT" ? "" : Promise.reject(error))
+  readTradingReviewRecords(tracePath)
 ]);
-const malformed = [];
-const records = traceText.split("\n").filter(Boolean).flatMap((line, index) => {
-  try {
-    return [JSON.parse(line)];
-  } catch {
-    malformed.push(index + 1);
-    return [];
-  }
-});
+const { records } = trace;
 const baseReport = buildTradingReview({
   records,
   state: JSON.parse(stateText),
@@ -122,6 +115,6 @@ console.log(JSON.stringify({
   openPositions: report.openPositions.length,
   marketAttributionStatus: report.externalMarket.status,
   marketAttributedLossSharePct: report.externalMarket.marketAttributedLossSharePct,
-  malformedTraceLines: malformed.length,
+  malformedTraceLines: trace.malformedLines,
   stateDirectory: dirname(statePath)
 }));

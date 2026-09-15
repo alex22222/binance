@@ -58,7 +58,9 @@ test("dashboard records one exact approval without writing the bot state", async
       DASHBOARD_MARKET_INDEX_DISABLED: "1",
       DASHBOARD_STOCK_MARKET_DISABLED: "1",
       DASHBOARD_WALLET_BALANCE_DISABLED: "1",
-      TRADE_REVIEW_DIR: join(directory, "trade-reviews")
+      TRADE_REVIEW_DIR: join(directory, "trade-reviews"),
+      FUND_MANAGER_DIR: join(directory, "fund-manager"),
+      WEEKLY_RESEARCH_DIR: join(directory, "weekly-research")
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -90,6 +92,18 @@ test("dashboard records one exact approval without writing the bot state", async
     const reviewPage = await fetch(`${origin}/reviews`);
     assert.equal(reviewPage.status, 200);
     assert.match(await reviewPage.text(), /id="dailyMetrics"/);
+
+    const managerPage = await fetch(`${origin}/fund-manager`);
+    assert.equal(managerPage.status, 200);
+    assert.match(managerPage.headers.get("content-security-policy"), /default-src 'none'/);
+    assert.match(await managerPage.text(), /日报尚未生成/);
+    assert.equal((await fetch(`${origin}/fund-manager?date=invalid`)).status, 400);
+
+    const weeklyPage = await fetch(`${origin}/weekly-strategy`);
+    assert.equal(weeklyPage.status, 200);
+    assert.match(await weeklyPage.text(), /周报尚未生成/);
+    assert.equal((await fetch(`${origin}/api/weekly-strategy`).then((response) => response.json())).available, false);
+    assert.equal((await fetch(`${origin}/weekly-strategy?week=invalid`)).status, 400);
 
     const reviews = await fetch(`${origin}/api/trade-reviews`).then((response) => response.json());
     assert.equal(reviews.available, false);
@@ -292,6 +306,15 @@ test("dashboard protects public access with basic auth and an exact HTTPS origin
     const mobileEntry = await fetch(`${origin}/`, { redirect: "manual" });
     assert.equal(mobileEntry.status, 303);
     assert.equal(mobileEntry.headers.get("location"), "/login");
+
+    const managerEntry = await fetch(`${origin}/fund-manager?date=2026-09-13&edition=preview`, { redirect: "manual" });
+    assert.equal(managerEntry.status, 303);
+    assert.equal(managerEntry.headers.get("location"), "/login");
+
+    const weeklyEntry = await fetch(`${origin}/weekly-strategy`, { redirect: "manual" });
+    assert.equal(weeklyEntry.status, 303);
+    assert.equal(weeklyEntry.headers.get("location"), "/login");
+    assert.equal((await fetch(`${origin}/api/weekly-strategy`)).status, 401);
 
     const loginPage = await fetch(`${origin}/login`);
     assert.equal(loginPage.status, 200);

@@ -65,17 +65,20 @@ export function strategyLabHtml() {
     .validation-values { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
     .validation-values span { color: var(--muted); font-size: 10px; }
     .validation-values strong { display: block; margin-top: 4px; color: var(--text); font: 700 13px ui-monospace, SFMono-Regular, monospace; }
-    .strategy-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .strategy-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
     .strategy-card { display: flex; flex-direction: column; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: rgba(17,21,28,.9); }
     .strategy-card.active { border-color: rgba(81,214,163,.55); box-shadow: inset 0 0 0 1px rgba(81,214,163,.1); }
+    .strategy-card.priority-strategy { border-color: rgba(245,193,79,.5); background: linear-gradient(100deg, rgba(245,193,79,.09), rgba(17,21,28,.9) 36%); }
     .strategy-title { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
     .strategy-title h3 { margin: 0; font-size: 20px; letter-spacing: -.035em; }
+    .strategy-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
     .classification-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
     .classification-tag { padding: 5px 7px; border: 1px solid rgba(120,169,255,.2); border-radius: 8px; color: #b8c9e8; background: rgba(120,169,255,.06); font-size: 10px; }
     .badge { display: inline-flex; align-items: center; padding: 6px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font: 700 10px ui-monospace, SFMono-Regular, monospace; white-space: nowrap; }
     .badge.green { color: var(--green); border-color: rgba(81,214,163,.35); }
     .badge.blue { color: var(--blue); border-color: rgba(120,169,255,.35); }
     .badge.gold { color: var(--gold); border-color: rgba(245,193,79,.35); }
+    .badge.priority { color: #ffe2a0; border-color: rgba(245,193,79,.65); background: rgba(245,193,79,.11); }
     .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0; }
     .metric { min-width: 0; padding: 10px; border-radius: 10px; background: rgba(8,10,14,.55); }
     .label { color: var(--muted); font-size: 10px; letter-spacing: .09em; text-transform: uppercase; }
@@ -91,7 +94,7 @@ export function strategyLabHtml() {
     .error { color: var(--red); }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
     @media (max-width: 820px) {
-      .strategy-grid, .validation-grid { grid-template-columns: 1fr; }
+      .validation-grid { grid-template-columns: 1fr; }
       .strategy-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .metrics { grid-template-columns: repeat(2, 1fr); }
     }
@@ -119,6 +122,14 @@ export function strategyLabHtml() {
     </div>
   </header>
   <main class="shell">
+    <section aria-labelledby="weeklyResearchTitle">
+      <div class="section-head"><h2 id="weeklyResearchTitle">基金经理 · 周度策略建议</h2></div>
+      <div class="panel filter-panel">
+        <p class="validation-meta">每周日研究宏观、黄金、债市、政治事件、Polymarket 与技术面。通过数据和回测门槛才提出研究建议；不自动改变实盘。</p>
+        <p id="weeklyResearchStatus" class="validation-meta">正在读取周报状态…</p>
+        <a class="back-link" href="/weekly-strategy">阅读本周报告与验证记录</a>
+      </div>
+    </section>
     <section aria-labelledby="classificationTitle">
       <div class="section-head"><h2 id="classificationTitle">策略分类</h2></div>
       <div class="panel filter-panel">
@@ -148,7 +159,7 @@ export function strategyLabHtml() {
 
     <section>
       <div class="section-head"><h2>策略</h2></div>
-      <div class="strategy-grid" id="strategyComparison"></div>
+      <div class="strategy-list" id="strategyComparison"></div>
       <div class="status" id="status" aria-live="polite"></div>
     </section>
   </main>
@@ -168,6 +179,11 @@ export function strategyLabHtml() {
       { key: "stage", label: "成熟阶段" },
       { key: "riskCluster", label: "主要风险" }
     ];
+    const PRIORITY_STRATEGY_IDS = [
+      "adaptive-momentum",
+      "weekly-etf-momentum-rsi-rotation",
+      "daily-turtle-55-20"
+    ];
     const strategyFilters = Object.fromEntries(FILTER_DIMENSIONS.map(({ key }) => [key, "ALL"]));
     let latestSnapshot = null;
     let renderedFilterSignature = null;
@@ -177,6 +193,16 @@ export function strategyLabHtml() {
       return strategies.filter((strategy) => FILTER_DIMENSIONS.every(({ key }) => (
         strategyFilters[key] === "ALL" || strategy.classification?.[key]?.id === strategyFilters[key]
       )));
+    }
+
+    function prioritizeStrategies(strategies) {
+      return [...strategies].sort((left, right) => {
+        const leftIndex = PRIORITY_STRATEGY_IDS.indexOf(left.id);
+        const rightIndex = PRIORITY_STRATEGY_IDS.indexOf(right.id);
+        const leftRank = leftIndex === -1 ? PRIORITY_STRATEGY_IDS.length : leftIndex;
+        const rightRank = rightIndex === -1 ? PRIORITY_STRATEGY_IDS.length : rightIndex;
+        return leftRank - rightRank;
+      });
     }
 
     function renderFilterControls(strategies, filteredStrategies) {
@@ -331,7 +357,7 @@ export function strategyLabHtml() {
 
     function renderStrategies(data) {
       const strategies = Array.isArray(data.strategies) ? data.strategies : [];
-      const filteredStrategies = filterStrategies(strategies);
+      const filteredStrategies = prioritizeStrategies(filterStrategies(strategies));
       const root = document.getElementById("strategyComparison");
       root.replaceChildren();
       const active = strategies.find((strategy) => strategy.active);
@@ -339,11 +365,15 @@ export function strategyLabHtml() {
       document.getElementById("mode").textContent = data.mode.toUpperCase();
       renderFilterControls(strategies, filteredStrategies);
       filteredStrategies.forEach((strategy) => {
-        const card = el("article", "strategy-card" + (strategy.active ? " active" : ""));
+        const isPriority = PRIORITY_STRATEGY_IDS.includes(strategy.id);
+        const card = el("article", "strategy-card" + (strategy.active ? " active" : "") + (isPriority ? " priority-strategy" : ""));
         const title = el("div", "strategy-title");
+        const badges = el("div", "strategy-badges");
+        if (isPriority) badges.append(el("span", "badge priority", "重点策略"));
+        badges.append(el("span", "badge " + (strategy.active ? "green" : strategy.switchable ? "blue" : "gold"), strategy.active ? "运行中" : strategy.classification.stage.label));
         title.append(
           el("h3", "", strategy.name),
-          el("span", "badge " + (strategy.active ? "green" : strategy.switchable ? "blue" : "gold"), strategy.active ? "运行中" : strategy.classification.stage.label)
+          badges
         );
         card.append(title);
         const classification = el("div", "classification-tags");
@@ -435,6 +465,19 @@ export function strategyLabHtml() {
       }
     }
 
+    async function refreshWeeklyResearch() {
+      const status = document.getElementById("weeklyResearchStatus");
+      try {
+        const response = await fetch("/api/weekly-strategy", { cache: "no-store", signal: AbortSignal.timeout(10000) });
+        if (!response.ok) throw new Error("Report unavailable");
+        const data = await response.json();
+        status.textContent = !data.available ? "本周报告尚未生成；暂无可采纳的策略建议。"
+          : (data.stale || data.currentWeekMissing ? "历史报告 / 等待本周更新 · " : "本期 · ") + data.report.id + " · " +
+            (data.report.validation.status === "WITHHOLD" ? "不提出策略调整" : "研究提案待审阅") + " · " + data.report.analysis.summary;
+      } catch { status.textContent = "周报读取失败，不能据此推断本周有可用建议。"; }
+    }
+    refreshWeeklyResearch();
+    setInterval(refreshWeeklyResearch, 60000);
     refresh();
     setInterval(refresh, 3000);
   </script>

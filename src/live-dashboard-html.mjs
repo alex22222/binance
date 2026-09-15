@@ -302,7 +302,7 @@ export function liveDashboardHtml() {
       .event { grid-template-columns: 54px minmax(0, 1fr); padding-inline: 9px; }
       .control-button { min-height: 44px; }
       .nav { align-items: stretch; flex-direction: column; gap: 12px; padding: 12px; border-radius: 16px; }
-      .brand { min-height: 44px; }
+      .brand { min-height: 44px; flex-wrap: wrap; }
       .nav-link { min-height: 40px; display: inline-flex; align-items: center; }
       .top-command { display: grid; grid-template-columns: 1fr; gap: 1px; padding-top: 0; border-top: 0; }
       .top-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0; }
@@ -353,7 +353,7 @@ export function liveDashboardHtml() {
 <body>
   <header>
     <div class="shell nav">
-      <div class="brand"><span class="mark">A</span><span>Agentic Wallet</span><a class="nav-link" href="/strategies">策略</a><a class="nav-link" href="/reviews">复盘</a></div>
+      <div class="brand"><span class="mark">A</span><span>Agentic Wallet</span><a class="nav-link" href="/strategies">策略</a><a class="nav-link" href="/reviews">复盘</a><a class="nav-link" href="/fund-manager">基金经理</a></div>
       <div class="badges"><span class="badge market-index-badge" id="marketIndexStatus"><span>纳斯达克</span><strong id="nasdaqIndex">—</strong></span><span class="badge" id="walletStatus" aria-live="polite"><span class="dot"></span><span>钱包 未检测</span></span><span class="badge" id="mode"><span class="dot"></span><span></span></span><span class="badge" id="health"><span class="dot"></span><span></span></span><div class="control-actions"><button class="control-button" id="autoApprovalToggle" type="button" role="switch" aria-checked="false">自动审批：关</button><button class="control-button stop" id="stopButton" type="button">停机</button><button class="control-button resume" id="resumeButton" type="button" hidden>恢复</button></div></div>
     </div>
   </header>

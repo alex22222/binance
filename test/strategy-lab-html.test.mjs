@@ -11,6 +11,12 @@ test("strategy page keeps only operational comparison and switch controls", () =
   assert.match(html, /id="activeStrategy"/);
   assert.match(html, /id="mode"/);
   assert.match(html, /id="strategyComparison"/);
+  assert.match(html, /PRIORITY_STRATEGY_IDS/);
+  assert.match(html, /weekly-etf-momentum-rsi-rotation/);
+  assert.match(html, /daily-turtle-55-20/);
+  assert.match(html, /重点策略/);
+  assert.match(html, /priority-strategy/);
+  assert.match(html, /strategy-list/);
   assert.match(html, /id="returnComparison"/);
   assert.match(html, /id="strategyFilters"/);
   assert.match(html, /id="strategyFilterSummary"/);

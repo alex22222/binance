@@ -15,6 +15,9 @@ import { liveDashboardHtml } from "../src/live-dashboard-html.mjs";
 import { dashboardLoginHtml } from "../src/dashboard-login-html.mjs";
 import { strategyLabHtml } from "../src/strategy-lab-html.mjs";
 import { tradeReviewHtml } from "../src/trade-review-html.mjs";
+import { loadManagerPage } from "../src/fund-manager-html.mjs";
+import { weeklyReportStatus } from "../src/weekly-research-store.mjs";
+import { weeklyResearchHtml } from "../src/weekly-research-html.mjs";
 import { activateEmergencyStop, clearEmergencyStop } from "../src/reliability.mjs";
 import { createTracer } from "../src/trace.mjs";
 import { approvalDecisionStatus, recordApprovalDecision } from "../src/approvals.mjs";
@@ -136,7 +139,7 @@ function requireAllowedOrigin(request) {
 
 function requireAuthentication(request, response) {
   if (dashboardRequestAuthorized(request, authConfig)) return true;
-  if (request.method === "GET" && ["/", "/strategies", "/reviews"].includes(request.url)) {
+  if (request.method === "GET" && (["/", "/strategies", "/reviews"].includes(request.url) || ["/fund-manager", "/weekly-strategy"].includes(new URL(request.url, "http://localhost").pathname))) {
     response.writeHead(303, {
       "Location": "/login",
       "Cache-Control": "no-store",
@@ -237,6 +240,34 @@ const server = createServer(async (request, response) => {
         "X-Content-Type-Options": "nosniff"
       });
       response.end(tradeReviewHtml());
+      return;
+    }
+    if (request.method === "GET" && new URL(request.url, `http://${host}:${port}`).pathname === "/fund-manager") {
+      const parameters = new URL(request.url, `http://${host}:${port}`).searchParams;
+      const html = await loadManagerPage(resolve(projectRoot, process.env.FUND_MANAGER_DIR || "state/fund-manager"), {
+        date: parameters.get("date"), edition: parameters.get("edition") || "daily"
+      });
+      response.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.end(html);
+      return;
+    }
+    if (request.method === "GET" && ["/weekly-strategy", "/api/weekly-strategy"].includes(new URL(request.url, "http://localhost").pathname)) {
+      const url = new URL(request.url, "http://localhost");
+      let status;
+      try { status = await weeklyReportStatus(resolve(projectRoot, process.env.WEEKLY_RESEARCH_DIR || "state/weekly-research"), url.searchParams.get("week")); }
+      catch (error) { if (error.message.startsWith("Expected Monday")) error.statusCode = 400; throw error; }
+      const html = url.pathname === "/weekly-strategy";
+      response.writeHead(200, {
+        "Content-Type": html ? "text/html; charset=utf-8" : "application/json; charset=utf-8",
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
+      });
+      response.end(html ? weeklyResearchHtml(status) : JSON.stringify(status));
       return;
     }
     if (request.method === "GET" && request.url === "/api/snapshot") {

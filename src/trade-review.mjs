@@ -1,6 +1,54 @@
+import { createReadStream } from "node:fs";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { createInterface } from "node:readline";
 import { newYorkDate } from "./strategy-data.mjs";
+
+export async function readTradingReviewRecords(path, { startMs = 0, endMs = Date.now() } = {}) {
+  const relevantEvents = new Set([
+    "shadow_sub_strategy", "shadow_market_regime", "buy_submission", "pending_order",
+    "shadow_exit_counterfactual", "exit_decision", "trade_approval"
+  ]);
+  const records = [];
+  let malformedLines = 0;
+  let totalRecords = 0;
+  let firstAt = null;
+  let lastAt = null;
+  let windowRecords = 0;
+  let previousMs = startMs;
+  let maxGapMs = 0;
+  const input = createReadStream(path, { encoding: "utf8" });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  // readline does not forward stream errors to its async iterator.
+  let streamError = null;
+  input.on("error", (error) => { streamError = error; lines.close(); });
+  for await (const line of lines) {
+    if (!line.trim()) continue;
+    let record;
+    try { record = JSON.parse(line); } catch { malformedLines += 1; continue; }
+    const timestamp = Date.parse(record?.timestamp);
+    if (!Number.isFinite(timestamp)) { malformedLines += 1; continue; }
+    if (timestamp > endMs) continue;
+    totalRecords += 1;
+    if (!firstAt || timestamp < Date.parse(firstAt)) firstAt = record.timestamp;
+    if (!lastAt || timestamp > Date.parse(lastAt)) lastAt = record.timestamp;
+    if (timestamp >= startMs) {
+      windowRecords += 1;
+      maxGapMs = Math.max(maxGapMs, timestamp - previousMs);
+      previousMs = Math.max(previousMs, timestamp);
+    }
+    if (relevantEvents.has(record.event)) records.push(record);
+    else if (record.status === "failed") records.push({
+      timestamp: record.timestamp, event: record.event, status: record.status,
+      details: { symbol: record.details?.symbol, operation: record.details?.operation, error: record.details?.error }
+    });
+  }
+  if (streamError) throw streamError;
+  return {
+    records, malformedLines, totalRecords, firstAt, lastAt, windowRecords,
+    maxGapMs: Math.max(maxGapMs, endMs - previousMs)
+  };
+}
 
 function finiteNumber(value, fallback = 0) {
   if (value == null) return fallback;
