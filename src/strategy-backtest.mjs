@@ -1181,7 +1181,16 @@ export function backtestStrategyLibrary(dataset, options = {}) {
       trades
     };
   });
-  const coverage = Object.values(market).flatMap(({ candles }) => candles.map(({ openTime }) => openTime));
+  let coverageCandles = 0;
+  let coverageFrom = null;
+  let coverageTo = null;
+  for (const { candles } of Object.values(market)) {
+    coverageCandles += candles.length;
+    const first = candles[0]?.openTime;
+    const last = candles.at(-1)?.openTime;
+    if (Number.isFinite(first)) coverageFrom = Math.min(coverageFrom ?? first, first);
+    if (Number.isFinite(last)) coverageTo = Math.max(coverageTo ?? last, last);
+  }
   return {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -1248,9 +1257,9 @@ export function backtestStrategyLibrary(dataset, options = {}) {
     },
     dataCoverage: {
       symbols: Object.keys(market).length,
-      candles: coverage.length,
-      from: coverage.length ? new Date(Math.min(...coverage)).toISOString() : null,
-      to: coverage.length ? new Date(Math.max(...coverage)).toISOString() : null
+      candles: coverageCandles,
+      from: coverageFrom == null ? null : new Date(coverageFrom).toISOString(),
+      to: coverageTo == null ? null : new Date(coverageTo).toISOString()
     },
     strategies
   };

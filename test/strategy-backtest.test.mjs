@@ -202,6 +202,32 @@ test("backtest output never omits an untriggered strategy", () => {
   assert.ok(result.strategies.every(({ entryDiagnostics }) => entryDiagnostics != null));
 });
 
+test("reports coverage bounds without overflowing on large datasets", () => {
+  const start = Date.parse("2026-07-27T13:30:00.000Z");
+  const candles = Array.from({ length: 6_500 }, (_, index) => (
+    candle(start + index * 60_000, 100, 100.1, 99.9, 100)
+  ));
+  const tickers = [
+    "SPY",
+    "QQQ",
+    ...Array.from({ length: 18 }, (_, index) => `T${index}`)
+  ];
+  const dataset = Object.fromEntries(tickers.map((ticker) => [ticker, {
+    multiplier: 1,
+    tokenCandles: candles,
+    underlyingCandles: []
+  }]));
+
+  const result = backtestStrategyLibrary(dataset);
+
+  assert.deepEqual(result.dataCoverage, {
+    symbols: 20,
+    candles: 130_000,
+    from: new Date(start).toISOString(),
+    to: new Date(start + 6_499 * 60_000).toISOString()
+  });
+});
+
 function trendingCandles(start, count, step) {
   return Array.from({ length: count }, (_, index) => {
     const open = 100 + index * step;
