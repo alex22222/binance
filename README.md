@@ -40,12 +40,11 @@ Entry gates:
 Network, HTTP, and API errors always fail closed. The RWA exception never applies to a contract supplied outside the official list.
 
 The example configuration expands the research universe with `AMD`, `AVGO`,
-`PLTR`, `NFLX`, `COIN`, `UBER`, `JPM`, `XOM`, `LLY`, and `COST`. These symbols,
-plus the `SPY`, `QQQ`, `IWM`, `DGRW`, and `IEI` ETF research universe, remain in
-`entryBlockedSymbols`: regular-session
-K-line, ATR, quote, and Shadow evidence is collected, but they cannot be selected
-for a Live buy. Promotion into the Live pool requires a separate reviewed config
-change after sufficient cost-aware forward evidence is available.
+`PLTR`, `NFLX`, `COIN`, `UBER`, `JPM`, `XOM`, `LLY`, and `COST`. Those expanded
+stocks remain in `entryBlockedSymbols`: regular-session K-line, ATR, quote, and
+Shadow evidence is collected, but they cannot be selected for a Live buy. The
+weekly ETF strategy uses the separately reviewed `SPY`, `QQQ`, `IWM`, `DGRW`,
+and `SGOV` universe.
 
 The planned regular-session calendar uses `America/New_York`, so UTC and
 Asia/Shanghai times follow U.S. daylight-saving changes automatically. Published
@@ -433,14 +432,14 @@ comparison against the unchanged production exit path.
 
 ## Weekly ETF rotation Paper
 
-Run the isolated weekly QQQ/IWM/DGRW/SPY/IEI rotation tracker with:
+Run the isolated weekly QQQ/IWM/DGRW/SPY/SGOV rotation tracker with:
 
 ```bash
 npm run strategy:weekly-etf-paper
 ```
 
 It makes at most one decision on the first NYSE trading day of each week using
-20-day adjusted-close momentum and Wilder RSI(14), with IEI as the all-risk-off
+20-day adjusted-close momentum and Wilder RSI(14), with SGOV as the all-risk-off
 holding. State and events remain under `state/weekly-etf-rotation-paper/` and are
 labeled `PAPER_CANDLE_PROXY`. The runner reads public Yahoo and Binance data but
 does not access the wallet, request an executable quote, or submit a swap.

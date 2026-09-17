@@ -6,8 +6,8 @@ import { WEEKLY_ETF_DEFENSIVE_STRATEGY_ID, weeklyEtfDefensiveSignal, weeklyEtfRo
 const rows = (slope) => Array.from({ length: 30 }, (_, i) => ({
   date: new Date(Date.UTC(2026, 0, i + 1)).toISOString().slice(0, 10), close: 100 + slope * i
 }));
-const series = (risk, bond) => Object.fromEntries(["QQQ", "IWM", "DGRW", "SPY", "IEI"]
-  .map((ticker) => [ticker, rows(ticker === "IEI" ? bond : risk)]));
+const series = (risk, bond) => Object.fromEntries(["QQQ", "IWM", "DGRW", "SPY", "SGOV"]
+  .map((ticker) => [ticker, rows(ticker === "SGOV" ? bond : risk)]));
 const snapshot = (target, week = "2026-09-21") => ({
   at: `${week}T14:00:00Z`, sessionDate: week, week, regularOpen: true,
   decision: { target, signalDate: "2026-09-18" }, prices: { QQQ: 100 }
@@ -15,19 +15,19 @@ const snapshot = (target, week = "2026-09-21") => ({
 const initial = () => ({ ...initialWeeklyEtfRotationPaperState(), strategyId: WEEKLY_ETF_DEFENSIVE_STRATEGY_ID });
 
 test("zero momentum passes original RSI but enhanced strategy holds cash", () => {
-  assert.notEqual(weeklyEtfRotationSignal(series(0, 0)).target, "IEI");
+  assert.notEqual(weeklyEtfRotationSignal(series(0, 0)).target, "SGOV");
   assert.equal(weeklyEtfDefensiveSignal(series(0, 0)).target, "CASH");
 });
 test("positive risk momentum wins; positive bonds defend only when risk fails", () => {
   assert.notEqual(weeklyEtfDefensiveSignal(series(1, -1)).target, "CASH");
-  assert.equal(weeklyEtfDefensiveSignal(series(-1, 1)).target, "IEI");
+  assert.equal(weeklyEtfDefensiveSignal(series(-1, 1)).target, "SGOV");
   assert.equal(weeklyEtfDefensiveSignal(series(-1, -1)).target, "CASH");
 });
-test("missing or misaligned IEI fails closed", () => {
+test("missing or misaligned SGOV fails closed", () => {
   const data = series(-1, 1);
-  delete data.IEI;
-  assert.throws(() => weeklyEtfDefensiveSignal(data), /IEI/);
-  data.IEI = rows(1).slice(0, -1);
+  delete data.SGOV;
+  assert.throws(() => weeklyEtfDefensiveSignal(data), /SGOV/);
+  data.SGOV = rows(1).slice(0, -1);
   assert.throws(() => weeklyEtfDefensiveSignal(data), /align/);
 });
 test("cash has no entry costs and weekly repeat cannot trade", () => {

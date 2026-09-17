@@ -139,7 +139,10 @@ async function fetchYahooDaily(ticker) {
 }
 
 async function loadSignal() {
-  const tickers = [...WEEKLY_ETF_ROTATION_UNIVERSE.riskTickers, ...(defensiveProfile ? ["IEI"] : [])];
+  const tickers = [
+    ...WEEKLY_ETF_ROTATION_UNIVERSE.riskTickers,
+    ...(defensiveProfile ? [WEEKLY_ETF_ROTATION_UNIVERSE.defensiveTicker] : [])
+  ];
   const entries = await Promise.all(tickers.map(async (ticker) => [
     ticker,
     await fetchYahooDaily(ticker)

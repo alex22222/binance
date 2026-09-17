@@ -166,7 +166,7 @@ systemctl list-timers binance-agentic-turtle-paper.timer
 The weekly rotation service is isolated from both the Live bot and Turtle
 Paper. On the first NYSE trading day of each week it ranks QQQ, IWM, DGRW, and
 SPY by 20-day adjusted-close momentum, excludes assets below Wilder RSI(14) 40,
-and uses IEI when every risk ETF is excluded. Yahoo adjusted daily closes are
+and uses SGOV when every risk ETF is excluded. Yahoo adjusted daily closes are
 signals; the latest completed Binance BSC token minute is a simulated fill.
 
 The state, event log, daily inputs, and screening snapshot are written only to

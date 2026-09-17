@@ -121,8 +121,11 @@ test("keeps expanded stocks blocked while allowing the five live ETF targets", a
       reason: "CONFIGURED_SYMBOL_BLOCK"
     });
   }
+  const liveEtfTargets = ["SPY", "QQQ", "IWM", "DGRW", "SGOV"];
+  for (const symbol of liveEtfTargets) assert.ok(exampleConfig.symbols.includes(symbol));
+  assert.ok(!exampleConfig.symbols.includes("IEI"));
   assert.deepEqual(
-    ["SPY", "QQQ", "IWM", "DGRW", "IEI"].filter(
+    liveEtfTargets.filter(
       (symbol) => exampleConfig.entryBlockedSymbols.includes(symbol)
     ),
     []

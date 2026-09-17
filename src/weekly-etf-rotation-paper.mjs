@@ -5,7 +5,7 @@ export const WEEKLY_ETF_DEFENSIVE_STRATEGY_ID = "weekly-etf-dual-momentum-defens
 
 export const WEEKLY_ETF_ROTATION_UNIVERSE = Object.freeze({
   riskTickers: Object.freeze(["QQQ", "IWM", "DGRW", "SPY"]),
-  defensiveTicker: "IEI"
+  defensiveTicker: "SGOV"
 });
 
 export const WEEKLY_ETF_ROTATION_CONFIG = Object.freeze({
@@ -81,11 +81,14 @@ export function weeklyEtfRotationSignal(seriesByTicker, overrides = {}) {
 
 export function weeklyEtfDefensiveSignal(seriesByTicker) {
   const baseline = weeklyEtfRotationSignal(seriesByTicker);
-  const defensive = normalizedDailySeries(seriesByTicker?.IEI);
+  const defensiveTicker = WEEKLY_ETF_ROTATION_UNIVERSE.defensiveTicker;
+  const defensive = normalizedDailySeries(seriesByTicker?.[defensiveTicker]);
   if (defensive.length < WEEKLY_ETF_ROTATION_CONFIG.momentumDays + 1) {
-    throw new Error("Insufficient daily history: IEI");
+    throw new Error(`Insufficient daily history: ${defensiveTicker}`);
   }
-  if (defensive.at(-1).date !== baseline.signalDate) throw new Error("IEI signal date does not align");
+  if (defensive.at(-1).date !== baseline.signalDate) {
+    throw new Error(`${defensiveTicker} signal date does not align`);
+  }
   const momentumPct = (defensive.at(-1).close / defensive.at(-21).close - 1) * 100;
   const allRiskAssets = baseline.allRiskAssets.map((asset) => ({
     ...asset,
@@ -96,8 +99,8 @@ export function weeklyEtfDefensiveSignal(seriesByTicker) {
     ...baseline,
     allRiskAssets,
     candidates,
-    defensiveAsset: { ticker: "IEI", momentumPct, eligible: momentumPct > 0 },
-    target: candidates[0]?.ticker || (momentumPct > 0 ? "IEI" : "CASH"),
+    defensiveAsset: { ticker: defensiveTicker, momentumPct, eligible: momentumPct > 0 },
+    target: candidates[0]?.ticker || (momentumPct > 0 ? defensiveTicker : "CASH"),
     absoluteMomentumRequired: true
   };
 }

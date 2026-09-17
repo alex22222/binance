@@ -34,12 +34,12 @@ test("selects the strongest weekly momentum candidate that passes RSI", () => {
   assert.equal(signal.allRiskAssets.find(({ ticker }) => ticker === "SPY").eligible, false);
 });
 
-test("uses IEI when every risk ETF is below the RSI threshold", () => {
+test("uses SGOV when every risk ETF is below the RSI threshold", () => {
   const signal = weeklyEtfRotationSignal(signalSeries(Object.fromEntries(
     riskTickers.map((ticker, tickerIndex) => [ticker, (index) => 200 - index * (tickerIndex + 1)])
   )));
 
-  assert.equal(signal.target, "IEI");
+  assert.equal(signal.target, "SGOV");
   assert.equal(signal.candidates.length, 0);
 });
 
@@ -103,7 +103,7 @@ test("switches the full Paper portfolio and reconciles both transaction sides", 
 });
 
 test("resolves exactly one BSC ETF contract for every Paper symbol", () => {
-  const assets = ["QQQ", "IWM", "DGRW", "SPY", "IEI"].map((ticker) => ({
+  const assets = ["QQQ", "IWM", "DGRW", "SPY", "SGOV"].map((ticker) => ({
     ticker,
     symbol: `${ticker}on`,
     chainId: "56",
@@ -113,9 +113,9 @@ test("resolves exactly one BSC ETF contract for every Paper symbol", () => {
 
   assert.deepEqual(
     weeklyEtfRotationAssets([...assets, { ...assets[0], chainId: "1" }]).map(({ ticker }) => ticker),
-    ["QQQ", "IWM", "DGRW", "SPY", "IEI"]
+    ["QQQ", "IWM", "DGRW", "SPY", "SGOV"]
   );
-  assert.throws(() => weeklyEtfRotationAssets(assets.filter(({ ticker }) => ticker !== "IEI")), /IEI/);
+  assert.throws(() => weeklyEtfRotationAssets(assets.filter(({ ticker }) => ticker !== "SGOV")), /SGOV/);
   assert.throws(() => weeklyEtfRotationAssets([...assets, { ...assets[0] }]), /QQQ/);
   assert.throws(() => weeklyEtfRotationAssets(assets.map((asset) => ({ ...asset, assetType: 1 }))), /QQQ/);
 });

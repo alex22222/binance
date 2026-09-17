@@ -37,10 +37,10 @@ test("weekly live exits only for disaster protection or a changed weekly target"
   }), { type: null, target: "QQQ" });
   assert.deepEqual(weeklyEtfLiveExitDecision({
     positionSymbol: "QQQ",
-    target: "IEI",
+    target: "SGOV",
     returnPct: -1,
     disasterStopLossPct: 8
-  }), { type: "WEEKLY_REBALANCE", target: "IEI" });
+  }), { type: "WEEKLY_REBALANCE", target: "SGOV" });
   assert.deepEqual(weeklyEtfLiveExitDecision({
     positionSymbol: "QQQ",
     target: "CASH",

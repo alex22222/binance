@@ -455,7 +455,7 @@ export function liveDashboardHtml() {
       SPY: "AMEX:SPY",
       QQQ: "NASDAQ:QQQ"
     };
-    const ETF_SYMBOLS = new Set(["SPY", "QQQ", "IWM", "DGRW", "IEI"]);
+    const ETF_SYMBOLS = new Set(["SPY", "QQQ", "IWM", "DGRW", "SGOV"]);
     const signalAssetType = (symbol) => ETF_SYMBOLS.has(symbol) ? "ETF" : "股票";
     let selectedSignalTab = "股票";
     let tickerSignature = null;
