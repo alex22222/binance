@@ -32,20 +32,20 @@ const profiles = {
   },
   binance: {
     universe: {
-      riskTickers: ["QQQ", "IWM", "DGRW", "SPY"],
-      defensiveTicker: "IEI"
+      riskTickers: ["QQQ", "VTI", "VTV", "SPY"],
+      defensiveTicker: "SGOV"
     },
     descriptions: {
       QQQ: "Nasdaq-100 large growth; Binance Wallet QQQon underlying",
-      IWM: "Russell 2000 small-cap; Binance-available proxy for IWO",
-      DGRW: "US dividend growth; Binance-available proxy for VYM",
+      VTI: "US total market; liquid Binance Wallet VTIon replacement for IWMon",
+      VTV: "US large-cap value; liquid Binance Wallet VTVon replacement for DGRWon",
       SPY: "S&P 500 broad large-cap; Binance Wallet SPYon underlying",
-      IEI: "3-7 year US Treasury defensive asset; Binance Wallet IEIon underlying"
+      SGOV: "0-3 month US Treasury defensive asset; Binance Wallet SGOVon underlying"
     },
-    earlyPeriodId: "early2013To2019",
-    earlyPeriodEnd: "2019-12-31",
-    latePeriodId: "late2020ToPresent",
-    latePeriodStart: "2020-01-01",
+    earlyPeriodId: "early2020To2022",
+    earlyPeriodEnd: "2022-12-31",
+    latePeriodId: "late2023ToPresent",
+    latePeriodStart: "2023-01-01",
     outputName: `us-etf-rotation-binance-${asOfDate}`
   }
 };
@@ -150,12 +150,21 @@ Object.assign(benchmarks, {
     startDate: firstSignalDate,
     endDate: lastDate
   }),
-  spy60Iei40: backtestBuyAndHold({ rows, weights: { SPY: 0.6, IEI: 0.4 }, startDate: firstSignalDate, endDate: lastDate })
+  spy60Defensive40: backtestBuyAndHold({
+    rows,
+    weights: { SPY: 0.6, [universe.defensiveTicker]: 0.4 },
+    startDate: firstSignalDate,
+    endDate: lastDate
+  })
 });
 const periodBenchmarks = Object.fromEntries(Object.entries(periodRanges).map(([period, range]) => [period, {
   QQQ: backtestBuyAndHold({ rows, weights: { QQQ: 1 }, ...range }).metrics,
   SPY: backtestBuyAndHold({ rows, weights: { SPY: 1 }, ...range }).metrics,
-  spy60Iei40: backtestBuyAndHold({ rows, weights: { SPY: 0.6, IEI: 0.4 }, ...range }).metrics
+  spy60Defensive40: backtestBuyAndHold({
+    rows,
+    weights: { SPY: 0.6, [universe.defensiveTicker]: 0.4 },
+    ...range
+  }).metrics
 }]));
 
 const sensitivity = [];

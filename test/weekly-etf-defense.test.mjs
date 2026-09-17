@@ -6,7 +6,7 @@ import { WEEKLY_ETF_DEFENSIVE_STRATEGY_ID, weeklyEtfDefensiveSignal, weeklyEtfRo
 const rows = (slope) => Array.from({ length: 30 }, (_, i) => ({
   date: new Date(Date.UTC(2026, 0, i + 1)).toISOString().slice(0, 10), close: 100 + slope * i
 }));
-const series = (risk, bond) => Object.fromEntries(["QQQ", "IWM", "DGRW", "SPY", "SGOV"]
+const series = (risk, bond) => Object.fromEntries(["QQQ", "VTI", "VTV", "SPY", "SGOV"]
   .map((ticker) => [ticker, rows(ticker === "SGOV" ? bond : risk)]));
 const snapshot = (target, week = "2026-09-21") => ({
   at: `${week}T14:00:00Z`, sessionDate: week, week, regularOpen: true,

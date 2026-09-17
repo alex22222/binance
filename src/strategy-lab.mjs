@@ -340,10 +340,10 @@ export const STRATEGIES = [
     timeframe: "WEEKLY_SIGNAL_REGULAR_SESSION_EXECUTION",
     validationStatus: "PAPER_TRACKING",
     thesis: "在币安可用 ETF 中每周持有近期动量最强且 RSI 未转弱的风险资产，全体转弱时持有短期美国国债。",
-    entry: "QQQ/IWM/DGRW/SPY 按20日动量排序且 RSI(14)≥40；每周首个常规时段用上一交易日信号换仓",
+    entry: "QQQ/VTI/VTV/SPY 按20日动量排序且 RSI(14)≥40；每周首个常规时段用上一交易日信号换仓",
     exit: "下一次周度决策切换目标；全体风险 ETF 的 RSI<40 时切换到 SGOV",
-    evidence: "原IEI口径历史回测年化10.23%、最大回撤34.56%；防守资产改为SGOV后该数值不可直接外推，需重新回测并继续独立Paper跟踪",
-    risk: "短周期反复换仓、系统性回撤、代币价差和 Gas；IWM/DGRW 不是原始 IWO/VYM 的精确风格替代",
+    evidence: "VTI/VTV/SGOV新组合2020-07至2026-09基础轮动代理：单边5bps成本下年化7.37%、最大回撤31.00%、Sharpe 0.51；弱于同期静态风险ETF，且不等同Live可执行收益",
+    risk: "短周期反复换仓、系统性回撤、代币价差和 Gas；VTI 与 SPY 重叠较高，VTV 是价值风格而非原始 VYM 的精确高股息替代",
     backtestData: "Yahoo Finance 复权日线生成信号，Binance BSC 代币已完成常规时段分钟K线作为 Paper 成交代理",
     sources: [
       {

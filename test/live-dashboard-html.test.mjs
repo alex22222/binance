@@ -155,7 +155,7 @@ test("live dashboard provides an approval-first iPhone layout and compact signal
   assert.match(html, /"今日 " \+ pct\(dailyChangePct\)/);
   assert.match(html, /Nasdaq 官方美股日涨跌/);
   assert.match(html, /id="signalToggle"/);
-  assert.match(html, /const ETF_SYMBOLS = new Set\(\["SPY", "QQQ", "IWM", "DGRW", "SGOV"\]\)/);
+  assert.match(html, /const ETF_SYMBOLS = new Set\(\["SPY", "QQQ", "VTI", "VTV", "SGOV"\]\)/);
   assert.match(html, /const signalAssetType = \(symbol\) => ETF_SYMBOLS\.has\(symbol\) \? "ETF" : "股票"/);
   assert.match(html, /const signalGroups = \["股票", "ETF"\]/);
   assert.match(html, /className = "signal-group"/);

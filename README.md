@@ -43,7 +43,7 @@ The example configuration expands the research universe with `AMD`, `AVGO`,
 `PLTR`, `NFLX`, `COIN`, `UBER`, `JPM`, `XOM`, `LLY`, and `COST`. Those expanded
 stocks remain in `entryBlockedSymbols`: regular-session K-line, ATR, quote, and
 Shadow evidence is collected, but they cannot be selected for a Live buy. The
-weekly ETF strategy uses the separately reviewed `SPY`, `QQQ`, `IWM`, `DGRW`,
+weekly ETF strategy uses the separately reviewed `SPY`, `QQQ`, `VTI`, `VTV`,
 and `SGOV` universe.
 
 The planned regular-session calendar uses `America/New_York`, so UTC and
@@ -432,7 +432,7 @@ comparison against the unchanged production exit path.
 
 ## Weekly ETF rotation Paper
 
-Run the isolated weekly QQQ/IWM/DGRW/SPY/SGOV rotation tracker with:
+Run the isolated weekly QQQ/VTI/VTV/SPY/SGOV rotation tracker with:
 
 ```bash
 npm run strategy:weekly-etf-paper

@@ -8,7 +8,7 @@ import {
   weeklyEtfRotationSignal
 } from "../src/weekly-etf-rotation-paper.mjs";
 
-const riskTickers = ["QQQ", "IWM", "DGRW", "SPY"];
+const riskTickers = ["QQQ", "VTI", "VTV", "SPY"];
 
 function dailySeries(closeAt, length = 30) {
   return Array.from({ length }, (_, index) => ({
@@ -24,8 +24,8 @@ function signalSeries(closeByTicker) {
 test("selects the strongest weekly momentum candidate that passes RSI", () => {
   const signal = weeklyEtfRotationSignal(signalSeries({
     QQQ: (index) => 100 + index * 2,
-    IWM: (index) => 100 + index,
-    DGRW: (index) => 100 + index * 0.5,
+    VTI: (index) => 100 + index,
+    VTV: (index) => 100 + index * 0.5,
     SPY: (index) => 150 - index
   }));
 
@@ -88,22 +88,22 @@ test("switches the full Paper portfolio and reconciles both transaction sides", 
     sessionDate: "2026-09-21",
     week: "2026-09-21",
     regularOpen: true,
-    decision: { signalDate: "2026-09-18", target: "IWM", candidates: [] },
-    prices: { QQQ: 110, IWM: 55 }
+    decision: { signalDate: "2026-09-18", target: "VTI", candidates: [] },
+    prices: { QQQ: 110, VTI: 55 }
   }, { roundTripCostPct: 1 });
 
   assert.equal(switched.state.trades.length, 1);
   assert.equal(switched.state.trades[0].from, "QQQ");
-  assert.equal(switched.state.trades[0].to, "IWM");
+  assert.equal(switched.state.trades[0].to, "VTI");
   assert.ok(Math.abs(switched.state.trades[0].pnlUsdt - 4.451375) < 1e-9);
-  assert.equal(switched.state.position.symbol, "IWM");
+  assert.equal(switched.state.position.symbol, "VTI");
   assert.equal(switched.state.actualSwitches, 1);
   assert.equal(switched.events.filter(({ type }) => type === "PAPER_BUY_FILLED").length, 1);
   assert.equal(switched.events.filter(({ type }) => type === "PAPER_SELL_FILLED").length, 1);
 });
 
 test("resolves exactly one BSC ETF contract for every Paper symbol", () => {
-  const assets = ["QQQ", "IWM", "DGRW", "SPY", "SGOV"].map((ticker) => ({
+  const assets = ["QQQ", "VTI", "VTV", "SPY", "SGOV"].map((ticker) => ({
     ticker,
     symbol: `${ticker}on`,
     chainId: "56",
@@ -113,7 +113,7 @@ test("resolves exactly one BSC ETF contract for every Paper symbol", () => {
 
   assert.deepEqual(
     weeklyEtfRotationAssets([...assets, { ...assets[0], chainId: "1" }]).map(({ ticker }) => ticker),
-    ["QQQ", "IWM", "DGRW", "SPY", "SGOV"]
+    ["QQQ", "VTI", "VTV", "SPY", "SGOV"]
   );
   assert.throws(() => weeklyEtfRotationAssets(assets.filter(({ ticker }) => ticker !== "SGOV")), /SGOV/);
   assert.throws(() => weeklyEtfRotationAssets([...assets, { ...assets[0] }]), /QQQ/);

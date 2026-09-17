@@ -4,7 +4,7 @@ export const WEEKLY_ETF_ROTATION_STRATEGY_ID = "weekly-etf-momentum-rsi-rotation
 export const WEEKLY_ETF_DEFENSIVE_STRATEGY_ID = "weekly-etf-dual-momentum-defense";
 
 export const WEEKLY_ETF_ROTATION_UNIVERSE = Object.freeze({
-  riskTickers: Object.freeze(["QQQ", "IWM", "DGRW", "SPY"]),
+  riskTickers: Object.freeze(["QQQ", "VTI", "VTV", "SPY"]),
   defensiveTicker: "SGOV"
 });
 
