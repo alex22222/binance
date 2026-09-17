@@ -38,19 +38,20 @@ test("exits a basis position when the executable sell price converges", () => {
   assert.equal(basisExitReached({ executableSellPrice: 99.5, fairTokenPrice: 100 }), false);
 });
 
-test("persists only switchable strategies", async () => {
+test("persists only the live weekly strategy", async () => {
   const directory = await mkdtemp(join(tmpdir(), "strategy-control-"));
   const path = join(directory, "control.json");
-  await writeStrategyControl(path, "executable-basis-reversion");
-  assert.equal((await readStrategyControl(path)).strategyId, "executable-basis-reversion");
+  await writeStrategyControl(path, "weekly-etf-dual-momentum-defense");
+  assert.equal((await readStrategyControl(path)).strategyId, "weekly-etf-dual-momentum-defense");
   await assert.rejects(() => writeStrategyControl(path, "residual-reversal"), /not switchable/);
+  await assert.rejects(() => writeStrategyControl(path, "adaptive-momentum"), /not switchable/);
 });
 
 test("pauses only BUY execution and preserves the pause across strategy switches", async () => {
   const directory = await mkdtemp(join(tmpdir(), "entry-pause-control-"));
   const path = join(directory, "control.json");
 
-  await writeEntryPauseControl(path, true, "adaptive-momentum", "test");
+  await writeEntryPauseControl(path, true, "weekly-etf-dual-momentum-defense", "test");
   assert.equal((await readStrategyControl(path)).entriesPaused, true);
   assert.deepEqual(entryExecutionDecision({ entriesPaused: true, side: "BUY" }), {
     allowed: false,
@@ -61,12 +62,12 @@ test("pauses only BUY execution and preserves the pause across strategy switches
     reason: "EXIT_ALLOWED"
   });
 
-  await writeStrategyControl(path, "executable-basis-reversion");
+  await writeStrategyControl(path, "weekly-etf-dual-momentum-defense");
   const switched = await readStrategyControl(path);
-  assert.equal(switched.strategyId, "executable-basis-reversion");
+  assert.equal(switched.strategyId, "weekly-etf-dual-momentum-defense");
   assert.equal(switched.entriesPaused, true);
 
-  await writeEntryPauseControl(path, false, "adaptive-momentum", "test");
+  await writeEntryPauseControl(path, false, "weekly-etf-dual-momentum-defense", "test");
   assert.equal((await readStrategyControl(path)).entriesPaused, false);
 });
 
@@ -84,10 +85,13 @@ test("compares realized returns by strategy without inventing missing results", 
   assert.equal(basis.performance.winRatePct, null);
 });
 
-test("attaches shared overlays to existing strategies but not isolated defensive Paper", () => {
+test("keeps the enhanced weekly ETF strategy as the only live-switchable strategy", () => {
   const comparison = buildStrategyComparison("adaptive-momentum", []);
 
   assert.equal(comparison.length, 12);
+  assert.deepEqual(comparison.filter(({ switchable }) => switchable).map(({ id }) => id), [
+    "weekly-etf-dual-momentum-defense"
+  ]);
   const pullback = comparison.find((strategy) => strategy.id === "trend-pullback-confirmation");
   const relativePullback = comparison.find(
     (strategy) => strategy.id === "regime-relative-pullback-momentum"
@@ -99,8 +103,8 @@ test("attaches shared overlays to existing strategies but not isolated defensive
   for (const strategy of comparison) {
     assert.equal(strategy.direction, "LONG_ONLY");
     if (strategy.id === "weekly-etf-dual-momentum-defense") {
-      assert.equal(strategy.switchable, false);
-      assert.equal(strategy.validationStatus, "PAPER_TRACKING");
+      assert.equal(strategy.switchable, true);
+      assert.equal(strategy.validationStatus, "LIVE_MANUAL_APPROVAL");
       assert.deepEqual(strategy.subStrategies, []);
       continue;
     }

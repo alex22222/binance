@@ -70,6 +70,7 @@ import {
   walletSessionStatusFromSettings
 } from "./reliability.mjs";
 import {
+  ADAPTIVE_MOMENTUM_STRATEGY_ID,
   basisExitReached,
   DEFAULT_STRATEGY_ID,
   entryExecutionDecision,
@@ -77,6 +78,12 @@ import {
   readStrategyControl,
   STRATEGIES
 } from "./strategy-lab.mjs";
+import {
+  loadWeeklyEtfDefensiveSignal,
+  weeklyEtfLiveDecisionWindow,
+  weeklyEtfLiveExitDecision
+} from "./weekly-etf-live.mjs";
+import { WEEKLY_ETF_DEFENSIVE_STRATEGY_ID } from "./weekly-etf-rotation-paper.mjs";
 import {
   summarizeWalletBalances,
   upsertWalletBalanceSnapshot
@@ -201,7 +208,8 @@ function freshState(nowMs = Date.now()) {
     lastSettingsCheckAt: 0,
     sessionWarningFor: null,
     walletBalance: null,
-    shadowEntryHistory: []
+    shadowEntryHistory: [],
+    weeklyEtfLive: null
   };
 }
 
@@ -212,6 +220,42 @@ async function loadState(path) {
     if (error.code === "ENOENT") return freshState();
     throw error;
   }
+}
+
+async function weeklyEtfDecisionForNow(state, nowMs = Date.now()) {
+  const window = weeklyEtfLiveDecisionWindow(nowMs, state.weeklyEtfLive);
+  if (window.decisionUsable) return window.decision;
+  if (!window.canCreateDecision) return null;
+  const { signal } = await loadWeeklyEtfDefensiveSignal(window.plan.date);
+  const decision = {
+    signalDate: signal.signalDate,
+    target: signal.target,
+    candidates: signal.candidates,
+    allRiskAssets: signal.allRiskAssets,
+    defensiveAsset: signal.defensiveAsset,
+    absoluteMomentumRequired: true
+  };
+  state.weeklyEtfLive = {
+    strategyId: WEEKLY_ETF_DEFENSIVE_STRATEGY_ID,
+    week: window.week,
+    sessionDate: window.plan.date,
+    evaluatedAt: new Date(nowMs).toISOString(),
+    decision
+  };
+  await recordMarketData("weekly_etf_live_decision", {
+    cycleId: currentCycleId,
+    ...state.weeklyEtfLive,
+    evidenceLevel: "LIVE_SIGNAL_WITH_EXECUTABLE_APPROVAL_GATE"
+  });
+  await traceAction("weekly_etf_live_decision", "succeeded", {
+    week: window.week,
+    sessionDate: window.plan.date,
+    signalDate: signal.signalDate,
+    target: signal.target,
+    candidateCount: signal.candidates.length,
+    defensiveEligible: signal.defensiveAsset.eligible
+  }, currentCycleId);
+  return decision;
 }
 
 async function fetchJson(url, options = {}) {
@@ -823,6 +867,7 @@ async function audit(asset, config) {
 function approvalDetailsMatch(request, details) {
   return (
     request.side === details.side &&
+    request.strategyId === details.strategyId &&
     request.symbol === details.symbol &&
     request.address.toLowerCase() === details.address.toLowerCase() &&
     request.fromToken.toLowerCase() === details.fromToken.toLowerCase() &&
@@ -1088,7 +1133,7 @@ async function finalizePendingOrder(config, state, statePath) {
     if (!isPositiveTokenAmount(quantity)) throw new Error(`Finished BUY has no token balance for ${submitted.symbol}`);
     addOpenPosition(state, {
       symbol: submitted.symbol,
-      strategyId: submitted.strategyId || DEFAULT_STRATEGY_ID,
+      strategyId: submitted.strategyId || ADAPTIVE_MOMENTUM_STRATEGY_ID,
       address: submitted.address,
       quantity,
       costBasisUsdt: submitted.costBasisUsdt,
@@ -1178,13 +1223,23 @@ async function finalizePendingOrder(config, state, statePath) {
     state.initialStopHistory = policy.initialStopHistory;
     state.quarantineUntilBySymbol = policy.quarantineUntilBySymbol;
   }
+  if (
+    submitted.strategyId === WEEKLY_ETF_DEFENSIVE_STRATEGY_ID &&
+    submitted.reason === "DISASTER_STOP"
+  ) {
+    state.weeklyEtfLive = {
+      ...(state.weeklyEtfLive || {}),
+      skipEntryWeek: weeklyEtfLiveDecisionWindow(completedAtMs, state.weeklyEtfLive).week,
+      stoppedAt: new Date(completedAtMs).toISOString()
+    };
+  }
   removeOpenPosition(state, submitted);
   state.pendingOrder = null;
   await traceAction("pending_order", "finished", {
     orderId: submitted.orderId,
     side: submitted.side,
     symbol: submitted.symbol,
-    strategyId: submitted.strategyId || DEFAULT_STRATEGY_ID,
+    strategyId: submitted.strategyId || ADAPTIVE_MOMENTUM_STRATEGY_ID,
     proceedsUsdt,
     grossPnlUsdt: pnl.grossPnlUsdt,
     gasCostUsdt: pnl.gasCostUsdt,
@@ -1365,7 +1420,7 @@ async function buildCandidate(
     shadowTrendQuality
   };
   const pullbackNeedsQuote = shadowTrendPullback.decision === "WOULD_ENTER";
-  if (!marketOpen || (strategyId === DEFAULT_STRATEGY_ID && !trendPassed && !pullbackNeedsQuote)) {
+  if (!marketOpen || (strategyId === ADAPTIVE_MOMENTUM_STRATEGY_ID && !trendPassed && !pullbackNeedsQuote)) {
     await traceAction("candidate_rejected", "skipped", {
       symbol,
       dataFetchedAt,
@@ -1507,6 +1562,9 @@ async function buildCandidate(
   const finalTakeProfitPct = initialRisk.allowed
     ? initialRisk.initialRiskPct * config.finalTakeProfitR
     : null;
+  if (strategyId === WEEKLY_ETF_DEFENSIVE_STRATEGY_ID && finalTakeProfitPct != null) {
+    grossEdgeProxyPct = finalTakeProfitPct;
+  }
   const costCoverage = initialRisk.allowed
     ? costCoverageDecision({
         tradeUsdt: config.maxTradeUsdt,
@@ -1670,7 +1728,68 @@ async function evaluateEntry(
     state.lastMarketStatusCheckAt = now;
   }
 
-  const symbols = approvedRequest ? [approvedRequest.symbol] : config.symbols;
+  let weeklyDecision = null;
+  if (config.activeStrategyId === WEEKLY_ETF_DEFENSIVE_STRATEGY_ID) {
+    weeklyDecision = await weeklyEtfDecisionForNow(state, now);
+    const weeklyWindow = weeklyEtfLiveDecisionWindow(now, state.weeklyEtfLive);
+    if (!weeklyDecision) {
+      await traceAction("entry_decision", "skipped", {
+        reason: "weekly_decision_not_available",
+        week: weeklyWindow.week,
+        firstTradingDate: weeklyWindow.firstTradingDate,
+        regularOpen: weeklyWindow.plan.regularOpen,
+        approvedRequestInvalidated: Boolean(approvedRequest)
+      }, currentCycleId);
+      if (approvedRequest) {
+        await notify(
+          state,
+          `[Agentic Stock Bot] BUY APPROVAL INVALIDATED\n${approvedRequest.symbol} ${approvedRequest.address}\n当前没有可执行的本周 ETF 决策，未执行链上交易。`
+        );
+      }
+      return;
+    }
+    if (approvedRequest && approvedRequest.symbol !== weeklyDecision.target) {
+      await traceAction("entry_decision", "skipped", {
+        reason: "weekly_target_changed",
+        approvedSymbol: approvedRequest.symbol,
+        currentTarget: weeklyDecision.target
+      }, currentCycleId);
+      await notify(
+        state,
+        `[Agentic Stock Bot] BUY APPROVAL INVALIDATED\n${approvedRequest.symbol} ${approvedRequest.address}\n本周目标已变为 ${weeklyDecision.target}，未执行链上交易。`
+      );
+      return;
+    }
+    if (state.weeklyEtfLive?.skipEntryWeek === weeklyWindow.week) {
+      await traceAction("entry_decision", "skipped", {
+        reason: "weekly_disaster_stop_reentry_block",
+        week: weeklyWindow.week,
+        target: weeklyDecision.target
+      }, currentCycleId);
+      return;
+    }
+    if (weeklyDecision.target === "CASH") {
+      await traceAction("entry_decision", "skipped", {
+        reason: "weekly_cash_target",
+        week: weeklyWindow.week,
+        signalDate: weeklyDecision.signalDate
+      }, currentCycleId);
+      return;
+    }
+    if (openPositions(state).length > 0) {
+      await traceAction("entry_decision", "skipped", {
+        reason: "weekly_position_already_open",
+        target: weeklyDecision.target
+      }, currentCycleId);
+      return;
+    }
+  }
+
+  const symbols = approvedRequest
+    ? [approvedRequest.symbol]
+    : weeklyDecision
+      ? [weeklyDecision.target]
+      : config.symbols;
   const heldSymbols = heldPositionSymbols(state);
   const eligibleSymbols = [];
   for (const symbol of symbols) {
@@ -1955,7 +2074,11 @@ async function evaluateEntry(
   const selected = config.activeStrategyId === "executable-basis-reversion"
     ? entryCandidates.filter((candidate) => candidate.costCoverage?.allowed)
       .sort((left, right) => right.costCoverage.netEdgeProxyPct - left.costCoverage.netEdgeProxyPct)[0]
-    : rankCandidates(entryCandidates, config)[0];
+    : config.activeStrategyId === WEEKLY_ETF_DEFENSIVE_STRATEGY_ID
+      ? entryCandidates.find((candidate) => (
+          candidate.symbol === weeklyDecision?.target && candidate.costCoverage?.allowed
+        ))
+      : rankCandidates(entryCandidates, config)[0];
   if (!selected) {
     await traceAction("entry_decision", "skipped", { reason: "no_candidate_passed" }, currentCycleId);
     log("No entry candidate passed all gates");
@@ -2122,6 +2245,9 @@ async function evaluateEntry(
     entryAtr15Pct: selected.atr15Pct,
     shadowRisk,
     finalTakeProfitPct: freshFinalTakeProfitPct,
+    weeklySignalDate: weeklyDecision?.signalDate || null,
+    weeklyDecisionWeek: weeklyDecision ? state.weeklyEtfLive?.week || null : null,
+    weeklyTarget: weeklyDecision?.target || null,
     usdtBefore,
     createdAt
   };
@@ -2246,14 +2372,22 @@ async function evaluateEntry(
       `[Agentic Stock Bot] BUY SUBMITTED ${config.mode.toUpperCase()}`,
       `${selected.symbol} ${selected.address}`,
       `投入: ${config.maxTradeUsdt} USDT`,
-      `15分钟趋势: ${selected.trend15mPct.toFixed(3)}%`,
+      ...(selected.strategyId === WEEKLY_ETF_DEFENSIVE_STRATEGY_ID
+        ? [
+            `周信号日: ${weeklyDecision.signalDate}`,
+            `周目标: ${weeklyDecision.target}`,
+            `退出: 下次周度换仓或 -${config.disasterStopLossPct}% 灾难保护`
+          ]
+        : [`15分钟趋势: ${selected.trend15mPct.toFixed(3)}%`]),
       `报价往返成本: ${freshRoundTripCostPct.toFixed(3)}%`,
       `全成本估算: ${freshCostCoverage.allInCostPct.toFixed(3)}%`,
-      `扣除成本后信号余量: ${freshCostCoverage.netEdgeProxyPct.toFixed(3)}%`,
+      `成本覆盖余量: ${freshCostCoverage.netEdgeProxyPct.toFixed(3)}%`,
       `ATR15: ${selected.atr15Pct.toFixed(3)}%`,
       `初始风险 R: ${freshInitialRisk.initialRiskPct.toFixed(3)}%`,
       `成本保护下限: ${freshProfitFloorPct.toFixed(3)}%`,
-      `最终止盈 2R: ${freshFinalTakeProfitPct.toFixed(3)}%`,
+      ...(selected.strategyId === WEEKLY_ETF_DEFENSIVE_STRATEGY_ID
+        ? []
+        : [`最终止盈 2R: ${freshFinalTakeProfitPct.toFixed(3)}%`]),
       `审计: ${auditResult.riskLevel || auditResult.status}`,
       `订单: ${result.orderId}`
     ].join("\n")
@@ -2284,6 +2418,8 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
   const proceedsUsdt = Number(sellQuote.toCoinAmount);
   const returnPct = ((proceedsUsdt / position.costBasisUsdt) - 1) * 100;
   const excursion = updateReturnExcursion(position, returnPct);
+  const weeklyPosition = position.strategyId === WEEKLY_ETF_DEFENSIVE_STRATEGY_ID;
+  const weeklyDecision = weeklyPosition ? await weeklyEtfDecisionForNow(state) : null;
   if (position.worstReturnPct == null) {
     position.excursionTrackingStartedAt = new Date().toISOString();
     position.excursionPartial = true;
@@ -2329,7 +2465,7 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
     ) {
       await traceAction("shadow_exit_counterfactual", "observed", {
         symbol: position.symbol,
-        strategyId: position.strategyId || DEFAULT_STRATEGY_ID,
+        strategyId: position.strategyId || ADAPTIVE_MOMENTUM_STRATEGY_ID,
         subStrategyId: shadowEntryFailure.id,
         decision: shadowEntryFailure.decision,
         reason: shadowEntryFailure.reason,
@@ -2351,26 +2487,41 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
       }, currentCycleId);
     }
   }
-  let reason = dynamicExitDecision({
-    returnPct,
-    initialRiskPct: Number(position.initialRiskPct),
-    atr15Pct: atr.atrPct,
-    peakReturnPct: Number(position.peakReturnPct || 0),
-    profitProtectionActive: position.profitProtectionActive === true,
-    openedAtMs: Date.parse(position.openedAt),
-    signalValid,
-    disasterStopLossPct: config.disasterStopLossPct,
-    profitProtectionR: config.profitProtectionR,
-    trailingAtrMultiplier: config.trailingAtrMultiplier,
-    finalTakeProfitR: config.finalTakeProfitR,
-    signalReviewHours: config.signalReviewHours,
-    signalReviewMinR: config.signalReviewMinR,
-    profitFloorPct
-  });
+  let reason = weeklyPosition
+    ? {
+        ...weeklyEtfLiveExitDecision({
+          positionSymbol: position.symbol,
+          target: weeklyDecision?.target || null,
+          returnPct,
+          disasterStopLossPct: config.disasterStopLossPct
+        }),
+        returnPct,
+        peakReturnPct: excursion.peakReturnPct,
+        profitProtectionActive: false,
+        trailingStopPct: null,
+        finalTakeProfitPct: null,
+        heldMs
+      }
+    : dynamicExitDecision({
+        returnPct,
+        initialRiskPct: Number(position.initialRiskPct),
+        atr15Pct: atr.atrPct,
+        peakReturnPct: Number(position.peakReturnPct || 0),
+        profitProtectionActive: position.profitProtectionActive === true,
+        openedAtMs: Date.parse(position.openedAt),
+        signalValid,
+        disasterStopLossPct: config.disasterStopLossPct,
+        profitProtectionR: config.profitProtectionR,
+        trailingAtrMultiplier: config.trailingAtrMultiplier,
+        finalTakeProfitR: config.finalTakeProfitR,
+        signalReviewHours: config.signalReviewHours,
+        signalReviewMinR: config.signalReviewMinR,
+        profitFloorPct
+      });
   const fairTokenPrice = dynamic
     ? Number(dynamic.stockInfo?.price) * Number(dynamic.tokenInfo?.sharesMultiplier)
     : null;
-  if (!reason.type && basisExitReached({
+  if (!weeklyPosition && !reason.type && basisExitReached({
     executableSellPrice: proceedsUsdt / Number(quantity),
     fairTokenPrice,
     exitBasisPct: config.basisExitPct
@@ -2413,23 +2564,38 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
   const confirmedProceedsUsdt = Number(confirmationQuote.toCoinAmount);
   const confirmedReturnPct = ((confirmedProceedsUsdt / position.costBasisUsdt) - 1) * 100;
   position.worstReturnPct = updateReturnExcursion(position, confirmedReturnPct).worstReturnPct;
-  let confirmedReason = dynamicExitDecision({
-    returnPct: confirmedReturnPct,
-    initialRiskPct: Number(position.initialRiskPct),
-    atr15Pct: atr.atrPct,
-    peakReturnPct: reason.peakReturnPct,
-    profitProtectionActive: reason.profitProtectionActive,
-    openedAtMs: Date.parse(position.openedAt),
-    signalValid,
-    disasterStopLossPct: config.disasterStopLossPct,
-    profitProtectionR: config.profitProtectionR,
-    trailingAtrMultiplier: config.trailingAtrMultiplier,
-    finalTakeProfitR: config.finalTakeProfitR,
-    signalReviewHours: config.signalReviewHours,
-    signalReviewMinR: config.signalReviewMinR,
-    profitFloorPct
-  });
-  if (!confirmedReason.type && basisExitReached({
+  let confirmedReason = weeklyPosition
+    ? {
+        ...weeklyEtfLiveExitDecision({
+          positionSymbol: position.symbol,
+          target: weeklyDecision?.target || null,
+          returnPct: confirmedReturnPct,
+          disasterStopLossPct: config.disasterStopLossPct
+        }),
+        returnPct: confirmedReturnPct,
+        peakReturnPct: reason.peakReturnPct,
+        profitProtectionActive: false,
+        trailingStopPct: null,
+        finalTakeProfitPct: null,
+        heldMs
+      }
+    : dynamicExitDecision({
+        returnPct: confirmedReturnPct,
+        initialRiskPct: Number(position.initialRiskPct),
+        atr15Pct: atr.atrPct,
+        peakReturnPct: reason.peakReturnPct,
+        profitProtectionActive: reason.profitProtectionActive,
+        openedAtMs: Date.parse(position.openedAt),
+        signalValid,
+        disasterStopLossPct: config.disasterStopLossPct,
+        profitProtectionR: config.profitProtectionR,
+        trailingAtrMultiplier: config.trailingAtrMultiplier,
+        finalTakeProfitR: config.finalTakeProfitR,
+        signalReviewHours: config.signalReviewHours,
+        signalReviewMinR: config.signalReviewMinR,
+        profitFloorPct
+      });
+  if (!weeklyPosition && !confirmedReason.type && basisExitReached({
     executableSellPrice: confirmedProceedsUsdt / Number(quantity),
     fairTokenPrice,
     exitBasisPct: config.basisExitPct
@@ -2459,7 +2625,8 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
     slippagePct: config.slippagePct
   });
   const stopLossExit = isStopLossExit(confirmedReason.type);
-  if (!noLoss.allowed && !stopLossExit) {
+  const weeklyRotationExit = ["WEEKLY_REBALANCE", "WEEKLY_TO_CASH"].includes(confirmedReason.type);
+  if (!noLoss.allowed && !stopLossExit && !weeklyRotationExit) {
     await traceAction("exit_decision", "skipped", {
       symbol: position.symbol,
       reason: "no_loss_floor",
@@ -2480,7 +2647,7 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
   if (!noLoss.allowed) {
     await traceAction("exit_decision", "allowed", {
       symbol: position.symbol,
-      reason: "stop_loss_override",
+      reason: weeklyRotationExit ? "weekly_rotation_override" : "stop_loss_override",
       exitType: confirmedReason.type,
       estimatedNetPnlUsdt: noLoss.netPnlUsdt
     }, currentCycleId);
@@ -2489,7 +2656,7 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
   const createdAt = new Date().toISOString();
   const orderDetails = {
     side: "SELL",
-    strategyId: position.strategyId || DEFAULT_STRATEGY_ID,
+    strategyId: position.strategyId || ADAPTIVE_MOMENTUM_STRATEGY_ID,
     symbol: position.symbol,
     address: position.address,
     fromToken: position.address,
@@ -2509,6 +2676,9 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
     worstReturnPct: position.worstReturnPct,
     excursionTrackingStartedAt: position.excursionTrackingStartedAt || null,
     excursionPartial: position.excursionPartial === true,
+    weeklySignalDate: weeklyDecision?.signalDate || null,
+    weeklyDecisionWeek: weeklyPosition ? state.weeklyEtfLive?.week || null : null,
+    weeklyTarget: weeklyDecision?.target || null,
     usdtBefore,
     reason: confirmedReason.type,
     createdAt
@@ -2586,7 +2756,7 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
   }
   await traceAction("sell_submission", result.shadow ? "simulated" : "submitted", {
     symbol: position.symbol,
-    strategyId: position.strategyId || DEFAULT_STRATEGY_ID,
+    strategyId: position.strategyId || ADAPTIVE_MOMENTUM_STRATEGY_ID,
     address: position.address,
     reason: confirmedReason.type,
     expectedProceedsUsdt: confirmedProceedsUsdt,
@@ -2622,8 +2792,12 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
       `预计净盈亏: ${(confirmedProceedsUsdt - position.costBasisUsdt - gasEstimate.gasUsdt).toFixed(4)} USDT`,
       `初始风险 R: ${Number(position.initialRiskPct).toFixed(3)}%`,
       `ATR15: ${atr.atrPct.toFixed(3)}%`,
-      `成本保护下限: ${profitFloorPct.toFixed(3)}%`,
-      `移动保护线: ${confirmedReason.trailingStopPct == null ? "未启用" : `${confirmedReason.trailingStopPct.toFixed(3)}%`}`,
+      ...(weeklyPosition
+        ? [`本周目标: ${weeklyDecision?.target || "无（灾难保护退出）"}`]
+        : [
+            `成本保护下限: ${profitFloorPct.toFixed(3)}%`,
+            `移动保护线: ${confirmedReason.trailingStopPct == null ? "未启用" : `${confirmedReason.trailingStopPct.toFixed(3)}%`}`
+          ]),
       `订单: ${result.orderId}`
     ].join("\n")
   );

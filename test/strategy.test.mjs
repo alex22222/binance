@@ -100,17 +100,14 @@ const expandedResearchSymbols = [
   "JPM",
   "XOM",
   "LLY",
-  "COST",
-  "IWM",
-  "DGRW",
-  "IEI"
+  "COST"
 ];
 
 test("deduplicates the configured universe", () => {
   assert.deepEqual(uniqueSymbols(["nvda", " NVDA ", "aapl"]), ["NVDA", "AAPL"]);
 });
 
-test("monitors the expanded research universe without allowing Live entries", async () => {
+test("keeps expanded stocks blocked while allowing the five live ETF targets", async () => {
   const exampleConfig = JSON.parse(await readFile(new URL("../config.example.json", import.meta.url)));
 
   assert.equal(exampleConfig.dailyLossLimitUsdt, 2);
@@ -125,7 +122,9 @@ test("monitors the expanded research universe without allowing Live entries", as
     });
   }
   assert.deepEqual(
-    ["SPY", "QQQ"].filter((symbol) => !exampleConfig.entryBlockedSymbols.includes(symbol)),
+    ["SPY", "QQQ", "IWM", "DGRW", "IEI"].filter(
+      (symbol) => exampleConfig.entryBlockedSymbols.includes(symbol)
+    ),
     []
   );
 });

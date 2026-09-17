@@ -278,7 +278,11 @@ export function positionSignalRefreshDecision({
 
 export function validateConfig(config) {
   const errors = [];
-  if (!["adaptive-momentum", "executable-basis-reversion"].includes(config.defaultStrategyId)) {
+  if (![
+    "weekly-etf-dual-momentum-defense",
+    "adaptive-momentum",
+    "executable-basis-reversion"
+  ].includes(config.defaultStrategyId)) {
     errors.push("defaultStrategyId must be a switchable strategy");
   }
   if (typeof config.strategyControlFile !== "string" || !config.strategyControlFile.trim()) {

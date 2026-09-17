@@ -2,7 +2,8 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { WEEKLY_ETF_DEFENSE_CATALOG } from "./weekly-etf-defense-catalog.mjs";
 
-export const DEFAULT_STRATEGY_ID = "adaptive-momentum";
+export const ADAPTIVE_MOMENTUM_STRATEGY_ID = "adaptive-momentum";
+export const DEFAULT_STRATEGY_ID = "weekly-etf-dual-momentum-defense";
 
 export const STRATEGY_TAXONOMY = Object.freeze({
   family: Object.freeze({
@@ -120,10 +121,10 @@ function shadowRiskOverlays(role) {
 export const STRATEGIES = [
   WEEKLY_ETF_DEFENSE_CATALOG,
   {
-    id: DEFAULT_STRATEGY_ID,
+    id: ADAPTIVE_MOMENTUM_STRATEGY_ID,
     name: "自适应动量",
     shortName: "动量",
-    status: "ACTIVE",
+    status: "RESEARCH",
     direction: "LONG_ONLY",
     family: "TREND_MOMENTUM",
     horizon: "FIFTEEN_MINUTE",
@@ -171,7 +172,7 @@ export const STRATEGIES = [
     id: "executable-basis-reversion",
     name: "可执行折价回归",
     shortName: "折价回归",
-    status: "ACTIVE",
+    status: "RESEARCH",
     direction: "LONG_ONLY",
     family: "STRUCTURAL_BASIS",
     horizon: "INTRADAY",

@@ -169,12 +169,12 @@ test("dashboard records one exact approval without writing the bot state", async
     const switched = await fetch(`${origin}/api/strategy`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Origin": origin },
-      body: JSON.stringify({ strategyId: "executable-basis-reversion" })
+      body: JSON.stringify({ strategyId: "weekly-etf-dual-momentum-defense" })
     });
     assert.equal(switched.status, 200);
     assert.equal((await switched.json()).appliesTo, "next_entry");
     const snapshot = await fetch(`${origin}/api/snapshot`).then((response) => response.json());
-    assert.equal(snapshot.strategy.activeStrategyId, "executable-basis-reversion");
+    assert.equal(snapshot.strategy.activeStrategyId, "weekly-etf-dual-momentum-defense");
 
     const invalidAutoApproval = await fetch(`${origin}/api/auto-approval`, {
       method: "POST",
@@ -370,7 +370,7 @@ test("dashboard protects public access with basic auth and an exact HTTPS origin
         "Content-Type": "application/json",
         Origin: publicOrigin
       },
-      body: JSON.stringify({ strategyId: "adaptive-momentum" })
+      body: JSON.stringify({ strategyId: "weekly-etf-dual-momentum-defense" })
     });
     assert.equal(publicOriginRequest.status, 200);
 
@@ -381,7 +381,7 @@ test("dashboard protects public access with basic auth and an exact HTTPS origin
         "Content-Type": "application/json",
         Origin: "https://attacker.example"
       },
-      body: JSON.stringify({ strategyId: "adaptive-momentum" })
+      body: JSON.stringify({ strategyId: "weekly-etf-dual-momentum-defense" })
     });
     assert.equal(rejectedOrigin.status, 403);
   } finally {
