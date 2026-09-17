@@ -342,7 +342,7 @@ export const STRATEGIES = [
     thesis: "在币安可用 ETF 中每周持有近期动量最强且 RSI 未转弱的风险资产，全体转弱时持有短期美国国债。",
     entry: "QQQ/IWM/DGRW/SPY 按20日动量排序且 RSI(14)≥40；每周首个常规时段用上一交易日信号换仓",
     exit: "下一次周度决策切换目标；全体风险 ETF 的 RSI<40 时切换到 SGOV",
-    evidence: "底层 ETF 历史回测年化10.23%、最大回撤34.56%，仍落后主要被动基准；仅进入独立 Paper 跟踪",
+    evidence: "原IEI口径历史回测年化10.23%、最大回撤34.56%；防守资产改为SGOV后该数值不可直接外推，需重新回测并继续独立Paper跟踪",
     risk: "短周期反复换仓、系统性回撤、代币价差和 Gas；IWM/DGRW 不是原始 IWO/VYM 的精确风格替代",
     backtestData: "Yahoo Finance 复权日线生成信号，Binance BSC 代币已完成常规时段分钟K线作为 Paper 成交代理",
     sources: [
