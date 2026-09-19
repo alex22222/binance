@@ -5,6 +5,7 @@ import {
   advanceWeeklyEtfRotationPaper,
   initialWeeklyEtfRotationPaperState,
   weeklyEtfRotationAssets,
+  weeklyEtfValuationAssets,
   weeklyEtfRotationSignal
 } from "../src/weekly-etf-rotation-paper.mjs";
 
@@ -118,4 +119,54 @@ test("resolves exactly one BSC ETF contract for every Paper symbol", () => {
   assert.throws(() => weeklyEtfRotationAssets(assets.filter(({ ticker }) => ticker !== "SGOV")), /SGOV/);
   assert.throws(() => weeklyEtfRotationAssets([...assets, { ...assets[0] }]), /QQQ/);
   assert.throws(() => weeklyEtfRotationAssets(assets.map((asset) => ({ ...asset, assetType: 1 }))), /QQQ/);
+});
+
+test("keeps a legacy holding available for valuation without restoring entry eligibility", () => {
+  const currentAssets = ["QQQ", "VTI", "VTV", "SPY", "SGOV"].map((ticker) => ({
+    ticker,
+    symbol: `${ticker}on`,
+    chainId: "56",
+    assetType: 3,
+    contractAddress: `contract-${ticker}`
+  }));
+  const legacyHolding = {
+    ticker: "DGRW",
+    symbol: "DGRWon",
+    chainId: "56",
+    assetType: 3,
+    contractAddress: "contract-DGRW"
+  };
+  const items = [...currentAssets, legacyHolding];
+
+  assert.deepEqual(
+    weeklyEtfRotationAssets(items).map(({ ticker }) => ticker),
+    ["QQQ", "VTI", "VTV", "SPY", "SGOV"]
+  );
+  assert.deepEqual(
+    weeklyEtfValuationAssets(items, "DGRW").map(({ ticker }) => ticker),
+    ["QQQ", "VTI", "VTV", "SPY", "SGOV", "DGRW"]
+  );
+  assert.throws(() => weeklyEtfValuationAssets(currentAssets, "DGRW"), /DGRW/);
+
+  const legacyState = initialWeeklyEtfRotationPaperState("2026-09-14T13:45:00.000Z", 50, "2026-09-14");
+  legacyState.cashUsdt = 0;
+  legacyState.position = {
+    symbol: "DGRW",
+    openedAt: "2026-09-14T13:45:00.000Z",
+    entryPrice: 100,
+    entryCapitalUsdt: 50,
+    entryCostUsdt: 0.25,
+    quantity: 0.4975
+  };
+  const marked = advanceWeeklyEtfRotationPaper(legacyState, {
+    at: "2026-09-18T19:55:00.000Z",
+    sessionDate: "2026-09-18",
+    week: "2026-09-14",
+    regularOpen: true,
+    decision: null,
+    prices: { DGRW: 101 }
+  });
+
+  assert.equal(marked.state.position.markPrice, 101);
+  assert.equal(marked.events.at(-1).type, "PAPER_POSITION_MARKED");
 });

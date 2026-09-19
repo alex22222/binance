@@ -12,6 +12,7 @@ import {
   advanceWeeklyEtfRotationPaper,
   initialWeeklyEtfRotationPaperState,
   weeklyEtfRotationAssets,
+  weeklyEtfValuationAssets,
   weeklyEtfRotationSignal,
   weeklyPaperWeek
 } from "../src/weekly-etf-rotation-paper.mjs";
@@ -157,13 +158,16 @@ async function loadSignal() {
   return signal;
 }
 
-async function loadOfficialAssets() {
+async function loadOfficialAssets(heldTicker = null) {
   const url = "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/rwa/stock/detail/list/ai?type=1";
   const payload = await fetchJson(url);
   if (payload.code !== "000000" || !Array.isArray(payload.data)) {
     throw new Error(`Binance asset list failed: ${payload.code || "unknown"}`);
   }
-  return weeklyEtfRotationAssets(payload.data);
+  return {
+    universeAssets: weeklyEtfRotationAssets(payload.data),
+    valuationAssets: weeklyEtfValuationAssets(payload.data, heldTicker)
+  };
 }
 
 async function latestTokenPrice(asset, sessionPlan) {
@@ -190,7 +194,7 @@ async function latestTokenPrice(asset, sessionPlan) {
 const state = await loadState();
 const firstTradingDate = isFirstNyseTradingDateOfWeek(sessionDate);
 if (screenOnly) {
-  const [assets, signal] = await Promise.all([loadOfficialAssets(), loadSignal()]);
+  const [{ universeAssets }, signal] = await Promise.all([loadOfficialAssets(), loadSignal()]);
   const screening = {
     at: now,
     sessionDate,
@@ -201,7 +205,7 @@ if (screenOnly) {
     evidenceLevel: state.evidenceLevel,
     roundTripCostPct,
     signal,
-    universe: assets.map(({ ticker, symbol, chainId, contractAddress, multiplier }) => ({
+    universe: universeAssets.map(({ ticker, symbol, chainId, contractAddress, multiplier }) => ({
       ticker, symbol, chainId, contractAddress, multiplier
     }))
   };
@@ -235,8 +239,8 @@ if (nowMs < sessionPlan.openMs + 60_000) {
   process.exit(0);
 }
 
-const assets = await loadOfficialAssets();
-const assetsByTicker = new Map(assets.map((asset) => [asset.ticker, asset]));
+const { universeAssets, valuationAssets } = await loadOfficialAssets(state.position?.symbol);
+const assetsByTicker = new Map(valuationAssets.map((asset) => [asset.ticker, asset]));
 const decisionDue = firstTradingDate && state.lastDecisionWeek !== week;
 const decision = decisionDue ? await loadSignal() : null;
 const priceTickers = [...new Set([
@@ -258,7 +262,7 @@ const result = advanceWeeklyEtfRotationPaper(state, {
 }, { roundTripCostPct });
 result.state.universe = {
   id: "binance-weekly-etf-rotation-v1",
-  symbols: assets.map(({ ticker }) => ticker),
+  symbols: universeAssets.map(({ ticker }) => ticker),
   observedAt: now
 };
 await atomicJson(statePath, result.state);
@@ -275,7 +279,7 @@ await atomicJson(screeningPath, {
   roundTripCostPct,
   decision: decision || result.state.lastDecision,
   tokenPrices: Object.fromEntries(tokenPrices),
-  universe: assets.map(({ ticker, symbol, chainId, contractAddress, multiplier }) => ({
+  universe: universeAssets.map(({ ticker, symbol, chainId, contractAddress, multiplier }) => ({
     ticker, symbol, chainId, contractAddress, multiplier
   }))
 });

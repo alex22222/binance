@@ -105,15 +105,23 @@ export function weeklyEtfDefensiveSignal(seriesByTicker) {
   };
 }
 
+function weeklyEtfAsset(items, ticker) {
+  const matches = (items || []).filter((item) => item?.ticker === ticker && String(item?.chainId) === "56");
+  if (matches.length !== 1 || matches[0].assetType !== 3 || !String(matches[0].contractAddress || "").trim()) {
+    throw new Error(`Expected one Binance BSC ETF: ${ticker}`);
+  }
+  return matches[0];
+}
+
 export function weeklyEtfRotationAssets(items) {
   return [...WEEKLY_ETF_ROTATION_UNIVERSE.riskTickers, WEEKLY_ETF_ROTATION_UNIVERSE.defensiveTicker]
-    .map((ticker) => {
-      const matches = (items || []).filter((item) => item?.ticker === ticker && String(item?.chainId) === "56");
-      if (matches.length !== 1 || matches[0].assetType !== 3 || !String(matches[0].contractAddress || "").trim()) {
-        throw new Error(`Expected one Binance BSC ETF: ${ticker}`);
-      }
-      return matches[0];
-    });
+    .map((ticker) => weeklyEtfAsset(items, ticker));
+}
+
+export function weeklyEtfValuationAssets(items, heldTicker = null) {
+  const assets = weeklyEtfRotationAssets(items);
+  if (!heldTicker || assets.some(({ ticker }) => ticker === heldTicker)) return assets;
+  return [...assets, weeklyEtfAsset(items, heldTicker)];
 }
 
 export function weeklyPaperWeek(date) {
