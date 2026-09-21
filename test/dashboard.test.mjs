@@ -133,6 +133,7 @@ test("builds a live position snapshot from the latest executable sell quote", ()
   assert.equal(snapshot.risk.dailyLossUsedUsdt, 1);
   assert.equal(snapshot.risk.dailyLossUsedPct, 10);
   assert.equal(snapshot.risk.openRiskUsdt, 1);
+  assert.equal(snapshot.risk.disasterRiskUsdt, 4);
   assert.deepEqual(snapshot.marketIndex, {
     symbol: "COMP",
     value: 25177.52,
@@ -278,6 +279,13 @@ test("exposes the weekly ETF decision for the active weekly strategy", () => {
 
   assert.deepEqual(snapshot.weeklyEtfDecision, weeklyEtfLive);
   assert.equal(snapshot.strategy.activeStrategyId, "weekly-etf-dual-momentum-defense");
+  assert.deepEqual(snapshot.strategy.weeklyEtf, {
+    momentumDays: 20,
+    rsiPeriod: 14,
+    rsiThreshold: 40,
+    riskTickers: ["QQQ", "VTI", "VTV", "SPY"],
+    defensiveTicker: "SGOV"
+  });
 });
 
 test("groups today's New York decision events into execution stages two through five", () => {

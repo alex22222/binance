@@ -118,6 +118,13 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.ok(html.indexOf('class="actions-section"') > html.indexOf('id="position"'));
   assert.ok(html.indexOf('id="strategyRisk"') < html.indexOf('class="actions-section"'));
   assert.match(html, /function renderStrategyRisk\(data\)/);
+  assert.match(html, /每周首个美股交易日/);
+  assert.match(html, /weekly\.momentumDays \+ "日动量 > 0 · RSI\("/);
+  assert.match(html, /weekly\.rsiPeriod \+ "\) ≥ " \+ weekly\.rsiThreshold/);
+  assert.match(html, /下周目标改变时换仓或转为现金/);
+  assert.match(html, /开放灾难风险/);
+  assert.match(html, /data\.risk\.disasterRiskUsdt/);
+  assert.match(html, /周度持仓 · 下周目标改变时换仓/);
   assert.match(html, /Shadow 风控/);
   assert.match(html, /仅观测，不改变下单/);
   assert.match(html, /开放风险/);

@@ -5,6 +5,11 @@ import { buildStrategyComparison, DEFAULT_STRATEGY_ID } from "./strategy-lab.mjs
 import { buildAssetTrend } from "./wallet-balance.mjs";
 import { effectiveRoundTripGasEstimate } from "./execution-accounting.mjs";
 import { openPositions } from "./position-state.mjs";
+import {
+  WEEKLY_ETF_DEFENSIVE_STRATEGY_ID,
+  WEEKLY_ETF_ROTATION_CONFIG,
+  WEEKLY_ETF_ROTATION_UNIVERSE
+} from "./weekly-etf-rotation-paper.mjs";
 
 export const DASHBOARD_TRACE_TAIL_BYTES = 8 * 1024 * 1024;
 const DASHBOARD_SIGNAL_HISTORY_TAIL_BYTES = 1024 * 1024;
@@ -265,7 +270,12 @@ export function buildDashboardSnapshot({
     0
   );
   const dailyLossLimitUsdt = finiteNumber(config.dailyLossLimitUsdt);
+  const disasterStopLossPct = finiteNumber(config.disasterStopLossPct);
   const dailyLossUsedUsdt = Math.max(0, -realizedPnlUsdt);
+  const disasterRiskUsdt = positions.reduce(
+    (sum, current) => sum + current.costBasisUsdt * disasterStopLossPct / 100,
+    0
+  );
   const position = positions[0] || null;
   const approvalExpiresAtMs = Date.parse(state.approvalRequest?.expiresAt || "");
   const approvalIsFresh = (
@@ -350,10 +360,11 @@ export function buildDashboardSnapshot({
       dailyLossUsedUsdt,
       dailyLossUsedPct: dailyLossLimitUsdt > 0 ? dailyLossUsedUsdt / dailyLossLimitUsdt * 100 : null,
       openRiskUsdt,
+      disasterRiskUsdt,
       openRiskToDailyLimitPct: dailyLossLimitUsdt > 0 ? openRiskUsdt / dailyLossLimitUsdt * 100 : null,
       maxOpenPositions: config.maxOpenPositions,
       openPositionCount: positions.length,
-      disasterStopLossPct: finiteNumber(config.disasterStopLossPct),
+      disasterStopLossPct,
       minInitialStopPct: finiteNumber(config.minInitialStopPct),
       maxInitialStopPct: finiteNumber(config.maxInitialStopPct),
       profitProtectionR: finiteNumber(config.profitProtectionR),
@@ -379,10 +390,19 @@ export function buildDashboardSnapshot({
       atrStopMultiplier: config.atrStopMultiplier,
       trailingAtrMultiplier: config.trailingAtrMultiplier,
       signalReviewHours: config.signalReviewHours,
-      signalReviewMinR: config.signalReviewMinR
+      signalReviewMinR: config.signalReviewMinR,
+      weeklyEtf: activeStrategyId === WEEKLY_ETF_DEFENSIVE_STRATEGY_ID
+        ? {
+            momentumDays: WEEKLY_ETF_ROTATION_CONFIG.momentumDays,
+            rsiPeriod: WEEKLY_ETF_ROTATION_CONFIG.rsiPeriod,
+            rsiThreshold: WEEKLY_ETF_ROTATION_CONFIG.rsiThreshold,
+            riskTickers: [...WEEKLY_ETF_ROTATION_UNIVERSE.riskTickers],
+            defensiveTicker: WEEKLY_ETF_ROTATION_UNIVERSE.defensiveTicker
+          }
+        : null
     },
     strategies: buildStrategyComparison(activeStrategyId, traceRecords),
-    weeklyEtfDecision: activeStrategyId === "weekly-etf-dual-momentum-defense"
+    weeklyEtfDecision: activeStrategyId === WEEKLY_ETF_DEFENSIVE_STRATEGY_ID
       ? state.weeklyEtfLive || null
       : null,
     positions,

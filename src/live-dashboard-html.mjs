@@ -1014,15 +1014,21 @@ export function liveDashboardHtml() {
         const protectionTriggerPct = position.initialRiskPct == null
           ? null
           : position.initialRiskPct * data.risk.profitProtectionR;
-        const riskText = position.initialRiskPct == null
-          ? "等待风险参数"
-          : "初始止损：下跌 " + Math.abs(position.initialRiskPct).toFixed(2) + "% 时优先退出（约 " + money(position.riskUsdt) + " USDT） · " +
-            (position.trailingStopPct == null
-              ? "盈利达到约 +" + protectionTriggerPct.toFixed(2) + "% 后启动移动保护"
-              : "盈利保护已启动，收益回落到 " + pct(position.trailingStopPct) + " 附近时退出") +
-            " · 持仓后最好 " + pct(position.peakReturnPct) +
-            (position.worstReturnPct == null ? "" : "，最差 " + pct(position.worstReturnPct)) +
-            " · 普通卖出至少需要 " + pct(position.profitFloorPct) + " 才能覆盖手续费和 Gas；触发止损时不受此限制";
+        const weeklyPosition = position.strategyId === WEEKLY_ETF_STRATEGY_ID;
+        const weeklyDisasterRiskUsdt = position.costBasisUsdt * data.risk.disasterStopLossPct / 100;
+        const riskText = weeklyPosition
+          ? "周度持仓 · 下周目标改变时换仓或转为现金 · 收益跌至 -" + data.risk.disasterStopLossPct.toFixed(2) +
+            "% 触发灾难退出（约 " + money(weeklyDisasterRiskUsdt) + " USDT，未计退出成本） · " +
+            "不执行 ATR 初始止损、1R 移动保护或 2R 止盈"
+          : position.initialRiskPct == null
+            ? "等待风险参数"
+            : "初始止损：下跌 " + Math.abs(position.initialRiskPct).toFixed(2) + "% 时优先退出（约 " + money(position.riskUsdt) + " USDT） · " +
+              (position.trailingStopPct == null
+                ? "盈利达到约 +" + protectionTriggerPct.toFixed(2) + "% 后启动移动保护"
+                : "盈利保护已启动，收益回落到 " + pct(position.trailingStopPct) + " 附近时退出") +
+              " · 持仓后最好 " + pct(position.peakReturnPct) +
+              (position.worstReturnPct == null ? "" : "，最差 " + pct(position.worstReturnPct)) +
+              " · 普通卖出至少需要 " + pct(position.profitFloorPct) + " 才能覆盖手续费和 Gas；触发止损时不受此限制";
         [
           ["数量", String(position.quantity)],
           ["平均买入价", money(position.averageEntryPriceUsdt) + " USDT"],
@@ -1433,26 +1439,39 @@ export function liveDashboardHtml() {
       const root = document.getElementById("strategyRisk");
       root.replaceChildren();
       const policy = el("div", "policy-grid");
-      const items = [
-        ["入场", data.strategy.entryIntervalMinutes + " 分钟 · ≥ " + data.strategy.entryAtrMultiplier + "×ATR15 · " + data.strategy.minDirectionalMinutes + "/15 上涨"],
-        [
-          "成本",
-          "报价往返 ≤ " + pct(data.strategy.maxRoundTripCostPct) +
-            " · 执行缓冲 " + pct(data.strategy.executionBufferPct) +
-            " · Gas " + money(data.strategy.effectiveRoundTripGasUsdt) + " USDT" +
-            (data.strategy.gasEstimateSource === "ACTUAL_P90"
-              ? "（实际 P90，" + data.strategy.actualGasSampleCount + " 笔）"
-              : "（固定估算，已采集 " + data.strategy.actualGasSampleCount + "/10 笔）") +
-            " · 净边 ≥ " + pct(data.strategy.minNetEdgePct)
-        ],
-        ["初始止损", "clamp(" + data.strategy.atrStopMultiplier + "×ATR15, " + pct(data.risk.minInitialStopPct) + ", " + pct(data.risk.maxInitialStopPct) + ")"],
-        ["盈利保护", "+" + data.risk.profitProtectionR + "R 启动 · " + data.strategy.trailingAtrMultiplier + "×ATR15 回撤"],
-        ["止盈 / 失效", "+" + data.risk.finalTakeProfitR + "R · " + data.strategy.signalReviewHours + "h 信号失效且 < " + data.strategy.signalReviewMinR + "R"],
-        ["硬风控", "单笔 " + money(data.risk.maxTradeUsdt) + " · 日亏 " + money(data.risk.dailyLossLimitUsdt) + " · " + data.risk.maxOpenPositions + " 仓 · 灾难 " + pct(data.risk.disasterStopLossPct)],
-        ["开放风险", money(data.risk.openRiskUsdt) + " USDT · 占日亏损上限 " + pct(data.risk.openRiskToDailyLimitPct)],
-        ["日亏损额度使用", money(data.risk.dailyLossUsedUsdt) + " / " + money(data.risk.dailyLossLimitUsdt) + " USDT · " + pct(data.risk.dailyLossUsedPct)],
-        ["Shadow 风控", "单标的集中度 · 趋势效率/震荡 · ATR 仓位建议 · 仅观测，不改变下单"]
-      ];
+      const costText = "报价往返 ≤ " + pct(data.strategy.maxRoundTripCostPct) +
+        " · 执行缓冲 " + pct(data.strategy.executionBufferPct) +
+        " · Gas " + money(data.strategy.effectiveRoundTripGasUsdt) + " USDT" +
+        (data.strategy.gasEstimateSource === "ACTUAL_P90"
+          ? "（实际 P90，" + data.strategy.actualGasSampleCount + " 笔）"
+          : "（固定估算，已采集 " + data.strategy.actualGasSampleCount + "/10 笔）") +
+        " · 净边 ≥ " + pct(data.strategy.minNetEdgePct);
+      const weeklyStrategy = data.strategy.activeStrategyId === WEEKLY_ETF_STRATEGY_ID;
+      const weekly = data.strategy.weeklyEtf;
+      const items = weeklyStrategy
+        ? [
+            ["入场", "每周首个美股交易日 · 使用前一交易日收盘 · " + weekly.momentumDays + "日动量 > 0 · RSI(" + weekly.rsiPeriod + ") ≥ " + weekly.rsiThreshold],
+            ["轮动池", weekly.riskTickers.join(" / ") + " · 选择动量最强者 · 无合格风险资产时转 " + weekly.defensiveTicker + "，其动量≤0则持有现金"],
+            ["本周目标", data.weeklyEtfDecision?.decision?.target || "等待本周决策"],
+            ["执行成本", costText],
+            ["正常退出", "下周目标改变时换仓或转为现金"],
+            ["灾难保护", "可执行收益 ≤ -" + data.risk.disasterStopLossPct.toFixed(2) + "% 时立即退出，不等待周度换仓"],
+            ["新开仓限制", "单笔 " + money(data.risk.maxTradeUsdt) + " USDT · 已实现日亏达到 " + money(data.risk.dailyLossLimitUsdt) + " USDT 后禁止新开仓 · 当前 " + data.risk.maxOpenPositions + " 仓"],
+            ["开放灾难风险", money(data.risk.disasterRiskUsdt) + " USDT · 按持仓成本×" + data.risk.disasterStopLossPct.toFixed(2) + "% 估算，未计退出 Gas/滑点"],
+            ["日亏额度使用", money(data.risk.dailyLossUsedUsdt) + " / " + money(data.risk.dailyLossLimitUsdt) + " USDT · " + pct(data.risk.dailyLossUsedPct)],
+            ["Shadow 风控", "趋势质量 · 集中度 · ATR 仓位建议 · 仅观测，不改变下单"]
+          ]
+        : [
+            ["入场", data.strategy.entryIntervalMinutes + " 分钟 · ≥ " + data.strategy.entryAtrMultiplier + "×ATR15 · " + data.strategy.minDirectionalMinutes + "/15 上涨"],
+            ["成本", costText],
+            ["初始止损", "clamp(" + data.strategy.atrStopMultiplier + "×ATR15, " + pct(data.risk.minInitialStopPct) + ", " + pct(data.risk.maxInitialStopPct) + ")"],
+            ["盈利保护", "+" + data.risk.profitProtectionR + "R 启动 · " + data.strategy.trailingAtrMultiplier + "×ATR15 回撤"],
+            ["止盈 / 失效", "+" + data.risk.finalTakeProfitR + "R · " + data.strategy.signalReviewHours + "h 信号失效且 < " + data.strategy.signalReviewMinR + "R"],
+            ["硬风控", "单笔 " + money(data.risk.maxTradeUsdt) + " · 日亏 " + money(data.risk.dailyLossLimitUsdt) + " · " + data.risk.maxOpenPositions + " 仓 · 灾难 " + pct(data.risk.disasterStopLossPct)],
+            ["开放风险", money(data.risk.openRiskUsdt) + " USDT · 占日亏损上限 " + pct(data.risk.openRiskToDailyLimitPct)],
+            ["日亏损额度使用", money(data.risk.dailyLossUsedUsdt) + " / " + money(data.risk.dailyLossLimitUsdt) + " USDT · " + pct(data.risk.dailyLossUsedPct)],
+            ["Shadow 风控", "单标的集中度 · 趋势效率/震荡 · ATR 仓位建议 · 仅观测，不改变下单"]
+          ];
       items.forEach(([label, value]) => {
         const item = el("div", "policy-item");
         item.append(el("span", "label", label), el("strong", "", value));
