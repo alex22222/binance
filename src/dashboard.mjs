@@ -382,6 +382,9 @@ export function buildDashboardSnapshot({
       signalReviewMinR: config.signalReviewMinR
     },
     strategies: buildStrategyComparison(activeStrategyId, traceRecords),
+    weeklyEtfDecision: activeStrategyId === "weekly-etf-dual-momentum-defense"
+      ? state.weeklyEtfLive || null
+      : null,
     positions,
     position,
     approvalRequest,

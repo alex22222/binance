@@ -141,6 +141,9 @@ test("live dashboard provides an approval-first iPhone layout and compact signal
   assert.match(html, /env\(safe-area-inset-bottom\)/);
   assert.match(html, /el\("div", "signal-table-head"\)/);
   assert.match(html, /\["代码", "方向", "强度 \/ 15分钟", "变化", "拉取时间"\]/);
+  assert.match(html, /\["代码", "本周状态", "20日动量", "RSI\(14\)", "信号日期"\]/);
+  assert.match(html, /周度策略速览/);
+  assert.match(html, /weekly-etf-dual-momentum-defense/);
   assert.match(html, /signal\?\.dataFetchedAt/);
   assert.match(html, /const tradingViewSymbols = \{/);
   assert.match(html, /CRCL: "NYSE:CRCL"/);
@@ -157,7 +160,7 @@ test("live dashboard provides an approval-first iPhone layout and compact signal
   assert.match(html, /id="signalToggle"/);
   assert.match(html, /const ETF_SYMBOLS = new Set\(\["SPY", "QQQ", "VTI", "VTV", "SGOV"\]\)/);
   assert.match(html, /const signalAssetType = \(symbol\) => ETF_SYMBOLS\.has\(symbol\) \? "ETF" : "股票"/);
-  assert.match(html, /const signalGroups = \["股票", "ETF"\]/);
+  assert.match(html, /const signalGroups = weeklyStrategy \? \["ETF"\] : \["股票", "ETF"\]/);
   assert.match(html, /className = "signal-group"/);
   assert.match(html, /role="tablist" aria-label="标的分类"/);
   assert.match(html, /aria-controls="signalPanelEtf"/);
@@ -226,6 +229,10 @@ test("strong signal summaries rank fresh cost-covered momentum and exclude histo
   for (const marketSession of ["offhours", "closed", "unknown"]) assert.deepEqual(dashboardStrongSignals({ ...data, marketSession }, now), []);
   assert.deepEqual(dashboardStrongSignals({ ...data, health: { status: "STALE" } }, now), []);
   assert.deepEqual(dashboardStrongSignals(data, now + 19 * 60000), []);
+  assert.deepEqual(dashboardStrongSignals({
+    ...data,
+    strategy: { ...data.strategy, activeStrategyId: "weekly-etf-dual-momentum-defense" }
+  }, now), []);
 });
 
 test("live dashboard shows today's execution stages two through five on every signal row", () => {

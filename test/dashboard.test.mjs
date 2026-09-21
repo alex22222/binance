@@ -244,6 +244,42 @@ test("shows pending orders and the latest signal for each symbol", () => {
   assert.equal(snapshot.signals.NVDA.upMinutes, 6);
 });
 
+test("exposes the weekly ETF decision for the active weekly strategy", () => {
+  const weeklyEtfLive = {
+    strategyId: "weekly-etf-dual-momentum-defense",
+    week: "2026-09-21",
+    sessionDate: "2026-09-21",
+    evaluatedAt: "2026-09-21T13:31:00.000Z",
+    decision: {
+      signalDate: "2026-09-18",
+      target: "VTI",
+      candidates: [
+        { ticker: "VTI", momentumPct: 3.2, rsi: 61.4, eligible: true }
+      ],
+      allRiskAssets: [
+        { ticker: "QQQ", momentumPct: -0.5, rsi: 52.1, eligible: false },
+        { ticker: "VTI", momentumPct: 3.2, rsi: 61.4, eligible: true }
+      ],
+      defensiveAsset: { ticker: "SGOV", momentumPct: 0.31, eligible: true },
+      absoluteMomentumRequired: true
+    }
+  };
+  const snapshot = buildDashboardSnapshot({
+    config: { ...config, defaultStrategyId: "weekly-etf-dual-momentum-defense" },
+    state: {
+      date: "2026-09-21",
+      realizedPnlUsdt: 0,
+      updatedAt: "2026-09-21T13:31:30.000Z",
+      weeklyEtfLive
+    },
+    traceRecords: [],
+    nowMs: Date.parse("2026-09-21T13:32:00.000Z")
+  });
+
+  assert.deepEqual(snapshot.weeklyEtfDecision, weeklyEtfLive);
+  assert.equal(snapshot.strategy.activeStrategyId, "weekly-etf-dual-momentum-defense");
+});
+
 test("groups today's New York decision events into execution stages two through five", () => {
   const snapshot = buildDashboardSnapshot({
     config,

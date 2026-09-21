@@ -1,4 +1,5 @@
 export function dashboardStrongSignals(data, nowMs = Date.now()) {
+  if (data.strategy?.activeStrategyId === "weekly-etf-dual-momentum-defense") return [];
   if (data.marketSession !== "regular" || data.health?.status !== "RUNNING") return [];
   const maxAgeMs = ((data.strategy.entryIntervalMinutes || 15) * 60 + 120) * 1000;
   return data.strategy.symbols.filter((symbol) => {
@@ -369,7 +370,7 @@ export function liveDashboardHtml() {
         </div>
       </div>
     <section class="signal-ticker" id="signalTicker" aria-label="强信号概要" data-paused="false">
-      <span class="ticker-label">强信号速览</span>
+      <span class="ticker-label" id="tickerLabel">强信号速览</span>
       <div class="ticker-window"><div class="ticker-track" id="tickerTrack" data-empty="true"><span class="ticker-empty">正在读取信号…</span></div></div>
       <button class="ticker-pause" id="tickerPause" type="button" aria-pressed="false" disabled>暂停滚动</button>
     </section>
@@ -456,6 +457,7 @@ export function liveDashboardHtml() {
       QQQ: "NASDAQ:QQQ"
     };
     const ETF_SYMBOLS = new Set(["SPY", "QQQ", "VTI", "VTV", "SGOV"]);
+    const WEEKLY_ETF_STRATEGY_ID = "weekly-etf-dual-momentum-defense";
     const signalAssetType = (symbol) => ETF_SYMBOLS.has(symbol) ? "ETF" : "股票";
     let selectedSignalTab = "股票";
     let tickerSignature = null;
@@ -473,22 +475,49 @@ export function liveDashboardHtml() {
         if (selected && focus) tab.focus();
       });
     }
-    function renderSignalTicker(data, strongSymbols) {
-      const items = strongSymbols.slice(0, 8).map((symbol) => ({
-        symbol, trend: pct(data.signals[symbol].trend15mPct),
-        strength: data.signals[symbol].upMinutes + "/15 上涨",
-        atr: (data.signals[symbol].trend15mPct / data.signals[symbol].atr15Pct).toFixed(2) + "×ATR",
-        fetched: shortTime(data.signals[symbol].dataFetchedAt)
+    function weeklyEtfAssets(data) {
+      const decision = data.weeklyEtfDecision?.decision;
+      const assets = [...(decision?.allRiskAssets || [])];
+      if (decision?.defensiveAsset) assets.push({ ...decision.defensiveAsset, rsi: null });
+      const visibleAssets = assets.length
+        ? assets
+        : ["QQQ", "VTI", "VTV", "SPY", "SGOV"].map((ticker) => ({ ticker, eligible: false }));
+      return visibleAssets.map((asset) => ({
+        ...asset,
+        signalDate: asset.signalDate || decision?.signalDate || null,
+        status: asset.ticker === decision?.target ? "本周目标" : asset.eligible ? "通过" : "未通过"
       }));
-      const emptyText = data.marketSession !== "regular"
-        ? "休市中 · 常规交易时段恢复强信号速览"
-        : data.health?.status !== "RUNNING"
-          ? "服务状态异常 · 强信号展示已暂停"
-          : "暂无新鲜且覆盖成本的强信号 · 等待下一轮扫描";
+    }
+    function renderSignalTicker(data, strongSymbols) {
+      const weeklyStrategy = data.strategy?.activeStrategyId === WEEKLY_ETF_STRATEGY_ID;
+      const items = weeklyStrategy
+        ? weeklyEtfAssets(data).map((asset) => ({
+            symbol: asset.ticker,
+            trend: pct(asset.momentumPct),
+            strength: asset.status,
+            atr: asset.rsi == null ? "RSI —" : "RSI " + Number(asset.rsi).toFixed(1),
+            fetched: asset.signalDate || "等待周度决策"
+          }))
+        : strongSymbols.slice(0, 8).map((symbol) => ({
+            symbol, trend: pct(data.signals[symbol].trend15mPct),
+            strength: data.signals[symbol].upMinutes + "/15 上涨",
+            atr: (data.signals[symbol].trend15mPct / data.signals[symbol].atr15Pct).toFixed(2) + "×ATR",
+            fetched: shortTime(data.signals[symbol].dataFetchedAt)
+          }));
+      const emptyText = weeklyStrategy
+        ? "本周周度决策尚未生成 · 首个常规交易日读取前一交易日数据"
+        : data.marketSession !== "regular"
+          ? "休市中 · 常规交易时段恢复强信号速览"
+          : data.health?.status !== "RUNNING"
+            ? "服务状态异常 · 强信号展示已暂停"
+            : "暂无新鲜且覆盖成本的强信号 · 等待下一轮扫描";
       const signature = JSON.stringify([items, emptyText]);
       if (signature === tickerSignature) return;
       tickerSignature = signature;
       const track = document.getElementById("tickerTrack");
+      const ticker = document.getElementById("signalTicker");
+      document.getElementById("tickerLabel").textContent = weeklyStrategy ? "周度策略速览" : "强信号速览";
+      ticker.setAttribute("aria-label", weeklyStrategy ? "周度 ETF 策略概要" : "强信号概要");
       track.replaceChildren();
       track.dataset.empty = String(!items.length);
       document.getElementById("tickerPause").disabled = !items.length;
@@ -501,7 +530,13 @@ export function liveDashboardHtml() {
         const button = el("button", "ticker-item");
         button.type = "button";
         button.setAttribute("aria-label", "查看 " + item.symbol + " 信号详情");
-        button.append(el("strong", "", item.symbol), el("span", "green", "15m " + item.trend), el("span", "", item.strength), el("span", "", item.atr), el("span", "", "成本已覆盖 · " + item.fetched));
+        button.append(
+          el("strong", "", item.symbol),
+          el("span", "green", weeklyStrategy ? "20日 " + item.trend : "15m " + item.trend),
+          el("span", "", item.strength),
+          el("span", "", item.atr),
+          el("span", "", weeklyStrategy ? "信号日 " + item.fetched : "成本已覆盖 · " + item.fetched)
+        );
         button.addEventListener("click", () => {
           selectSignalTab(signalAssetType(item.symbol));
           document.getElementById("signals").classList.add("expanded");
@@ -1191,9 +1226,10 @@ export function liveDashboardHtml() {
     }
     function renderSignals(data) {
       const root = document.getElementById("signals");
+      const weeklyStrategy = data.strategy?.activeStrategyId === WEEKLY_ETF_STRATEGY_ID;
       const strongSymbols = dashboardStrongSignals(data);
       renderSignalTicker(data, strongSymbols);
-      const signature = JSON.stringify([data.signals, data.strategy, data.stockMarketChanges, data.signalDecisionStages, data.marketSession, strongSymbols]);
+      const signature = JSON.stringify([data.signals, data.strategy, data.weeklyEtfDecision, data.stockMarketChanges, data.signalDecisionStages, data.marketSession, strongSymbols]);
       if (signature === signalRenderSignature) return;
       signalRenderSignature = signature;
       root.replaceChildren();
@@ -1203,7 +1239,11 @@ export function liveDashboardHtml() {
       const marketClosed = ["offhours", "closed"].includes(data.marketSession);
       const context = document.getElementById("signalContext");
       context.className = "signal-context" + (historicalCount ? " gold" : "");
-      context.textContent = historicalCount
+      context.textContent = weeklyStrategy
+        ? data.weeklyEtfDecision?.decision
+          ? "周度目标：" + data.weeklyEtfDecision.decision.target + " · 信号日 " + data.weeklyEtfDecision.decision.signalDate
+          : "等待本周 ETF 决策"
+        : historicalCount
         ? marketClosed
           ? "休市中 · 显示本地历史信号"
           : historicalCount + " 条本地历史 · 等待服务器更新"
@@ -1212,9 +1252,15 @@ export function liveDashboardHtml() {
           : liveCount
             ? "服务器实时信号"
             : "等待首次常规时段扫描";
-      const signalGroups = ["股票", "ETF"];
+      if (weeklyStrategy) selectedSignalTab = "ETF";
+      document.getElementById("signalTabStock").hidden = weeklyStrategy;
+      const signalGroups = weeklyStrategy ? ["ETF"] : ["股票", "ETF"];
+      if (weeklyStrategy) document.getElementById("signalCountStock").textContent = "0";
       signalGroups.forEach((assetType) => {
-        const symbols = data.strategy.symbols.filter((symbol) => signalAssetType(symbol) === assetType);
+        const weeklyAssets = weeklyStrategy ? weeklyEtfAssets(data) : [];
+        const symbols = weeklyStrategy
+          ? weeklyAssets.map((asset) => asset.ticker)
+          : data.strategy.symbols.filter((symbol) => signalAssetType(symbol) === assetType);
         const suffix = assetType === "ETF" ? "Etf" : "Stock";
         document.getElementById("signalCount" + suffix).textContent = symbols.length;
         const group = document.createElement("section");
@@ -1226,10 +1272,14 @@ export function liveDashboardHtml() {
         group.hidden = assetType !== selectedSignalTab;
         const tableHead = el("div", "signal-table-head");
         tableHead.setAttribute("aria-hidden", "true");
-        ["代码", "方向", "强度 / 15分钟", "变化", "拉取时间"].forEach((label) => tableHead.append(el("span", "", label)));
+        const columns = weeklyStrategy
+          ? ["代码", "本周状态", "20日动量", "RSI(14)", "信号日期"]
+          : ["代码", "方向", "强度 / 15分钟", "变化", "拉取时间"];
+        columns.forEach((label) => tableHead.append(el("span", "", label)));
         const list = el("div", "signal-list");
         symbols.forEach((symbol, signalIndex) => {
-        const signal = data.signals[symbol];
+        const weeklyAsset = weeklyAssets.find((asset) => asset.ticker === symbol);
+        const signal = weeklyStrategy ? null : data.signals[symbol];
         const historical = signal?.source === "local-history";
         const costsCovered = signal?.costCoverageAllowed === true;
         const signalPassed = signal && signal.trend15mPct >= signal.atr15Pct * data.strategy.entryAtrMultiplier && signal.upMinutes >= data.strategy.minDirectionalMinutes;
@@ -1278,7 +1328,13 @@ export function liveDashboardHtml() {
             code.append(el("small", "signal-shadow", "Shadow · " + shadowObservations.join(" · ")));
           }
         }
-        row.title = !signal
+        row.title = weeklyStrategy
+          ? weeklyAsset?.status === "本周目标"
+            ? "本周轮动目标"
+            : weeklyAsset?.eligible
+              ? "通过周频动量与 RSI 门槛"
+              : "未通过周频入选门槛"
+          : !signal
           ? marketClosed ? "休市中，等待常规时段扫描" : "等待信号"
           : historical
             ? "本地历史信号，仅供参考，不触发交易"
@@ -1288,13 +1344,24 @@ export function liveDashboardHtml() {
           fetchedTime.dateTime = signal.dataFetchedAt;
           fetchedTime.title = new Date(signal.dataFetchedAt).toLocaleString("zh-CN", { hour12: false });
         }
-        row.append(
-          code,
-          el("span", "signal-direction " + (!signal ? "muted" : signal.trend15mPct >= 0 ? "green" : "red"), direction),
-          el("span", "signal-strength", signal ? (signal.upMinutes ?? "—") + "/15 ↑" : "—"),
-          el("span", "signal-change " + (signalPassed ? "green" : signal ? "red" : "muted"), signal ? pct(signal.trend15mPct) : "—"),
-          fetchedTime
-        );
+        if (weeklyStrategy) {
+          const momentumPositive = Number(weeklyAsset?.momentumPct) > 0;
+          row.append(
+            code,
+            el("span", "signal-direction " + (weeklyAsset?.status === "本周目标" ? "green" : weeklyAsset?.eligible ? "gold" : "muted"), weeklyAsset?.status || "等待"),
+            el("span", "signal-strength " + (momentumPositive ? "green" : "red"), pct(weeklyAsset?.momentumPct)),
+            el("span", "signal-change " + (weeklyAsset?.eligible ? "green" : "muted"), weeklyAsset?.rsi == null ? "—" : Number(weeklyAsset.rsi).toFixed(1)),
+            el("time", "signal-time", weeklyAsset?.signalDate || "—")
+          );
+        } else {
+          row.append(
+            code,
+            el("span", "signal-direction " + (!signal ? "muted" : signal.trend15mPct >= 0 ? "green" : "red"), direction),
+            el("span", "signal-strength", signal ? (signal.upMinutes ?? "—") + "/15 ↑" : "—"),
+            el("span", "signal-change " + (signalPassed ? "green" : signal ? "red" : "muted"), signal ? pct(signal.trend15mPct) : "—"),
+            fetchedTime
+          );
+        }
         const details = el("details", "signal-details");
         details.open = openSignalDetails.has(symbol);
         details.append(el("summary", "", "决策链路 · " + row.title), renderSignalDecisionStages(symbol, data.signalDecisionStages?.[symbol]));
@@ -1309,6 +1376,7 @@ export function liveDashboardHtml() {
         group.append(tableHead, list);
         root.append(group);
       });
+      selectSignalTab(selectedSignalTab);
     }
     function renderTimeline(data) {
       const root = document.getElementById("timeline");
@@ -1404,7 +1472,9 @@ export function liveDashboardHtml() {
             : data.positions?.length || data.position
               ? 5
               : 0;
-      const steps = ["15分钟扫描", "趋势/成本/审计", "创建订单", "逐笔确认", "复核并执行", "60秒退出检查"];
+      const steps = data.strategy?.activeStrategyId === WEEKLY_ETF_STRATEGY_ID
+        ? ["周度决策", "趋势/成本/审计", "创建订单", "逐笔确认", "复核并执行", "60秒退出检查"]
+        : ["15分钟扫描", "趋势/成本/审计", "创建订单", "逐笔确认", "复核并执行", "60秒退出检查"];
       const approvalStageCopy = data.approvalRequest
         ? "1 笔待确认"
         : "暂无待确认";
