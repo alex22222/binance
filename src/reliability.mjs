@@ -14,6 +14,8 @@ const transientNetworkCodes = new Set([
   "UND_ERR_HEADERS_TIMEOUT",
   "UND_ERR_SOCKET"
 ]);
+const LIQUIDITY_UNAVAILABLE_ERROR_CODE = 316008;
+const LIQUIDITY_UNAVAILABLE_ALERT_AFTER = 3;
 
 export class BawError extends Error {
   constructor({ code, name = "BAW_ERROR", message = "Command failed", operation }) {
@@ -28,6 +30,16 @@ export function isWalletSessionExpired(error) {
   return Number(error?.code) === 100001005 ||
     /SESSION_EXPIRED|UNAUTHORIZED/.test(String(error?.name || "")) ||
     /Wallet status is UNCONNECTED/.test(String(error?.message || ""));
+}
+
+function isLiquidityUnavailableQuote(error) {
+  return Number(error?.code) === LIQUIDITY_UNAVAILABLE_ERROR_CODE &&
+    error?.operation === "market-order quote" &&
+    /no available liquidity/i.test(String(error?.message || ""));
+}
+
+function hasPendingExit(state) {
+  return state.pendingOrder?.side === "SELL" || state.approvalRequest?.side === "SELL";
 }
 
 export function isTransientNetworkError(error) {
@@ -114,18 +126,41 @@ export async function resolveWalletStatus(callWallet) {
 }
 
 export function runtimeFailureUpdate(state, error, now = new Date().toISOString()) {
-  const fingerprint = isWalletSessionExpired(error)
+  const liquidityUnavailable = isLiquidityUnavailableQuote(error);
+  const fingerprint = liquidityUnavailable
+    ? "liquidity:quote_unavailable"
+    : isWalletSessionExpired(error)
     ? "wallet:expired"
     : isTransientNetworkError(error)
       ? `network:${error.code || error.name || "unavailable"}`
       : `error:${error.code || error.name || error.message}`;
+  const previousLiquidity = state.liquidityUnavailable;
+  const consecutiveFailures = liquidityUnavailable && previousLiquidity?.fingerprint === fingerprint
+    ? Number(previousLiquidity.consecutiveFailures || 0) + 1
+    : 1;
+  const alerted = liquidityUnavailable && (
+    previousLiquidity?.alerted === true ||
+    hasPendingExit(state) ||
+    consecutiveFailures >= LIQUIDITY_UNAVAILABLE_ALERT_AFTER
+  );
   return {
     fingerprint,
-    shouldNotify: shouldNotifyFailure(state.lastFailureFingerprint, fingerprint),
+    shouldNotify: liquidityUnavailable
+      ? alerted && previousLiquidity?.alerted !== true
+      : shouldNotifyFailure(state.lastFailureFingerprint, fingerprint),
     patch: {
       updatedAt: now,
       lastError: error.message,
       lastFailureFingerprint: fingerprint,
+      liquidityUnavailable: liquidityUnavailable
+        ? {
+            fingerprint,
+            consecutiveFailures,
+            firstDetectedAt: previousLiquidity?.fingerprint === fingerprint ? previousLiquidity.firstDetectedAt : now,
+            lastDetectedAt: now,
+            alerted
+          }
+        : null,
       ...(isWalletSessionExpired(error)
         ? {
             walletSession: {

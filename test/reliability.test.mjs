@@ -81,6 +81,34 @@ test("suppresses repeated notifications for the same persistent failure", () => 
   assert.equal(shouldNotifyFailure("wallet:expired", "network:timeout"), true);
 });
 
+test("delays no-liquidity alerts unless an exit is already pending", () => {
+  const liquidityError = {
+    code: 316008,
+    name: "SERVICE_ERROR",
+    operation: "market-order quote",
+    message: "SERVICE_ERROR: Token QQQon currently has no available liquidity. Please trade during stock market opening hours."
+  };
+  const first = runtimeFailureUpdate({}, liquidityError, "2026-09-23T13:29:46.000Z");
+  assert.equal(first.shouldNotify, false);
+  assert.equal(first.patch.liquidityUnavailable.consecutiveFailures, 1);
+
+  const second = runtimeFailureUpdate(first.patch, liquidityError, "2026-09-23T13:30:51.000Z");
+  assert.equal(second.shouldNotify, false);
+  assert.equal(second.patch.liquidityUnavailable.consecutiveFailures, 2);
+
+  const third = runtimeFailureUpdate(second.patch, liquidityError, "2026-09-23T13:31:56.000Z");
+  assert.equal(third.shouldNotify, true);
+  assert.equal(third.patch.liquidityUnavailable.alerted, true);
+
+  const fourth = runtimeFailureUpdate(third.patch, liquidityError, "2026-09-23T13:33:01.000Z");
+  assert.equal(fourth.shouldNotify, false);
+
+  const pendingExit = runtimeFailureUpdate({
+    pendingOrder: { side: "SELL", status: "SUBMITTED" }
+  }, liquidityError, "2026-09-23T13:29:46.000Z");
+  assert.equal(pendingExit.shouldNotify, true);
+});
+
 test("persists session expiry once and recovers without losing unrelated state", () => {
   const state = {
     lastFailureFingerprint: null,

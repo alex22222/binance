@@ -2993,6 +2993,7 @@ async function cycle(config, state, statePath, emergencyStopPath) {
     state.updatedAt = new Date().toISOString();
     state.lastError = null;
     state.lastFailureFingerprint = null;
+    state.liquidityUnavailable = null;
     await saveJson(statePath, state);
     const savedPositionCount = openPositions(state).length;
     await traceAction("state_saved", "succeeded", {
