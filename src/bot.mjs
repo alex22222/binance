@@ -48,9 +48,7 @@ import {
 import { retry } from "./retry.mjs";
 import { buildBawEnvironment } from "./baw-runtime.mjs";
 import {
-  approvalDecisionStatus,
   createApprovalRequest,
-  loadApprovalDecision,
   recordApprovalDecision
 } from "./approvals.mjs";
 import { readApprovalControl } from "./approval-control.mjs";
@@ -59,12 +57,9 @@ import {
   BawError,
   acquireProcessLock,
   assertQuoteFresh,
-  createOrderIntent,
   isTransientNetworkError,
-  matchingOrdersForIntent,
   quoteDriftPct,
   readEmergencyStop,
-  recoveryActionForPending,
   resolveWalletStatus,
   runtimeFailureUpdate,
   walletSessionStatusFromSettings
@@ -126,6 +121,7 @@ import { buildShadowBasisDecision } from "./shadow-basis-signal.mjs";
 import { createShadowBasisTracker } from "./shadow-basis-tracker.mjs";
 import { newYorkDate } from "./strategy-data.mjs";
 import { rolloverRiskDay } from "./risk-day.mjs";
+import { createOrderExecution } from "./order-execution.mjs";
 
 const execFileAsync = promisify(execFile);
 const BSC_CHAIN_ID = "56";
@@ -151,6 +147,19 @@ let previousBstocksUniverseLoaded = false;
 let latestBstocksUniverseChanges = null;
 let trackShadowBasisDecision = async () => false;
 let latestShadowContextCandidates = [];
+const {
+  ensureNotEmergencyStopped,
+  submitOrder,
+  recoverPendingOrder,
+  resolveApprovalRequest
+} = createOrderExecution({
+  baw: (args, options) => baw(args, options),
+  saveJson,
+  trace: (stage, status, details) => traceAction(stage, status, details, currentCycleId),
+  readEmergencyStop,
+  isShutdownRequested: () => shutdownRequested,
+  chainId: BSC_CHAIN_ID
+});
 
 function log(message, fields = {}) {
   console.log(JSON.stringify({ time: new Date().toISOString(), message, ...fields }));
@@ -936,174 +945,23 @@ async function requestTradeApproval(config, state, statePath, details) {
   return request;
 }
 
-async function swap(config, fromTokenQty, fromToken, toToken) {
-  if (config.mode !== "live") {
-    const result = { shadow: true, orderId: `shadow-${Date.now()}` };
-    await traceAction("market_order", "simulated", {
-      mode: config.mode,
-      fromToken,
-      toToken,
-      fromTokenQty,
-      orderId: result.orderId
-    }, currentCycleId);
-    return result;
-  }
-  return baw([
-    "market-order",
-    "swap",
-    "--fromTokenQty",
-    String(fromTokenQty),
-    "--fromToken",
-    fromToken,
-    "--toToken",
-    toToken,
-    "--binanceChainId",
-    BSC_CHAIN_ID,
-    "--slippage",
-    String(config.slippagePct),
-    "--mev",
-    "true",
-    "--gasLevel",
-    "HIGH"
-  ], { stateChanging: true });
-}
-
 async function marketOrder(orderId) {
   const data = await baw(["market-order", "list", "--orderId", String(orderId)]);
   return data.list?.[0] || null;
 }
 
-async function ensureNotEmergencyStopped(emergencyStopPath, state) {
-  if (shutdownRequested) {
-    const error = new Error("Shutdown requested");
-    error.code = "SHUTDOWN_REQUESTED";
-    throw error;
-  }
-  const marker = await readEmergencyStop(emergencyStopPath);
-  if (!marker?.active) {
-    state.emergencyStop = null;
-    return;
-  }
-  state.emergencyStop = marker;
-  const error = new Error(`Emergency stop is active: ${marker.reason}`);
-  error.code = "EMERGENCY_STOP";
-  throw error;
-}
-
-async function submitOrder(config, state, statePath, emergencyStopPath, details) {
-  if (config.mode !== "live") {
-    return swap(config, details.fromTokenQty, details.fromToken, details.toToken);
-  }
-
-  await ensureNotEmergencyStopped(emergencyStopPath, state);
-  const intent = createOrderIntent(details);
-  state.pendingOrder = intent;
-  await saveJson(statePath, state);
-  await traceAction("order_intent", "persisted", {
-    intentId: intent.intentId,
-    side: intent.side,
-    symbol: intent.symbol,
-    address: intent.address
-  }, currentCycleId);
-
-  try {
-    await ensureNotEmergencyStopped(emergencyStopPath, state);
-    const result = await swap(config, details.fromTokenQty, details.fromToken, details.toToken);
-    state.pendingOrder = {
-      ...intent,
-      status: "SUBMITTED",
-      orderId: result.orderId,
-      submittedAt: new Date().toISOString()
-    };
-    await saveJson(statePath, state);
-    return result;
-  } catch (error) {
-    state.pendingOrder = {
-      ...intent,
-      status: "AMBIGUOUS",
-      ambiguousAt: new Date().toISOString(),
-      lastError: error.message
-    };
-    await saveJson(statePath, state);
-    await traceAction("order_submission", "ambiguous", {
-      intentId: intent.intentId,
-      side: intent.side,
-      symbol: intent.symbol,
-      error: error.message
-    }, currentCycleId);
-    throw error;
-  }
-}
-
-async function reconcilePendingOrder(state, statePath) {
-  const pending = state.pendingOrder;
-  const data = await baw([
-    "market-order",
-    "list",
-    "--fromToken",
-    pending.fromToken,
-    "--toToken",
-    pending.toToken,
-    "--startTime",
-    String(Date.parse(pending.createdAt) - 60_000),
-    "--endTime",
-    String(Date.now()),
-    "--pageSize",
-    "100",
-    "--binanceChainId",
-    BSC_CHAIN_ID
-  ]);
-  const matches = matchingOrdersForIntent(data.list || [], pending);
-  if (matches.length === 1) {
-    state.pendingOrder = {
-      ...pending,
-      status: "SUBMITTED",
-      orderId: matches[0].orderId,
-      reconciledAt: new Date().toISOString()
-    };
-    await saveJson(statePath, state);
-    await traceAction("order_recovery", "reconciled", {
-      intentId: pending.intentId,
-      orderId: matches[0].orderId
-    }, currentCycleId);
-    return "RECONCILED";
-  }
-
-  state.pendingOrder = {
-    ...pending,
-    status: "REVIEW_REQUIRED",
-    reviewReason: matches.length === 0 ? "NO_MATCHING_ORDER" : "MULTIPLE_MATCHING_ORDERS",
-    reviewedAt: new Date().toISOString()
-  };
-  await saveJson(statePath, state);
-  await traceAction("order_recovery", "halted", {
-    intentId: pending.intentId,
-    matchCount: matches.length,
-    reason: state.pendingOrder.reviewReason
-  }, currentCycleId);
-  return "REVIEW_REQUIRED";
-}
-
 async function finalizePendingOrder(config, state, statePath) {
   const pending = state.pendingOrder;
   if (!pending) return false;
-  const recoveryAction = recoveryActionForPending(pending);
-  if (recoveryAction === "RECONCILE") {
-    const result = await reconcilePendingOrder(state, statePath);
-    if (result === "REVIEW_REQUIRED") {
-      await notify(
-        state,
-        `[Agentic Stock Bot] ORDER REVIEW REQUIRED\n${pending.side} ${pending.symbol} ${pending.address}\nIntent: ${pending.intentId}`
-      );
-      return true;
-    }
-  } else if (recoveryAction === "HALT") {
-    await traceAction("pending_order", "halted", {
-      intentId: pending.intentId,
-      reason: pending.reviewReason || "review_required"
-    }, currentCycleId);
+  const recovery = await recoverPendingOrder(state, statePath);
+  if (recovery === "REVIEW_REQUIRED") {
+    await notify(
+      state,
+      `[Agentic Stock Bot] ORDER REVIEW REQUIRED\n${pending.side} ${pending.symbol} ${pending.address}\nIntent: ${pending.intentId}`
+    );
     return true;
   }
+  if (recovery === "HALTED") return true;
 
   const submitted = state.pendingOrder;
   const order = await marketOrder(submitted.orderId);
@@ -2839,34 +2697,12 @@ async function processTradeApproval(config, state, statePath, emergencyStopPath)
       return true;
     }
   }
-  const decisionDirectory = resolve(projectRoot, config.approvalDecisionDirectory);
-  const decision = await loadApprovalDecision(decisionDirectory, request.approvalId);
-  const outcome = approvalDecisionStatus(request, decision);
-  if (outcome.status === "WAITING") {
-    await traceAction("trade_approval", "waiting", {
-      approvalId: request.approvalId,
-      side: request.side,
-      symbol: request.symbol,
-      expiresAt: request.expiresAt
-    }, currentCycleId);
-    return true;
-  }
-
-  state.approvalRequest = null;
-  state.lastApprovalDecision = {
-    approvalId: request.approvalId,
-    side: request.side,
-    symbol: request.symbol,
-    status: outcome.status,
-    decidedAt: decision?.decidedAt || new Date().toISOString()
-  };
-  await saveJson(statePath, state);
-  await traceAction("trade_approval", outcome.status === "APPROVED" ? "approved" : "closed", {
-    approvalId: request.approvalId,
-    side: request.side,
-    symbol: request.symbol,
-    outcome: outcome.status
-  }, currentCycleId);
+  const outcome = await resolveApprovalRequest(
+    state,
+    statePath,
+    resolve(projectRoot, config.approvalDecisionDirectory)
+  );
+  if (outcome.status === "WAITING") return true;
 
   if (outcome.status !== "APPROVED") {
     await notify(
