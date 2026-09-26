@@ -462,30 +462,67 @@ export function entryExecutionDecision({ entriesPaused = false, side }) {
   };
 }
 
-function performanceFor(strategyId, traceRecords) {
-  const trades = traceRecords
-    .filter((record) => (
-      (record.event === "sell_submission" && record.status === "simulated") ||
-      (record.event === "pending_order" && record.status === "finished" && record.details?.side === "SELL")
-    ))
-    .filter((record) => record.details?.strategyId === strategyId)
-    .map((record) => Number(record.details.realizedPnlUsdt))
-    .filter(Number.isFinite);
+function performanceFor(strategyId, traceRecords, evidence = "live") {
+  const orders = new Map();
+  const conflicts = new Set();
+  let excludedRecords = 0;
+  let duplicateRecords = 0;
+  for (const [index, record] of traceRecords.entries()) {
+    if (record.details?.strategyId !== strategyId) continue;
+    const matches = evidence === "simulated"
+      ? record.event === "sell_submission" && record.status === "simulated"
+      : record.event === "pending_order" && record.status === "finished" && record.details.side === "SELL";
+    if (!matches) continue;
+    const value = record.details.realizedPnlUsdt;
+    if (!((typeof value === "number" || (typeof value === "string" && value.trim() !== "")) && Number.isFinite(Number(value)))) {
+      excludedRecords += 1;
+      continue;
+    }
+    const id = record.details.orderId;
+    if (evidence === "live" && !id) {
+      excludedRecords += 1;
+      continue;
+    }
+    const key = id ? "order:" + id : "record:" + index;
+    const trade = { pnl: Number(value), timestamp: Date.parse(record.timestamp || "") };
+    const previous = orders.get(key);
+    if (previous) {
+      if (previous.pnl !== trade.pnl) conflicts.add(key);
+      else duplicateRecords += 1;
+      continue;
+    }
+    orders.set(key, trade);
+  }
+  const trades = [...orders].filter(([key]) => !conflicts.has(key)).map(([, trade]) => trade)
+    .sort((left, right) => left.timestamp - right.timestamp);
   let equity = 0;
   let peak = 0;
   let maxDrawdownUsdt = 0;
-  for (const pnl of trades) {
+  for (const { pnl } of trades) {
     equity += pnl;
     peak = Math.max(peak, equity);
     maxDrawdownUsdt = Math.max(maxDrawdownUsdt, peak - equity);
   }
-  const wins = trades.filter((pnl) => pnl > 0).length;
+  const wins = trades.filter(({ pnl }) => pnl > 0).length;
+  const profit = trades.reduce((sum, { pnl }) => sum + Math.max(0, pnl), 0);
+  const loss = trades.reduce((sum, { pnl }) => sum + Math.max(0, -pnl), 0);
+  const dated = trades.length > 0 && trades.every(({ timestamp }) => Number.isFinite(timestamp));
   return {
+    evidence,
+    scope: "TRACE_WINDOW_NOT_FULL_HISTORY",
     trades: trades.length,
     wins,
     winRatePct: trades.length ? (wins / trades.length) * 100 : null,
-    realizedPnlUsdt: trades.reduce((sum, pnl) => sum + pnl, 0),
-    maxDrawdownUsdt
+    realizedPnlUsdt: trades.length ? equity : null,
+    maxDrawdownUsdt: dated ? maxDrawdownUsdt : null,
+    profitFactor: loss > 0 ? profit / loss : null,
+    duplicateRecords,
+    excludedRecords,
+    conflictingOrders: conflicts.size,
+    period: {
+      from: dated ? new Date(trades[0].timestamp).toISOString() : null,
+      to: dated ? new Date(trades.at(-1).timestamp).toISOString() : null
+    }
   };
 }
 
@@ -506,6 +543,9 @@ export function buildStrategyComparison(activeStrategyId, traceRecords) {
       stage: classificationItem("stage", strategy.status),
       riskCluster: classificationItem("riskCluster", strategy.riskCluster)
     },
-    performance: performanceFor(strategy.id, traceRecords)
+    performance: performanceFor(strategy.id, traceRecords),
+    performanceByEvidence: {
+      simulated: performanceFor(strategy.id, traceRecords, "simulated")
+    }
   }));
 }

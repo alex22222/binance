@@ -14,6 +14,7 @@ import { createAvailableUsdtLoader } from "../src/wallet-balance.mjs";
 import { liveDashboardHtml } from "../src/live-dashboard-html.mjs";
 import { dashboardLoginHtml } from "../src/dashboard-login-html.mjs";
 import { strategyLabHtml } from "../src/strategy-lab-html.mjs";
+import { loadStrategyResearch } from "../src/strategy-research.mjs";
 import { tradeReviewHtml } from "../src/trade-review-html.mjs";
 import { loadManagerPage } from "../src/fund-manager-html.mjs";
 import { weeklyReportStatus } from "../src/weekly-research-store.mjs";
@@ -268,6 +269,16 @@ const server = createServer(async (request, response) => {
         "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
       });
       response.end(html ? weeklyResearchHtml(status) : JSON.stringify(status));
+      return;
+    }
+    if (request.method === "GET" && request.url === "/api/strategy-research") {
+      const research = await loadStrategyResearch({ projectRoot, configPath });
+      response.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.end(JSON.stringify(research));
       return;
     }
     if (request.method === "GET" && request.url === "/api/snapshot") {

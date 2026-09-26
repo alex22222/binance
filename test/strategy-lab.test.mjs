@@ -78,11 +78,69 @@ test("compares realized returns by strategy without inventing missing results", 
   ]);
   const momentum = comparison.find((strategy) => strategy.id === "adaptive-momentum");
   const basis = comparison.find((strategy) => strategy.id === "executable-basis-reversion");
-  assert.equal(momentum.performance.trades, 2);
-  assert.equal(momentum.performance.realizedPnlUsdt, 1);
-  assert.equal(momentum.performance.winRatePct, 50);
+  assert.equal(momentum.performanceByEvidence.simulated.trades, 2);
+  assert.equal(momentum.performanceByEvidence.simulated.realizedPnlUsdt, 1);
+  assert.equal(momentum.performanceByEvidence.simulated.winRatePct, 50);
+  assert.equal(momentum.performance.trades, 0);
+  assert.equal(momentum.performance.realizedPnlUsdt, null);
   assert.equal(basis.performance.trades, 0);
   assert.equal(basis.performance.winRatePct, null);
+  assert.equal(basis.performance.maxDrawdownUsdt, null);
+});
+
+test("separates terminal Live logs from simulations and excludes missing PnL", () => {
+  const record = (pnl, orderId, timestamp = "2026-09-25T10:00:00Z") => ({
+    timestamp, event: "pending_order", status: "finished",
+    details: {side:"SELL", strategyId:"adaptive-momentum", realizedPnlUsdt:pnl, orderId}
+  });
+  const trace = [record(4, "a"), record(-2, "b", "2026-09-26T10:00:00Z"), record(4, "a"),
+    ...[null, undefined, "", true, "bad"].map((pnl, i) => record(pnl, "invalid-" + i)),
+    {event:"sell_submission", status:"simulated", details:{strategyId:"adaptive-momentum", realizedPnlUsdt:100}},
+    {event:"sell_submission", status:"submitted", details:{strategyId:"adaptive-momentum", realizedPnlUsdt:50}}
+  ];
+  const strategy = buildStrategyComparison("adaptive-momentum", trace).find(({id}) => id === "adaptive-momentum");
+  assert.equal(strategy.performance.trades, 2);
+  assert.equal(strategy.performance.realizedPnlUsdt, 2);
+  assert.equal(strategy.performance.maxDrawdownUsdt, 2);
+  assert.equal(strategy.performance.duplicateRecords, 1);
+  assert.equal(strategy.performance.excludedRecords, 5);
+  assert.equal(strategy.performance.scope, "TRACE_WINDOW_NOT_FULL_HISTORY");
+  assert.equal(strategy.performance.period.from, "2026-09-25T10:00:00.000Z");
+  assert.equal(strategy.performanceByEvidence.simulated.realizedPnlUsdt, 100);
+});
+
+test("conflicting order outcomes are unknown rather than added twice", () => {
+  const trace = [1, 2].map(realizedPnlUsdt => ({
+    event:"pending_order", status:"finished", details:{side:"SELL", strategyId:"adaptive-momentum", orderId:"conflict", realizedPnlUsdt}
+  }));
+  const strategy = buildStrategyComparison("adaptive-momentum", trace).find(({id}) => id === "adaptive-momentum");
+  assert.equal(strategy.performance.conflictingOrders, 1);
+  assert.equal(strategy.performance.realizedPnlUsdt, null);
+});
+
+test("orders terminal fills by time and preserves genuine zero returns", () => {
+  const trace = [[-2, "2026-09-26"], [4, "2026-09-25"], [0, "2026-09-27"]].map(([pnl, day]) => ({
+    timestamp: day + "T10:00:00Z", event: "pending_order", status: "finished",
+    details: { side: "SELL", strategyId: "adaptive-momentum", orderId: day, realizedPnlUsdt: pnl }
+  }));
+  const performance = buildStrategyComparison("adaptive-momentum", trace)[1].performance;
+  assert.equal(performance.trades, 3);
+  assert.equal(performance.maxDrawdownUsdt, 2);
+  assert.equal(performance.profitFactor, 2);
+  const zero = buildStrategyComparison("adaptive-momentum", trace.slice(-1))[1].performance;
+  assert.equal(zero.realizedPnlUsdt, 0);
+  assert.equal(zero.winRatePct, 0);
+  assert.equal(zero.maxDrawdownUsdt, 0);
+});
+
+test("does not invent a drawdown sequence for undated fills", () => {
+  const trace = [{ event: "pending_order", status: "finished", details: {
+    side: "SELL", strategyId: "adaptive-momentum", orderId: "undated", realizedPnlUsdt: -2
+  } }];
+  const performance = buildStrategyComparison("adaptive-momentum", trace)[1].performance;
+  assert.equal(performance.realizedPnlUsdt, -2);
+  assert.equal(performance.maxDrawdownUsdt, null);
+  assert.deepEqual(performance.period, { from: null, to: null });
 });
 
 test("keeps the enhanced weekly ETF strategy as the only live-switchable strategy", () => {

@@ -309,3 +309,57 @@ passed
 - P3: add the heartbeat illustration only after a clean, approved production asset is available; do not approximate it in code.
 
 final result: passed
+
+---
+
+# Strategy Research Dossier — 2026-09-26
+
+## Target and evidence
+
+- User explicitly selected option 2: left strategy directory and right research dossier.
+- Source: `/Users/henry/.codex/generated_images/019fb673-679f-7112-ba05-c0f7bf2d62d9/exec-b23545b6-3108-4734-b69e-22c3cf890ce0.png` (1487 × 1058).
+- Local route: `http://127.0.0.1:4195/strategies#trend-pullback-confirmation`.
+- Final desktop: `/Users/henry/.codex/visualizations/2026/07/31/019fb673-679f-7112-ba05-c0f7bf2d62d9/strategy-redesign/12-desktop-final.png`.
+- Final mobile: `/Users/henry/.codex/visualizations/2026/07/31/019fb673-679f-7112-ba05-c0f7bf2d62d9/strategy-redesign/15-mobile-final.png`.
+- Raw desktop: `strategy-redesign/08-final-desktop-raw.png` in the same evidence directory (2218 × 1579).
+- Raw mobile: `strategy-redesign/14-final-mobile-raw.png` in the same evidence directory (581 × 1260).
+- Actual CSS viewports: desktop 1486 × 1058; mobile 389 × 845. The browser reports DPR 1.34 with a retained zoom/compositor mismatch. Temporary viewport overrides were reset after verification.
+- Density normalization: extracted the top-left active desktop 1110 × 790 region and resized to 1487 × 1058; mobile 291 × 630 to 390 × 845. Raw captures retained; no content retouching. Earlier centered `sips` crops were rejected; final crops use explicit top-left bounds.
+- State: selected trend-pullback strategy, performance section, historical evidence; directory search and stage filter cleared. Local saved data differs intentionally from the mock and production, including current strategy identity, returns, counts and report dates.
+
+## Comparison and findings
+
+The source and final normalized desktop screenshot were opened together in one comparison input; the mobile capture was then inspected at readable size. The full-size desktop comparison made the table, numeric labels and source disclaimer legible, so a separate focused crop was unnecessary.
+
+- Fonts/typography: retained the system sans-serif Chinese fallback, compact directory hierarchy, large title and tabular numeric metrics. Some secondary labels are smaller than the mock to accommodate actual source disclosures; they retain contrast and remain readable.
+- Spacing/layout: 370 px left rail, 30 px main inset, warning followed by three dossier sections, four-source selector, four metrics, comparison table and two interpretation columns follow the selected composition. Primary research actions remain within the 1058 px desktop viewport (bottom about 1033 px).
+- Colors/tokens: dark neutral surfaces, blue selection and focus, amber caution, green current-configuration marker and red negative results are consistent. Status is also conveyed in text, not color alone.
+- Assets: reused the existing product favicon. The mock-only S logo and decorative warning/document/arrow icons are intentionally omitted rather than approximated with CSS or new generated branding.
+- Copy/content: replaced six illustrated strategies with the actual twelve-entry catalog. Removed generated slogans, sample statistics and unsupported running/upgrade claims. Explicitly distinguishes current configuration from service health; distinguishes fixed-notional simulation return from portfolio performance.
+- Mobile: directory collapses into an accessible selector; metrics use two columns; table scroll is contained and labeled. Document width equals scroll width (389 px); table container 356 px, scroll width 496 px. Persistent controls are not clipped.
+- No remaining actionable P0/P1/P2 findings.
+
+## Comparison history
+
+1. Initial composition had report metadata on an extra row, pushing the primary research actions below the reference first viewport. P2 fix: move source date into the performance selector header on desktop; retain natural wrapping on mobile. Post-fix evidence: final desktop screenshot and DOM action bottom at 1033 px.
+2. Mobile table continued offscreen without an explicit affordance. P2 fix: labeled focusable scroll region and visible swipe hint, verified with no page-level overflow.
+3. Reading-state review found that changed data could close expanded rules, and missing logs could still display zero trades. P2 fixes: retain expanded detail headings/focus during render and render unknown counts on read errors. Regression tests plus browser keyboard/render checks passed.
+4. The browser capture surface contained zoom padding; this was not treated as app layout drift. Recorded CSS bounds, retained raw screenshots and normalized only capture density before final comparison.
+
+## Verified interactions and safety
+
+- Search “回撤” plus Shadow stage returns exactly two strategies; an unmatched search gives an explicit empty state without replacing the selected dossier.
+- Mobile directory expands, searches, selects and collapses; selection updates the URL fragment and focuses the dossier.
+- All three dossier sections and all four evidence selectors operate independently. Actual local Paper balance appears only under Paper; live empty results remain unknown.
+- Source links use catalog URLs; shared risk experiments and methodology references expand on demand.
+- Keyboard Enter activates the selected chapter; expanded rules remain open on a same-chapter rerender and refresh. Unchanged payloads do not rebuild the dossier.
+- No browser error or warning logs. Existing navigation routes remain covered by server tests; the temporary local preview intentionally serves only the research page, not trading controls.
+- Authenticated endpoint returns no-store; anonymous endpoint access returns 401. Temporary-fixture integration test confirms reading research does not change bot state.
+- Final `npm test`: 314 passed, zero failures. No new dependencies, live service changes or deployment.
+
+## Follow-up polish
+
+- P3: optionally add standard search/action icons through a shared product icon library if one is adopted later. Do not add a dependency solely for these decorations.
+- Broader long-duration screen-reader testing and production-data browser acceptance remain future checks; neither is claimed here.
+
+final result: passed

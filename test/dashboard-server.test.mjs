@@ -89,6 +89,14 @@ test("dashboard records one exact approval without writing the bot state", async
     assert.equal(strategyPage.status, 200);
     assert.match(await strategyPage.text(), /id="strategyComparison"/);
 
+    const researchResponse = await fetch(`${origin}/api/strategy-research`);
+    assert.equal(researchResponse.status, 200);
+    assert.equal(researchResponse.headers.get("cache-control"), "no-store");
+    const research = await researchResponse.json();
+    assert.equal(research.strategies.length, 12);
+    assert.equal(research.trace.status, "MISSING");
+    assert.deepEqual(JSON.parse(await readFile(statePath, "utf8")), state);
+
     const reviewPage = await fetch(`${origin}/reviews`);
     assert.equal(reviewPage.status, 200);
     assert.match(await reviewPage.text(), /id="dailyMetrics"/);
@@ -315,6 +323,8 @@ test("dashboard protects public access with basic auth and an exact HTTPS origin
     assert.equal(weeklyEntry.status, 303);
     assert.equal(weeklyEntry.headers.get("location"), "/login");
     assert.equal((await fetch(`${origin}/api/weekly-strategy`)).status, 401);
+    assert.equal((await fetch(`${origin}/api/strategy-research`)).status, 401);
+    assert.equal((await fetch(`${origin}/api/strategy-research`, { headers: { Authorization: authorization } })).status, 200);
 
     const loginPage = await fetch(`${origin}/login`);
     assert.equal(loginPage.status, 200);
