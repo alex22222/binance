@@ -1,0 +1,11 @@
+[Unit]
+Description=Monthly research after the completed New York month end
+
+[Timer]
+OnCalendar=*-*-01 06:10:00 America/New_York
+Persistent=true
+AccuracySec=1s
+Unit=binance-agentic-monthly-research.service
+
+[Install]
+WantedBy=timers.target

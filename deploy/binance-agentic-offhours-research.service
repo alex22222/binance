@@ -1,0 +1,29 @@
+[Unit]
+Description=Isolated SPY QQQ public off-hours research (observation only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=binanceresearch
+Group=binanceresearch
+WorkingDirectory=/opt/binance-agentic-research/current
+UnsetEnvironment=HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+ExecStart=/usr/bin/flock --nonblock --conflict-exit-code 75 /var/lib/binance-agentic-research/scheduler.lock /usr/bin/node --max-old-space-size=128 scripts/run-scheduled-research.mjs offhours
+SuccessExitStatus=75
+TimeoutStartSec=2min
+Nice=15
+CPUQuota=25%
+MemoryHigh=192M
+MemoryMax=256M
+TasksMax=32
+IOWeight=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/binance-agentic-research
+InaccessiblePaths=-/etc/binance-agentic-stock-bot.env -/opt/binance-agentic-stock-bot -/var/lib/binance-agentic-stock-bot
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
