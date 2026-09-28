@@ -12,6 +12,72 @@ const ID = "weekly-etf-dual-momentum-defense";
 const config = { symbols: ["QQQ", "SGOV"], maxTradeUsdt: 50, slippagePct: 0.5 };
 const identity = strategyIdentity(config, ID, "a".repeat(64));
 
+function experimentalFixture() {
+  const config = { symbols: ["QQQ", "VTI", "VTV", "SPY", "SGOV"], maxTradeUsdt: 50, maxOpenPositions: 1, dailyLossLimitUsdt: 2 };
+  const identity = strategyIdentity(config, ID, "a".repeat(64));
+  return { config, identity, nowMs: NOW, authorization: {
+    type: "EXPERIMENTAL_EXCEPTION", strategyId: ID, identityHash: identity.identityHash,
+    approvedBy: "henry", approvedAt: new Date(NOW).toISOString(), expiresAt: new Date(NOW + 7 * 86400000).toISOString(),
+    reason: "Explicit user authorization for a bounded experimental run", riskAccepted: true,
+    limits: { maxTradeUsdt: 50, maxOpenPositions: 1, dailyLossLimitUsdt: 2 }
+  } };
+}
+
+test("explicit bounded exception permits execution without claiming research PASS", () => {
+  const result = evaluatePromotion(experimentalFixture());
+  assert.equal(result.allowed, true);
+  assert.equal(result.researchQualified, false);
+  assert.equal(result.researchStatus, "NOT_QUALIFIED");
+  assert.equal(result.authorizationType, "EXPERIMENTAL_EXCEPTION");
+  assert.equal(result.reviewedBy, null);
+  assert.equal(result.protectiveExitAllowed, true);
+  assert.deepEqual(result.limits, { maxTradeUsdt: 50, maxOpenPositions: 1, dailyLossLimitUsdt: 2 });
+});
+
+test("experimental exceptions expire exactly, cannot extend past seven days or forge a review", () => {
+  for (const edit of [
+    x => { x.nowMs += 7 * 86400000; },
+    x => { x.nowMs -= 1; },
+    x => { x.authorization.expiresAt = new Date(NOW + 7 * 86400000 + 1).toISOString(); },
+    x => { x.authorization.approvedBy = ""; },
+    x => { x.authorization.riskAccepted = false; },
+    x => { x.authorization.reason = ""; },
+    x => { x.authorization.review = { status: "PASS" }; },
+    x => { x.authorization.type = "UNKNOWN_EXCEPTION"; },
+    x => { x.authorization.identityHash = "b".repeat(64); },
+    x => { x.identity = strategyIdentity(x.config, "adaptive-momentum", "a".repeat(64)); x.authorization.strategyId = x.identity.strategyId; x.authorization.identityHash = x.identity.identityHash; },
+    x => { x.config.maxTradeUsdt = 51; },
+    x => { x.config.maxOpenPositions = 2; },
+    x => { x.config.dailyLossLimitUsdt = 3; },
+    x => { delete x.config.dailyLossLimitUsdt; },
+    x => { x.authorization.limits.maxTradeUsdt = 51; },
+    x => { x.authorization.limits.maxOpenPositions = 0; },
+    x => { x.authorization.limits.dailyLossLimitUsdt = "2"; }
+  ]) { const input = experimentalFixture(); edit(input); assert.equal(evaluatePromotion(input).allowed, false); }
+  const input = experimentalFixture();
+  input.nowMs += 7 * 86400000 - 1;
+  assert.equal(evaluatePromotion(input).allowed, true);
+});
+
+test("operator exception loader observes expiry, config changes and revocation without restart", async () => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "strategy-exception-"));
+  await mkdir(join(projectRoot, "src"));
+  await writeFile(join(projectRoot, "src/strategy-governance.mjs"), "// owner reference\n");
+  await mkdir(join(projectRoot, "strategy-governance"), { mode: 0o755 });
+  const input = experimentalFixture();
+  input.authorization.identityHash = strategyIdentity(input.config, ID, await runtimeCodeHash()).identityHash;
+  const registry = join(projectRoot, "strategy-governance/authorizations.json");
+  await writeFile(registry, JSON.stringify({ schemaVersion: 1, authorizations: [input.authorization] }), { mode: 0o644 });
+  const request = { projectRoot, config: input.config, strategyId: ID, nowMs: NOW };
+  const gate = await loadStrategyGate(request);
+  assert.equal(gate.allowed, true);
+  assert.equal(gate.researchQualified, false);
+  assert.equal((await loadStrategyGate({ ...request, nowMs: NOW + 7 * 86400000 })).allowed, false);
+  assert.equal((await loadStrategyGate({ ...request, config: { ...input.config, maxTradeUsdt: 40 } })).allowed, false);
+  await writeFile(registry, JSON.stringify({ schemaVersion: 1, authorizations: [] }));
+  assert.deepEqual((await loadStrategyGate(request)).reasons, ["NO_LIVE_AUTHORIZATION"]);
+});
+
 function fixture() {
   const evidence = ["HISTORICAL", "FORWARD", "PAPER"].map((kind) => ({
     schemaVersion: 1, strategyId: ID, kind, identity,

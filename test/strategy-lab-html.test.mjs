@@ -80,6 +80,25 @@ test("historical rows keep distinct periods, fixed-notional basis, and missing-s
   assert.match(view.get("dossierContent").textContent, /没有该策略的模拟结果/);
 });
 
+test("experimental permission is never displayed as passed research, including after expiry", () => {
+  const view = page();
+  const strategy = view.fixture.strategies.find(s => s.active);
+  strategy.governance = { allowed: true, authorizationType: "EXPERIMENTAL_EXCEPTION", researchQualified: false,
+    approvedBy: "henry", expiresAt: "2026-10-05T14:00:00.000Z", limits: { maxTradeUsdt: 50, maxOpenPositions: 1, dailyLossLimitUsdt: 2 } };
+  view.run("renderDossier()");
+  let text = view.get("dossierContent").textContent;
+  assert.match(text, /实验性例外授权/);
+  assert.match(text, /研究未通过/);
+  assert.match(text, /50/);
+  assert.match(text, /2026-10-05T14:00:00.000Z/);
+  assert.doesNotMatch(text, /证据门禁已通过|独立复核：null/);
+  strategy.governance.allowed = false;
+  view.run("renderDossier()");
+  text = view.get("dossierContent").textContent;
+  assert.match(text, /未获新增实盘资格/);
+  assert.doesNotMatch(text, /实验性例外授权生效/);
+});
+
 test("search and stage filters combine without changing the selected dossier", () => {
   const view = page();
   view.get("strategySearch").value = "回撤";

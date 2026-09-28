@@ -1,5 +1,6 @@
 import { approvalDecisionStatus, loadApprovalDecision } from "./approvals.mjs";
 import { assertStrategyGate } from "./strategy-governance.mjs";
+import { openPositions } from "./position-state.mjs";
 import {
   createOrderIntent,
   matchingOrdersForIntent,
@@ -80,6 +81,15 @@ export function createOrderExecution({
       if (details.side === "SELL") return;
       if (details.side !== "BUY") throw new Error("Invalid order side");
       let gate = await authorizeEntry(config, details);
+      if (gate.authorizationType === "EXPERIMENTAL_EXCEPTION") {
+        const amount = Number(details.fromTokenQty), limits = gate.limits;
+        if (!limits || !Number.isFinite(amount) || amount <= 0 || amount > limits.maxTradeUsdt ||
+            String(details.fromToken).toLowerCase() !== "0x55d398326f99059ff775485246999027b3197955" ||
+            openPositions(state).length >= limits.maxOpenPositions ||
+            !Number.isFinite(state.realizedPnlUsdt) || state.realizedPnlUsdt <= -limits.dailyLossLimitUsdt) {
+          gate = { ...gate, allowed: false, reasons: [...(gate.reasons || []), "EXPERIMENT_EXECUTION_LIMIT"] };
+        }
+      }
       if (details.strategyGovernance && (
         details.strategyGovernance.authorizationId !== gate.authorizationId ||
         details.strategyGovernance.identity?.identityHash !== gate.identity?.identityHash

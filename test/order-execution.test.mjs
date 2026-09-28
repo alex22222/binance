@@ -141,6 +141,28 @@ test("all SELL exits remain independent of missing or broken research evidence",
   }
 });
 
+test("experimental execution enforces actual ticket, holding and daily-loss limits before wallet access", async () => {
+  const gate = { allowed: true, reasons: [], authorizationType: "EXPERIMENTAL_EXCEPTION", authorizationId: "experiment",
+    identity: { identityHash: "test-version" }, limits: { maxTradeUsdt: 50, maxOpenPositions: 1, dailyLossLimitUsdt: 2 } };
+  for (const [state, details] of [
+    [{ positions: [], realizedPnlUsdt: 0 }, buyDetails({ fromTokenQty: 50.01 })],
+    [{ positions: [{ symbol: "QQQ" }], realizedPnlUsdt: 0 }, buyDetails()],
+    [{ positions: [], realizedPnlUsdt: -2 }, buyDetails()],
+    [{ positions: [] }, buyDetails()],
+    [{ positions: [], realizedPnlUsdt: 0 }, buyDetails({ fromToken: TOKEN })]
+  ]) {
+    const context = await harness({ authorizeEntry: async () => gate, bawHandler: async () => assert.fail("must not trade") });
+    await assert.rejects(context.execution.submitOrder(LIVE, state, context.paths.state, context.paths.emergencyStop, details),
+      error => error.code === "STRATEGY_PROMOTION_BLOCKED");
+    assert.equal(context.calls.length, 0);
+    assert.equal(context.traces[0].status, "blocked");
+  }
+  const context = await harness({ authorizeEntry: async () => gate, bawHandler: async () => ({ orderId: "mock-experimental" }) });
+  await context.execution.submitOrder(LIVE, { positions: [], realizedPnlUsdt: -1.99 }, context.paths.state, context.paths.emergencyStop, buyDetails());
+  assert.equal(swapCalls(context.calls).length, 1);
+  assert.equal((await loadJson(context.paths.state)).pendingOrder.strategyGovernance.authorizationType, "EXPERIMENTAL_EXCEPTION");
+});
+
 test("a failed swap is marked AMBIGUOUS, never retried, and reconciles to the single matching order after restart", async () => {
   const first = await harness({
     bawHandler: async () => {

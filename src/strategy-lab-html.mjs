@@ -281,12 +281,14 @@ export function strategyLabHtml() {
       parent.replaceChildren(); parent.append(el("div", "breadcrumb", "策略研究 / " + strategy.name));
       const title = el("div", "title-row"); title.append(el("h2", "", strategy.name), badge(strategy)); parent.append(title, el("p", "thesis", strategy.thesis));
       const gate = strategy.governance;
+      const experimental = gate?.authorizationType === "EXPERIMENTAL_EXCEPTION";
       const approval = ({ AUTO: "自动审批", MANUAL: "人工逐笔审批", UNKNOWN: "审批状态读取失败" })[data.approval?.mode] || "审批状态未读取";
       const verdict = el("section", "verdict");
-      verdict.append(el("strong", "", (strategy.active ? "当前配置策略 · " : "研究资格 · ") + (gate?.allowed ? "证据门禁已通过" : "未获新增实盘资格")),
+      verdict.append(el("strong", "", (strategy.active ? "当前配置策略 · " : "研究资格 · ") + (gate?.allowed ? experimental ? "实验性例外授权生效 · 研究未通过" : "证据门禁已通过" : "未获新增实盘资格")),
         el("p", "", "运行模式：" + (data.mode || "未读取") + " · " + approval + "（不等于研究合格）。新增买入仍须通过门禁；持仓退出与止损不受此门禁限制。"));
       if (gate?.reasons?.length) verdict.append(el("p", "note", "门禁原因：" + gate.reasons.join(" / ")));
-      if (gate?.approvedBy) verdict.append(el("p", "note", "独立复核：" + gate.reviewedBy + " · 授权：" + gate.approvedBy + " · 到期：" + date(gate.expiresAt)));
+      if (gate?.approvedBy) verdict.append(el("p", "note", (experimental ? "实验性例外授权（研究未通过）" : "独立复核：" + gate.reviewedBy) + " · 授权：" + gate.approvedBy + " · 到期（UTC）：" + gate.expiresAt));
+      if (experimental) verdict.append(el("p", "note", "仅豁免研究晋级条件，不豁免执行风控；不自动续期。单笔 ≤ " + number(gate.limits?.maxTradeUsdt) + " USDT · 最多 " + number(gate.limits?.maxOpenPositions, 0) + " 仓 · 已实现日净亏损达 " + number(gate.limits?.dailyLossLimitUsdt) + " USDT 后停止新增买入（不保证总亏损封顶）。"));
       parent.append(verdict);
       const tabs = el("nav", "section-tabs"); tabs.setAttribute("aria-label", "研究档案章节");
       for (const [id, label] of [["overview", "研究概览"], ["performance", "表现与风险"], ["rules", "规则与来源"]]) { const item = button(label, "", () => { section = id; renderDossier(); }); item.setAttribute("aria-pressed", String(id === section)); tabs.append(item); } parent.append(tabs);

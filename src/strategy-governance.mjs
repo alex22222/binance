@@ -84,11 +84,46 @@ export async function readEvidence(directory) {
   return records;
 }
 
-export function evaluatePromotion({ identity, authorization, evidence = [], nowMs = Date.now() }) {
+function evaluateExperimentalAuthorization({ identity, authorization, config, nowMs }) {
+  const reasons = [];
+  const approvedAt = Date.parse(authorization.approvedAt);
+  const expiresAt = Date.parse(authorization.expiresAt);
+  if (identity.strategyId !== "weekly-etf-dual-momentum-defense" || authorization.strategyId !== identity.strategyId ||
+      authorization.identityHash !== identity.identityHash) reasons.push("EXPERIMENT_SCOPE_MISMATCH");
+  if (!Number.isFinite(approvedAt) || !Number.isFinite(expiresAt) || approvedAt > nowMs || expiresAt <= nowMs ||
+      expiresAt <= approvedAt || expiresAt - approvedAt > 7 * 86400000) reasons.push("EXPERIMENT_EXPIRED_OR_INVALID");
+  if (typeof authorization.approvedBy !== "string" || !authorization.approvedBy.trim() ||
+      typeof authorization.reason !== "string" || !authorization.reason.trim() || authorization.riskAccepted !== true ||
+      authorization.review != null || (authorization.evidenceIds != null && (!Array.isArray(authorization.evidenceIds) || authorization.evidenceIds.length))) {
+    reasons.push("EXPLICIT_EXPERIMENT_AUTHORIZATION_REQUIRED");
+  }
+  const ceilings = { maxTradeUsdt: 50, maxOpenPositions: 1, dailyLossLimitUsdt: 2 };
+  for (const [key, ceiling] of Object.entries(ceilings)) {
+    const limit = authorization.limits?.[key], value = config?.[key];
+    if (!Number.isFinite(limit) || limit <= 0 || limit > ceiling ||
+        !Number.isFinite(value) || value <= 0 || value > limit ||
+        (key === "maxOpenPositions" && (!Number.isInteger(limit) || !Number.isInteger(value)))) {
+      reasons.push("EXPERIMENT_LIMIT_INVALID:" + key);
+    }
+  }
+  return {
+    allowed: reasons.length === 0, researchStatus: "NOT_QUALIFIED", researchQualified: false,
+    authorizationType: "EXPERIMENTAL_EXCEPTION", reasons, identity,
+    authorizationId: evidenceHash(authorization), evidenceIds: [], reviewedBy: null,
+    approvedBy: authorization.approvedBy || null, approvedAt: authorization.approvedAt,
+    expiresAt: authorization.expiresAt, limits: authorization.limits || null,
+    limitations: ["RESEARCH_GATES_NOT_PASSED", "USER_ACCEPTED_EXPERIMENTAL_RISK"],
+    evaluatedAt: new Date(nowMs).toISOString(), protectiveExitAllowed: true
+  };
+}
+
+export function evaluatePromotion({ identity, authorization, evidence = [], nowMs = Date.now(), config }) {
+  if (authorization?.type === "EXPERIMENTAL_EXCEPTION") return evaluateExperimentalAuthorization({ identity, authorization, config, nowMs });
   const reasons = [];
   const fail = (reason) => { if (!reasons.includes(reason)) reasons.push(reason); };
   if (!authorization) fail("NO_LIVE_AUTHORIZATION");
   else {
+    if (authorization.type != null && authorization.type !== "REVIEWED_EVIDENCE") fail("UNKNOWN_AUTHORIZATION_TYPE");
     const review = authorization.review;
     const reviewedAt = Date.parse(review?.reviewedAt);
     const approvedAt = Date.parse(authorization.approvedAt);
@@ -123,6 +158,7 @@ export function evaluatePromotion({ identity, authorization, evidence = [], nowM
   }
   return {
     allowed: reasons.length === 0, researchStatus: reasons.length ? "NOT_QUALIFIED" : "REVIEWED_ELIGIBLE",
+    researchQualified: reasons.length === 0, authorizationType: authorization ? "REVIEWED_EVIDENCE" : null,
     reasons, identity, authorizationId: authorization ? evidenceHash(authorization) : null,
     evidenceIds: authorization?.evidenceIds || [], reviewedBy: authorization?.review?.reviewer || null,
     approvedBy: authorization?.approvedBy || null, expiresAt: authorization?.expiresAt || null,
@@ -160,7 +196,7 @@ export async function loadStrategyGate({ projectRoot = codeRoot, config, strateg
       if (evidenceHash(record) !== id) throw new Error("Evidence archive corrupt");
       evidence.push(record);
     }
-    return evaluatePromotion({ identity, authorization, evidence, nowMs });
+    return evaluatePromotion({ identity, authorization, evidence, nowMs, config });
   } catch (error) {
     return { ...evaluatePromotion({ identity, nowMs }), reasons: [error.code === "ENOENT" ? "GOVERNANCE_EVIDENCE_MISSING" : "GOVERNANCE_READ_ERROR"] };
   }
