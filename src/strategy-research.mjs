@@ -2,6 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { buildStrategyComparison, DEFAULT_STRATEGY_ID, strategyById } from "./strategy-lab.mjs";
 import { DASHBOARD_TRACE_TAIL_BYTES, readJsonLinesTail } from "./dashboard.mjs";
+import { contentHash, loadApprovalMode, loadStrategyGate, readEvidence, runtimeCodeHash } from "./strategy-governance.mjs";
 
 const PAPER_REPORTS = {
   "daily-turtle-55-20": "state/turtle-paper/latest.json",
@@ -13,9 +14,10 @@ const pick = (value, keys) => Object.fromEntries(keys.map((key) => [key, value?.
 
 async function readReport(path, project) {
   try {
-    const value = JSON.parse(await readFile(path, "utf8"));
+    const source = await readFile(path, "utf8");
+    const value = JSON.parse(source);
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid report");
-    return { status: "AVAILABLE", ...project(value) };
+    return { status: "AVAILABLE", sourceHash: contentHash(source), ...project(value) };
   } catch (error) {
     return { status: error.code === "ENOENT" ? "MISSING" : "ERROR" };
   }
@@ -83,10 +85,23 @@ export async function loadStrategyResearch({ projectRoot, configPath, nowMs = Da
   ]);
   const activeStrategyId = control.status === "ERROR" ? null : control.strategyId || config.defaultStrategyId || DEFAULT_STRATEGY_ID;
   const { records, ...traceStatus } = trace;
+  const approval = await loadApprovalMode(projectRoot, config);
+  const codeHash = await runtimeCodeHash();
+  let archive;
+  try {
+    archive = { status: "AVAILABLE", records: (await readEvidence(resolve(projectRoot, "state/strategy-evidence")))
+      .map(({ id, record }) => ({ id, ...pick(record, ["strategyId", "kind", "evidenceLevel", "generatedAt", "dataCutoff", "identity", "sourceHash", "costModel", "bindingStatus"]) })) };
+  } catch { archive = { status: "ERROR", records: [] }; }
+  const strategies = await Promise.all(buildStrategyComparison(activeStrategyId, records).map(async (strategy) => {
+    const governance = await loadStrategyGate({ projectRoot, config, strategyId: strategy.id, nowMs, codeHash });
+    return { ...strategy, runtimeSupported: strategy.switchable,
+      switchable: strategy.switchable && (config.mode !== "live" || governance.allowed),
+      governance, approvalMode: approval.mode };
+  }));
   return {
     generatedAt: new Date(nowMs).toISOString(), mode: config.mode,
     activeStrategyId, control,
-    strategies: buildStrategyComparison(activeStrategyId, records),
+    strategies, approval, archive,
     trace: { ...traceStatus, scope: "TRACE_WINDOW_NOT_FULL_HISTORY" },
     validation, shadow, paper: Object.fromEntries(paperEntries)
   };

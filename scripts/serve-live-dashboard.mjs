@@ -23,7 +23,8 @@ import { activateEmergencyStop, clearEmergencyStop } from "../src/reliability.mj
 import { createTracer } from "../src/trace.mjs";
 import { approvalDecisionStatus, recordApprovalDecision } from "../src/approvals.mjs";
 import { readApprovalControl, writeApprovalControl } from "../src/approval-control.mjs";
-import { assertSwitchableStrategy, writeStrategyControl } from "../src/strategy-lab.mjs";
+import { assertSwitchableStrategy, DEFAULT_STRATEGY_ID, writeStrategyControl } from "../src/strategy-lab.mjs";
+import { assertStrategyGate, loadStrategyGate } from "../src/strategy-governance.mjs";
 import { createWalletLoginManager } from "../src/wallet-login.mjs";
 import {
   dashboardAllowedOrigins,
@@ -304,6 +305,7 @@ const server = createServer(async (request, response) => {
         emergencyStopPath: resolve(projectRoot, config.emergencyStopFile),
         strategyControlPath: resolve(projectRoot, config.strategyControlFile)
       });
+      snapshot.strategy.governance = await loadStrategyGate({ projectRoot, config, strategyId: snapshot.strategy.activeStrategyId });
       response.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
@@ -422,12 +424,15 @@ const server = createServer(async (request, response) => {
       const body = await readJsonBody(request);
       const config = await loadConfig();
       const strategy = assertSwitchableStrategy(body.strategyId);
+      const governance = await loadStrategyGate({ projectRoot, config, strategyId: strategy.id });
+      if (config.mode === "live") assertStrategyGate(governance);
       const control = await writeStrategyControl(
         resolve(projectRoot, config.strategyControlFile),
         strategy.id
       );
       await traceOperatorAction(config, "strategy_switch", "succeeded", {
         strategyId: strategy.id,
+        strategyGovernance: governance,
         requestedBy: "dashboard",
         appliesTo: "next_entry"
       });
@@ -504,6 +509,16 @@ const server = createServer(async (request, response) => {
         response.writeHead(400, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
         response.end(JSON.stringify({ success: false, error: "Explicit acknowledgment of unavailable security audit required" }));
         return;
+      }
+      if (config.mode === "live" && approval.side === "BUY" && body.decision === "APPROVE") {
+        const governance = await loadStrategyGate({ projectRoot, config,
+          strategyId: approval.strategyId || config.defaultStrategyId || DEFAULT_STRATEGY_ID });
+        if (approval.strategyGovernance?.authorizationId !== governance.authorizationId ||
+            approval.strategyGovernance?.identity?.identityHash !== governance.identity.identityHash) {
+          governance.allowed = false;
+          governance.reasons.push("APPROVED_EVIDENCE_CHANGED");
+        }
+        assertStrategyGate(governance);
       }
       const decision = {
         approvalId: approval.approvalId,

@@ -1,0 +1,19 @@
+[Unit]
+Description=Archive saved strategy evidence (no trading)
+After=binance-agentic-strategy-validation.service
+
+[Service]
+Type=oneshot
+User=binancebot
+Group=binancebot
+WorkingDirectory=/opt/binance-agentic-stock-bot
+ExecStart=/usr/bin/node scripts/capture-strategy-evidence.mjs
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateNetwork=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/binance-agentic-stock-bot/state/strategy-evidence
+MemoryMax=128M
+UMask=0027

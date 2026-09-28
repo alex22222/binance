@@ -67,3 +67,19 @@ test("unknown control strategy is a read error rather than an invented current s
   assert.equal(report.control.status, "ERROR");
   assert.equal(report.activeStrategyId, null);
 });
+
+test("approval mode is runtime state, while ACTIVE without reviewed evidence is not eligible", async (t) => {
+  const input = await fixture(t);
+  await input.save("state/approval-control.json", { enabled: true, updatedBy: "operator" });
+  let report = await loadStrategyResearch(input);
+  assert.equal(report.approval.mode, "AUTO");
+  const current = report.strategies.find((s) => s.active);
+  assert.equal(current.governance.allowed, false);
+  assert.equal(current.switchable, false);
+  assert.equal(current.governance.protectiveExitAllowed, true);
+  await input.save("state/approval-control.json", { enabled: false });
+  report = await loadStrategyResearch(input);
+  assert.equal(report.approval.mode, "MANUAL");
+  await input.save("state/approval-control.json", "{");
+  assert.equal((await loadStrategyResearch(input)).approval.mode, "UNKNOWN");
+});

@@ -1,4 +1,5 @@
 import { approvalDecisionStatus, loadApprovalDecision } from "./approvals.mjs";
+import { assertStrategyGate } from "./strategy-governance.mjs";
 import {
   createOrderIntent,
   matchingOrdersForIntent,
@@ -13,6 +14,7 @@ export function createOrderExecution({
   saveJson,
   trace,
   readEmergencyStop,
+  authorizeEntry = async () => ({ allowed: false, reasons: ["GATE_NOT_CONFIGURED"] }),
   isShutdownRequested = () => false,
   now = () => Date.now(),
   chainId = "56"
@@ -74,6 +76,22 @@ export function createOrderExecution({
     }
 
     await ensureNotEmergencyStopped(emergencyStopPath, state);
+    async function revalidateEntry() {
+      if (details.side === "SELL") return;
+      if (details.side !== "BUY") throw new Error("Invalid order side");
+      let gate = await authorizeEntry(config, details);
+      if (details.strategyGovernance && (
+        details.strategyGovernance.authorizationId !== gate.authorizationId ||
+        details.strategyGovernance.identity?.identityHash !== gate.identity?.identityHash
+      )) gate = { ...gate, allowed: false, reasons: [...(gate.reasons || []), "APPROVED_EVIDENCE_CHANGED"] };
+      await trace("strategy_promotion", gate.allowed ? "allowed" : "blocked", {
+        side: details.side, symbol: details.symbol, strategyId: details.strategyId,
+        approvalId: details.approvalId || null, ...gate
+      });
+      assertStrategyGate(gate);
+      details.strategyGovernance = gate;
+    }
+    await revalidateEntry();
     const intent = createOrderIntent(details);
     state.pendingOrder = intent;
     await saveJson(statePath, state);
@@ -81,11 +99,15 @@ export function createOrderExecution({
       intentId: intent.intentId,
       side: intent.side,
       symbol: intent.symbol,
-      address: intent.address
+      address: intent.address,
+      strategyId: intent.strategyId,
+      strategyGovernance: intent.strategyGovernance || null,
+      approvalId: intent.approvalId || null
     });
 
     try {
       await ensureNotEmergencyStopped(emergencyStopPath, state);
+      await revalidateEntry();
     } catch (error) {
       // The swap was never invoked, so the intent is known not to exist on
       // chain. Clearing it avoids a false REVIEW_REQUIRED halt after resume.
@@ -232,7 +254,6 @@ export function createOrderExecution({
 
   return {
     ensureNotEmergencyStopped,
-    swap,
     submitOrder,
     reconcilePendingOrder,
     recoverPendingOrder,

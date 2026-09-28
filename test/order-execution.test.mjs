@@ -22,7 +22,7 @@ async function loadJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
 }
 
-async function harness({ nowMs = Date.parse(CREATED_AT), bawHandler, onTrace, shutdown = false } = {}) {
+async function harness({ nowMs = Date.parse(CREATED_AT), bawHandler, onTrace, shutdown = false, authorizeEntry = async () => ({ allowed: true, authorizationId: "test-grant", identity: { identityHash: "test-version" } }) } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "order-execution-"));
   const paths = {
     state: join(directory, "bot-state.json"),
@@ -43,6 +43,7 @@ async function harness({ nowMs = Date.parse(CREATED_AT), bawHandler, onTrace, sh
       await onTrace?.({ stage, status, details, paths });
     },
     readEmergencyStop,
+    authorizeEntry,
     isShutdownRequested: () => shutdown,
     now: () => clock.nowMs
   });
@@ -92,6 +93,52 @@ test("persists the intent before the swap and records the submitted order after 
   assert.equal(saved.pendingOrder.status, "SUBMITTED");
   assert.equal(saved.pendingOrder.orderId, "order-1");
   assert.equal(saved.pendingOrder.intentId, stateAtSwap.pendingOrder.intentId);
+});
+
+test("unqualified live BUY never writes an intent or calls the wallet, even after approval", async () => {
+  const context = await harness({
+    authorizeEntry: async () => ({ allowed: false, reasons: ["NO_LIVE_AUTHORIZATION"] }),
+    bawHandler: async () => assert.fail("must not trade")
+  });
+  await assert.rejects(context.execution.submitOrder(LIVE, {}, context.paths.state, context.paths.emergencyStop,
+    buyDetails({ approvalId: "already-approved" })), (error) => error.code === "STRATEGY_PROMOTION_BLOCKED");
+  assert.equal(context.calls.length, 0);
+  await assert.rejects(readFile(context.paths.state), { code: "ENOENT" });
+});
+
+test("revoked evidence between intent and submission cancels without an ambiguous order", async () => {
+  let checks = 0;
+  const context = await harness({
+    authorizeEntry: async () => (++checks === 1 ? { allowed: true } : { allowed: false, reasons: ["EVIDENCE_STALE_OR_INVALID"] }),
+    bawHandler: async () => assert.fail("must not trade")
+  });
+  await assert.rejects(context.execution.submitOrder(LIVE, {}, context.paths.state, context.paths.emergencyStop, buyDetails()),
+    (error) => error.code === "STRATEGY_PROMOTION_BLOCKED");
+  assert.equal((await loadJson(context.paths.state)).pendingOrder, null);
+  assert.equal(context.calls.length, 0);
+});
+
+test("changed approval evidence is audited as blocked before writing any intent", async () => {
+  const context = await harness({ bawHandler: async () => assert.fail("must not trade") });
+  await assert.rejects(context.execution.submitOrder(LIVE, {}, context.paths.state, context.paths.emergencyStop,
+    buyDetails({ strategyGovernance: { authorizationId: "old-grant", identity: { identityHash: "test-version" } } })),
+    (error) => error.code === "STRATEGY_PROMOTION_BLOCKED");
+  assert.equal(context.calls.length, 0);
+  assert.equal(context.traces[0].status, "blocked");
+  assert.ok(context.traces[0].details.reasons.includes("APPROVED_EVIDENCE_CHANGED"));
+  await assert.rejects(readFile(context.paths.state), { code: "ENOENT" });
+});
+
+test("all SELL exits remain independent of missing or broken research evidence", async () => {
+  for (const reason of ["DISASTER_STOP", "INITIAL_STOP", "TAKE_PROFIT", "WEEKLY_REBALANCE", "WEEKLY_TO_CASH"]) {
+    const context = await harness({
+      authorizeEntry: async () => assert.fail("SELL must not read entry evidence"),
+      bawHandler: async () => ({ orderId: "sell-1" })
+    });
+    const result = await context.execution.submitOrder(LIVE, {}, context.paths.state, context.paths.emergencyStop,
+      buyDetails({ side: "SELL", fromToken: TOKEN, toToken: USDT, reason }));
+    assert.equal(result.orderId, "sell-1");
+  }
 });
 
 test("a failed swap is marked AMBIGUOUS, never retried, and reconciles to the single matching order after restart", async () => {

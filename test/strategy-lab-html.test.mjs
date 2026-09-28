@@ -26,6 +26,7 @@ function page() {
   const nodes = new Map();
   const get = (id) => { if (!nodes.has(id)) nodes.set(id, new Node()); return nodes.get(id); };
   const fixture = {
+    mode: "live", approval: { mode: "AUTO" },
     generatedAt: "2026-09-26T10:00:00Z", activeStrategyId: DEFAULT_STRATEGY_ID, control: { status: "AVAILABLE" },
     strategies: buildStrategyComparison(DEFAULT_STRATEGY_ID, []),
     trace: { status: "AVAILABLE" }, validation: { status: "MISSING" }, shadow: { status: "MISSING" }, paper: {}
@@ -52,7 +53,9 @@ test("missing live results render unknown instead of zero and keep the true stra
   const view = page(); view.run("renderDossier()");
   const text = view.get("dossierContent").textContent;
   assert.match(text, /当前配置策略/);
-  assert.match(text, /人工逐笔审批/);
+  assert.match(text, /自动审批/);
+  assert.match(text, /未获新增实盘资格/);
+  assert.doesNotMatch(text, /仅在人工逐笔审批/);
   assert.match(text, /暂无可核验的实盘平仓/);
   assert.match(text, /不是完整历史账本/);
   assert.doesNotMatch(text, /0\.00 U/);

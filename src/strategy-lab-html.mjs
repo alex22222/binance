@@ -253,6 +253,12 @@ export function strategyLabHtml() {
     }
     function renderOverview(parent, strategy) {
       facts(parent, [["研究假设", strategy.thesis], ["适用周期与风险暴露", strategy.classification.family.label + " · " + strategy.classification.horizon.label + "；主要风险：" + strategy.classification.riskCluster.label], ["已有研究依据", strategy.evidence], ["可能失效的情形", strategy.risk]]);
+      const identity = strategy.governance?.identity;
+      facts(parent, [["当前规则版本", identity?.ruleVersion || "未提供"], ["当前代码哈希", identity?.codeHash || "未提供"], ["当前配置哈希", identity?.configHash || "未提供"], ["当前标的池", identity?.universe?.join(" / ") || "未提供"]]);
+      parent.append(el("h3", "", "不可变证据档案"));
+      const records = (data.archive?.records || []).filter((record) => record.strategyId === strategy.id);
+      if (!records.length) empty(parent, data.archive?.status === "ERROR" ? "证据档案校验失败" : "尚无归档证据", "缺少生成时版本证明的旧报告不可用于晋级；不会倒填为当前规则结果。");
+      else table(parent, ["证据类型", "数据截止", "生成时版本", "内容哈希"], records.map((record) => [record.kind + " · " + record.evidenceLevel, date(record.dataCutoff), record.identity?.ruleVersion?.slice(0, 12) || "未绑定旧报告", record.id.slice(0, 16)]));
       const plan = el("section", "insight"); plan.append(el("h3", "", "下一步验证"), el("p", "", "积累独立前向样本，核对真实可执行成本、公司行动与数据时效；在同期间基准下检验收益与风险。历史正收益或单个窗口的高胜率不构成上线依据。")); parent.append(plan);
       parent.append(el("p", "note", "以上依据来自策略目录，包含历史研究摘要；不是本系统当前完整业绩。具体来源与规则见下一页签。"));
     }
@@ -274,7 +280,14 @@ export function strategyLabHtml() {
       const openDetails = new Set([...parent.querySelectorAll("details[open]")].map((item) => item.querySelector("summary").textContent));
       parent.replaceChildren(); parent.append(el("div", "breadcrumb", "策略研究 / " + strategy.name));
       const title = el("div", "title-row"); title.append(el("h2", "", strategy.name), badge(strategy)); parent.append(title, el("p", "thesis", strategy.thesis));
-      const verdict = el("section", "verdict"); verdict.append(el("strong", "", strategy.active ? "当前配置策略 · 业绩仍需持续跟踪" : "研究证据尚未完成验证"), el("p", "", strategy.active ? "运行与审批状态以仪表盘为准；本页仅展示已保存的研究与表现。" : "分别检验实盘、模拟和代理证据；样本、成本与市场环境仍需持续验证。")); parent.append(verdict);
+      const gate = strategy.governance;
+      const approval = ({ AUTO: "自动审批", MANUAL: "人工逐笔审批", UNKNOWN: "审批状态读取失败" })[data.approval?.mode] || "审批状态未读取";
+      const verdict = el("section", "verdict");
+      verdict.append(el("strong", "", (strategy.active ? "当前配置策略 · " : "研究资格 · ") + (gate?.allowed ? "证据门禁已通过" : "未获新增实盘资格")),
+        el("p", "", "运行模式：" + (data.mode || "未读取") + " · " + approval + "（不等于研究合格）。新增买入仍须通过门禁；持仓退出与止损不受此门禁限制。"));
+      if (gate?.reasons?.length) verdict.append(el("p", "note", "门禁原因：" + gate.reasons.join(" / ")));
+      if (gate?.approvedBy) verdict.append(el("p", "note", "独立复核：" + gate.reviewedBy + " · 授权：" + gate.approvedBy + " · 到期：" + date(gate.expiresAt)));
+      parent.append(verdict);
       const tabs = el("nav", "section-tabs"); tabs.setAttribute("aria-label", "研究档案章节");
       for (const [id, label] of [["overview", "研究概览"], ["performance", "表现与风险"], ["rules", "规则与来源"]]) { const item = button(label, "", () => { section = id; renderDossier(); }); item.setAttribute("aria-pressed", String(id === section)); tabs.append(item); } parent.append(tabs);
       ({ overview: renderOverview, performance: renderPerformance, rules: renderRules })[section](parent, strategy);

@@ -244,6 +244,20 @@ test("dashboard records one exact approval without writing the bot state", async
       body: JSON.stringify({ enabled: false, confirmation: "DISABLE_AUTO_APPROVAL" })
     });
     assert.equal(disabledAutoApproval.status, 200);
+    const liveConfig = { ...JSON.parse(await readFile(configPath, "utf8")), mode: "live" };
+    await writeFile(configPath, JSON.stringify(liveConfig));
+    const liveSwitch = await fetch(`${origin}/api/strategy`, {
+      method: "POST", headers: { "Content-Type": "application/json", Origin: origin },
+      body: JSON.stringify({ strategyId: "weekly-etf-dual-momentum-defense" })
+    });
+    assert.equal(liveSwitch.status, 409);
+    const liveApproval = await fetch(`${origin}/api/approval-decision`, {
+      method: "POST", headers: { "Content-Type": "application/json", Origin: origin },
+      body: JSON.stringify({ approvalId: automaticRequest.approvalId, decision: "APPROVE",
+        confirmation: `APPROVE:${automaticRequest.approvalId}`, dyorAcknowledged: true })
+    });
+    assert.equal(liveApproval.status, 409);
+    await assert.rejects(readFile(join(approvalDirectory, `${automaticRequest.approvalId}.json`)), { code: "ENOENT" });
   } finally {
     child.kill("SIGTERM");
     await new Promise((resolvePromise) => child.once("exit", resolvePromise));

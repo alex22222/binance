@@ -122,6 +122,7 @@ import { createShadowBasisTracker } from "./shadow-basis-tracker.mjs";
 import { newYorkDate } from "./strategy-data.mjs";
 import { rolloverRiskDay } from "./risk-day.mjs";
 import { createOrderExecution } from "./order-execution.mjs";
+import { loadStrategyGate } from "./strategy-governance.mjs";
 
 const execFileAsync = promisify(execFile);
 const BSC_CHAIN_ID = "56";
@@ -157,9 +158,20 @@ const {
   saveJson,
   trace: (stage, status, details) => traceAction(stage, status, details, currentCycleId),
   readEmergencyStop,
+  authorizeEntry: checkEntryGovernance,
   isShutdownRequested: () => shutdownRequested,
   chainId: BSC_CHAIN_ID
 });
+
+async function checkEntryGovernance(config, details) {
+  const control = await readStrategyControl(resolve(projectRoot, config.strategyControlFile), config.defaultStrategyId);
+  const strategyId = details.strategyId || config.activeStrategyId || config.defaultStrategyId || DEFAULT_STRATEGY_ID;
+  const gate = await loadStrategyGate({ projectRoot, config, strategyId });
+  const reasons = [...gate.reasons];
+  if (control.entriesPaused) reasons.push("ENTRIES_PAUSED");
+  if (strategyId !== control.strategyId) reasons.push("ACTIVE_STRATEGY_CHANGED");
+  return { ...gate, allowed: reasons.length === 0, reasons };
+}
 
 function log(message, fields = {}) {
   console.log(JSON.stringify({ time: new Date().toISOString(), message, ...fields }));
@@ -897,6 +909,8 @@ async function requestTradeApproval(config, state, statePath, details) {
     side: request.side,
     symbol: request.symbol,
     address: request.address,
+    strategyId: request.strategyId,
+    strategyGovernance: request.strategyGovernance || null,
     expiresAt: request.expiresAt
   }, currentCycleId);
   const approvalControl = await readApprovalControl(
@@ -992,6 +1006,8 @@ async function finalizePendingOrder(config, state, statePath) {
     addOpenPosition(state, {
       symbol: submitted.symbol,
       strategyId: submitted.strategyId || ADAPTIVE_MOMENTUM_STRATEGY_ID,
+      strategyGovernance: submitted.strategyGovernance || null,
+      entryApprovalId: submitted.approvalId || null,
       address: submitted.address,
       quantity,
       costBasisUsdt: submitted.costBasisUsdt,
@@ -1021,6 +1037,9 @@ async function finalizePendingOrder(config, state, statePath) {
       orderId: submitted.orderId,
       side: submitted.side,
       symbol: submitted.symbol,
+      strategyId: submitted.strategyId,
+      strategyGovernance: submitted.strategyGovernance || null,
+      approvalId: submitted.approvalId || null,
       quantity,
       txHash: entryGas.txHash,
       gasBnb: entryGas.gasBnb,
@@ -1103,6 +1122,9 @@ async function finalizePendingOrder(config, state, statePath) {
     gasCostUsdt: pnl.gasCostUsdt,
     realizedPnlUsdt: pnl.netPnlUsdt,
     exitReason: submitted.reason,
+    entryGovernance: submitted.entryGovernance || null,
+    entryApprovalId: submitted.entryApprovalId || null,
+    approvalId: submitted.approvalId || null,
     ...excursion,
     excursionPartial: submitted.excursionPartial === true,
     entryTxHash: submitted.entryTxHash || null,
@@ -2143,6 +2165,22 @@ async function evaluateEntry(
     }
     return;
   }
+  if (config.mode === "live") {
+    const governance = await checkEntryGovernance(config, orderDetails);
+    const prior = approvedRequest?.strategyGovernance;
+    if (approvedRequest && (!prior || prior.authorizationId !== governance.authorizationId ||
+        prior.identity?.identityHash !== governance.identity.identityHash)) {
+      governance.allowed = false;
+      governance.reasons.push("APPROVED_EVIDENCE_CHANGED");
+    }
+    await traceAction("strategy_promotion", governance.allowed ? "allowed" : "blocked", {
+      strategyId: orderDetails.strategyId, symbol: selected.symbol,
+      approvalId: approvedRequest?.approvalId || null, ...governance
+    }, currentCycleId);
+    if (!governance.allowed) return;
+    orderDetails.strategyGovernance = governance;
+    approvalDetails.strategyGovernance = governance;
+  }
   if (config.mode === "live" && !approvedRequest) {
     await requestTradeApproval(config, state, statePath, approvalDetails);
     return;
@@ -2168,6 +2206,7 @@ async function evaluateEntry(
       return;
     }
   }
+  orderDetails.approvalId = approvedRequest?.approvalId || null;
   const result = await submitOrder(config, state, statePath, emergencyStopPath, orderDetails);
   if (result.shadow) {
     addOpenPosition(state, {
@@ -2515,6 +2554,8 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
   const orderDetails = {
     side: "SELL",
     strategyId: position.strategyId || ADAPTIVE_MOMENTUM_STRATEGY_ID,
+    entryGovernance: position.strategyGovernance || null,
+    entryApprovalId: position.entryApprovalId || null,
     symbol: position.symbol,
     address: position.address,
     fromToken: position.address,
@@ -2579,6 +2620,7 @@ async function evaluateExit(config, state, statePath, emergencyStopPath, positio
       return;
     }
   }
+  orderDetails.approvalId = approvedRequest?.approvalId || null;
   const result = await submitOrder(config, state, statePath, emergencyStopPath, orderDetails);
   let shadowExcursion = null;
   if (result.shadow) {
@@ -2670,10 +2712,16 @@ async function processTradeApproval(config, state, statePath, emergencyStopPath)
       config.defaultStrategyId
     );
     config.activeStrategyId = strategyControl.strategyId;
-    const entryDecision = entryExecutionDecision({
+    const pauseDecision = entryExecutionDecision({
       entriesPaused: strategyControl.entriesPaused,
       side: request.side
     });
+    const governance = config.mode === "live" ? await checkEntryGovernance(config, request) : null;
+    const prior = request.strategyGovernance;
+    const evidenceChanged = governance && (!prior || prior.authorizationId !== governance.authorizationId ||
+      prior.identity?.identityHash !== governance.identity.identityHash);
+    const entryDecision = !pauseDecision.allowed ? pauseDecision : governance && (!governance.allowed || evidenceChanged)
+      ? { allowed: false, reason: "STRATEGY_PROMOTION_BLOCKED" } : pauseDecision;
     if (!entryDecision.allowed) {
       state.approvalRequest = null;
       state.lastApprovalDecision = {
@@ -2688,11 +2736,13 @@ async function processTradeApproval(config, state, statePath, emergencyStopPath)
         approvalId: request.approvalId,
         side: request.side,
         symbol: request.symbol,
-        outcome: entryDecision.reason
+        outcome: entryDecision.reason,
+        strategyGovernance: governance,
+        evidenceChanged: Boolean(evidenceChanged)
       }, currentCycleId);
       await notify(
         state,
-        `[Agentic Stock Bot] BUY APPROVAL ENTRIES_PAUSED\n${request.symbol} ${request.address}\n未执行链上交易；现有持仓退出和 Shadow 监控继续运行。`
+        `[Agentic Stock Bot] BUY APPROVAL ${entryDecision.reason}\n${request.symbol} ${request.address}\n未执行链上交易；现有持仓退出和 Shadow 监控继续运行。`
       );
       return true;
     }

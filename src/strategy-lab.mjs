@@ -19,7 +19,7 @@ export const STRATEGY_TAXONOMY = Object.freeze({
     SWING: "波段"
   }),
   stage: Object.freeze({
-    ACTIVE: "可切换",
+    ACTIVE: "运行支持（资格另审）",
     SHADOW: "Shadow观察",
     RESEARCH: "研究验证",
     REJECTED: "已淘汰"

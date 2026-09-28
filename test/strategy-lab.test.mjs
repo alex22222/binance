@@ -143,7 +143,7 @@ test("does not invent a drawdown sequence for undated fills", () => {
   assert.deepEqual(performance.period, { from: null, to: null });
 });
 
-test("keeps the enhanced weekly ETF strategy as the only live-switchable strategy", () => {
+test("keeps the enhanced weekly ETF strategy runtime-supported without implying evidence qualification", () => {
   const comparison = buildStrategyComparison("adaptive-momentum", []);
 
   assert.equal(comparison.length, 12);
@@ -162,7 +162,7 @@ test("keeps the enhanced weekly ETF strategy as the only live-switchable strateg
     assert.equal(strategy.direction, "LONG_ONLY");
     if (strategy.id === "weekly-etf-dual-momentum-defense") {
       assert.equal(strategy.switchable, true);
-      assert.equal(strategy.validationStatus, "LIVE_MANUAL_APPROVAL");
+      assert.equal(strategy.validationStatus, "LIVE_ELIGIBILITY_REVIEW_REQUIRED");
       assert.deepEqual(strategy.subStrategies, []);
       continue;
     }

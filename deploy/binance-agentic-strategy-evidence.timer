@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily saved strategy evidence snapshot
+
+[Timer]
+OnCalendar=*-*-* 23:30:00 UTC
+Persistent=true
+RandomizedDelaySec=60
+Unit=binance-agentic-strategy-evidence.service
+
+[Install]
+WantedBy=timers.target
