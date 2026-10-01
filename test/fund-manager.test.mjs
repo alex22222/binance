@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { beijingDate, paperSummary } from "../src/fund-manager-evidence.mjs";
 import { newYorkDate } from "../src/strategy-data.mjs";
-import { REPORT_SECTIONS, deliverManagerReport, sendManagerFeishu, validateManagerReport } from "../src/fund-manager-delivery.mjs";
+import { REPORT_SECTIONS, deliverManagerReport, managerReportCard, sendManagerFeishu, validateManagerReport } from "../src/fund-manager-delivery.mjs";
 
 const date = "2026-09-13";
 const text = `基金经理日报 ${date}\n${REPORT_SECTIONS.map((section) => `## ${section}\n已核实或注明缺失`).join("\n")}\nhttps://www.federalreserve.gov/`;
@@ -39,6 +39,20 @@ test("rejects incomplete reports and HTTP-200 Feishu business errors", async () 
   await assert.rejects(sendManagerFeishu(text, "test", { FEISHU_WEBHOOK_URL: "https://example.test" }, async () => response({ code: 19021 })), /19021/);
 });
 
+test("shows the complete report in the Feishu card without requiring Dashboard login", () => {
+  const report = `# 基金经理日报｜${date}（北京时间）\n\n生成说明\n\n${REPORT_SECTIONS.map((section, index) => `## ${section}\n栏目正文 ${index + 1}\n\n[来源 ${index + 1}](https://example.com/${index + 1})`).join("\n\n")}`;
+  const card = managerReportCard(report, "https://stocks.example.com/fund-manager");
+  const serialized = JSON.stringify(card);
+  assert.match(serialized, /生成说明/);
+  for (const [index, section] of REPORT_SECTIONS.entries()) {
+    assert.match(serialized, new RegExp(section));
+    assert.match(serialized, new RegExp(`栏目正文 ${index + 1}`));
+    assert.match(serialized, new RegExp(`https://example.com/${index + 1}`));
+  }
+  assert.equal(card.elements.some((element) => element.tag === "action"), false);
+  assert.match(serialized, /完整报告已在本卡片展示/);
+});
+
 test("archives delivery receipts, uses configured recipient, and skips repeat daily sends", async () => {
   const directory = await mkdtemp(join(tmpdir(), "manager-delivery-"));
   const requests = [];
@@ -53,7 +67,8 @@ test("archives delivery receipts, uses configured recipient, and skips repeat da
   assert.equal(requests.length, 2);
   assert.equal(requests[1].body.receive_id, "oc_test");
   assert.equal(requests[1].body.msg_type, "interactive");
-  assert.equal(JSON.parse(requests[1].body.content).elements.at(-1).actions[0].url, "https://stocks.example.com/fund-manager?date=2026-09-13&edition=daily");
+  assert.equal(JSON.parse(requests[1].body.content).elements.some((element) => element.tag === "action"), false);
+  assert.match(requests[1].body.content, /完整报告已在本卡片展示/);
   assert.match(await readFile(join(directory, `${date}-daily.html`), "utf8"), /<!doctype html>/);
   assert.equal(requests[1].body.uuid, first.uuid);
   assert.equal(JSON.parse(await readFile(join(directory, `${date}-daily.receipt.json`), "utf8")).messageId, "om_test");

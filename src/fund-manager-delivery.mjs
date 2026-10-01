@@ -27,22 +27,30 @@ export function managerReportUrl(date, edition, environment = process.env) {
   return `${origin.origin}/fund-manager?date=${date}&edition=${edition}`;
 }
 
-export function managerReportCard(text, reportUrl) {
-  const conclusion = text.split("## 经理结论")[1]?.split(/^## /m)[0]?.trim() || "每日投资报告已生成。";
+export function managerReportCard(text) {
   const title = text.match(/^# (.+)$/m)?.[1] || "基金经理日报";
-  return {
+  const report = text.replace(/^# .+(?:\r?\n|$)/m, "").trim();
+  const elements = report.split(/(?=^## )/m)
+    .map((section) => section.trim())
+    .filter(Boolean)
+    .map((section) => ({
+      tag: "div",
+      text: { tag: "lark_md", content: section.replace(/^## (.+)$/m, "**$1**") }
+    }));
+  const card = {
     config: { wide_screen_mode: true },
     header: { template: "green", title: { tag: "plain_text", content: title } },
     elements: [
-      { tag: "div", text: { tag: "lark_md", content: conclusion.slice(0, 1600) } },
-      { tag: "note", elements: [{ tag: "plain_text", content: "实盘 · Paper · 全球动态 · 美联储 · 黄金 · 美股 · 重大事件\n完整 HTML 报告保存在系统内，使用现有 Dashboard 登录查看。" }] },
-      { tag: "action", actions: [{ tag: "button", text: { tag: "plain_text", content: "阅读完整 HTML 报告" }, type: "primary", url: reportUrl }] }
+      ...elements,
+      { tag: "note", elements: [{ tag: "plain_text", content: "完整报告已在本卡片展示；系统 HTML 仅保留作历史归档。" }] }
     ]
   };
+  if (Buffer.byteLength(JSON.stringify(card), "utf8") > 30 * 1024) throw new Error("Feishu card exceeds 30 KB; shorten the report before sending");
+  return card;
 }
 
 export async function sendManagerFeishu(text, uuid, environment = process.env, fetchImpl = fetch, reportUrl = null) {
-  const card = reportUrl ? managerReportCard(text, reportUrl) : null;
+  const card = reportUrl ? managerReportCard(text) : null;
   const msgType = card ? "interactive" : "text";
   const content = card || { text };
   async function post(url, body, token) {
