@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -60,7 +60,8 @@ test("dashboard records one exact approval without writing the bot state", async
       DASHBOARD_WALLET_BALANCE_DISABLED: "1",
       TRADE_REVIEW_DIR: join(directory, "trade-reviews"),
       FUND_MANAGER_DIR: join(directory, "fund-manager"),
-      WEEKLY_RESEARCH_DIR: join(directory, "weekly-research")
+      WEEKLY_RESEARCH_DIR: join(directory, "weekly-research"),
+      BTC_RADAR_DIR: join(directory, "btc-radar")
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -112,6 +113,27 @@ test("dashboard records one exact approval without writing the bot state", async
     assert.match(await weeklyPage.text(), /周报尚未生成/);
     assert.equal((await fetch(`${origin}/api/weekly-strategy`).then((response) => response.json())).available, false);
     assert.equal((await fetch(`${origin}/weekly-strategy?week=invalid`)).status, 400);
+
+    const radarPage = await fetch(`${origin}/btc-radar`);
+    assert.equal(radarPage.status, 200);
+    const radarPolicy = radarPage.headers.get("content-security-policy");
+    const radarNonce = radarPolicy.match(/script-src 'nonce-([^']+)'/)[1];
+    const radarHtml = await radarPage.text();
+    assert.ok(radarHtml.includes(`<script nonce="${radarNonce}">`));
+    assert.match(radarPolicy, /default-src 'none'.*connect-src 'self'.*frame-ancestors 'none'/);
+    assert.match(radarHtml, /href="\/btc-radar" aria-current="page"/);
+    const nextRadarPolicy = (await fetch(`${origin}/btc-radar`)).headers.get("content-security-policy");
+    assert.notEqual(nextRadarPolicy, radarPolicy);
+    assert.deepEqual(await fetch(`${origin}/api/btc-radar`).then((response) => response.json()), { status: "MISSING", latest: null, history: [] });
+    await mkdir(join(directory, "btc-radar"), { recursive: true });
+    await writeFile(join(directory, "btc-radar", "latest.json"), JSON.stringify({ ts: "2026-10-01T21:43:00+08:00", score: 63.5, level: "orange" }));
+    await writeFile(join(directory, "btc-radar", "history.json"), JSON.stringify([{ ts: "2026-10-01T21:43:00+08:00", price: 83555.9, score: 63.5 }]));
+    const radarResponse = await fetch(`${origin}/api/btc-radar`);
+    assert.equal(radarResponse.headers.get("cache-control"), "no-store");
+    const radar = await radarResponse.json();
+    assert.equal(radar.status, "AVAILABLE");
+    assert.equal(radar.latest.score, 63.5);
+    assert.equal(radar.history.length, 1);
 
     const reviews = await fetch(`${origin}/api/trade-reviews`).then((response) => response.json());
     assert.equal(reviews.available, false);
@@ -332,6 +354,11 @@ test("dashboard protects public access with basic auth and an exact HTTPS origin
     const managerEntry = await fetch(`${origin}/fund-manager?date=2026-09-13&edition=preview`, { redirect: "manual" });
     assert.equal(managerEntry.status, 303);
     assert.equal(managerEntry.headers.get("location"), "/login");
+
+    const radarEntry = await fetch(`${origin}/btc-radar`, { redirect: "manual" });
+    assert.equal(radarEntry.status, 303);
+    assert.equal(radarEntry.headers.get("location"), "/login");
+    assert.equal((await fetch(`${origin}/api/btc-radar`)).status, 401);
 
     const weeklyEntry = await fetch(`${origin}/weekly-strategy`, { redirect: "manual" });
     assert.equal(weeklyEntry.status, 303);

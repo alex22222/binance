@@ -18,6 +18,7 @@
     "strategy:bstocks-readiness": "node scripts/run-shadow-basis-readiness.mjs",
     "trade:review": "node scripts/run-trade-review.mjs",
     "premarket:brief": "node scripts/run-premarket-brief.mjs",
+    "btc:radar": "node scripts/run-btc-radar.mjs",
     "watch": "node watch/watcher.mjs",
     "test:watch-webbridge": "node watch/webbridge-smoke.mjs",
     "preflight:linux": "node scripts/preflight-linux.mjs",

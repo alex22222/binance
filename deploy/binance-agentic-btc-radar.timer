@@ -1,0 +1,11 @@
+[Unit]
+Description=Evaluate the BTC risk radar every four hours at 43 minutes past (00:43 UTC = 08:43 Asia/Shanghai)
+
+[Timer]
+OnCalendar=*-*-* 00/4:43:00 UTC
+RandomizedDelaySec=60
+Persistent=true
+Unit=binance-agentic-btc-radar.service
+
+[Install]
+WantedBy=timers.target

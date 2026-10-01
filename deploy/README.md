@@ -181,6 +181,32 @@ sudo systemctl enable --now binance-agentic-weekly-etf-paper.timer
 systemctl list-timers binance-agentic-weekly-etf-paper.timer
 ```
 
+## BTC risk radar
+
+The radar service reads public market data, writes only to
+`state/btc-radar/`, and sends Feishu alerts through the existing channel. It
+never accesses the Binance wallet or the bot state.
+
+```bash
+sudo install -d -o binancebot -g binancebot -m 700 \
+  /opt/binance-agentic-stock-bot/state/btc-radar
+sudo systemctl enable --now binance-agentic-btc-radar.timer
+sudo systemctl start binance-agentic-btc-radar.service
+systemctl list-timers binance-agentic-btc-radar.timer
+```
+
+To show the contract DCA position and news sentiment, create a **read-only**
+OKX API key bound to this server's IP and store it in a separate file, never in
+`/etc/binance-agentic-stock-bot.env`:
+
+```bash
+sudo install -m 640 -o root -g binancebot /dev/null /etc/binance-agentic-btc-radar.env
+sudoedit /etc/binance-agentic-btc-radar.env
+```
+
+Use the keys from `deploy/binance-agentic-btc-radar.env.example`. The next run
+picks them up; no service restart is needed.
+
 ## Explicit live cutover
 
 Never run the local Mac and server with `BOT_LIVE=1` at the same time. Before

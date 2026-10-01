@@ -124,7 +124,7 @@ export function strategyLabHtml() {
   <a class="skip" href="#dossier">跳到研究档案</a>
   <header class="topbar">
     <a class="brand" href="/"><img src="/favicon.svg" alt="">Agentic Wallet</a>
-    <nav aria-label="主导航"><a href="/strategies" aria-current="page">策略研究</a><a href="/reviews">复盘</a></nav>
+    <nav aria-label="主导航"><a href="/strategies" aria-current="page">策略研究</a><a href="/reviews">复盘</a><a href="/btc-radar">BTC 风控</a></nav>
     <span class="top-meta">只读研究 · 交易管理请前往仪表盘</span>
   </header>
   <div class="workspace">

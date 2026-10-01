@@ -444,6 +444,26 @@ holding. State and events remain under `state/weekly-etf-rotation-paper/` and ar
 labeled `PAPER_CANDLE_PROXY`. The runner reads public Yahoo and Binance data but
 does not access the wallet, request an executable quote, or submit a swap.
 
+## BTC risk radar
+
+The Dashboard menu entry **BTC 风控** (`/btc-radar`) shows a BTC risk score
+migrated from a claude.ai artifact. `scripts/run-btc-radar.mjs` evaluates it
+every four hours on the server with the same fixed six-factor model: Polymarket
+price-hit and Fed-rate markets, U.S. Treasury yields, OKX BTC technicals, XAUT
+gold, funding, and open interest. Results are written to `state/btc-radar/`.
+
+```bash
+npm run btc:radar
+```
+
+A failed source reuses its last successful value and is shown as stale. The
+contract DCA position and BTC news sentiment need an optional read-only OKX API
+key; without it the page shows the position as not connected and scores
+sentiment as neutral. Feishu receives an alert only when the risk level rises,
+the position nears its stop, a safety order fills, the bot stops, or BTC moves
+more than 4% since the last evaluation. The radar is read-only and never trades.
+See [`docs/btc-radar.md`](docs/btc-radar.md).
+
 ## Strategy validation
 
 Run the research-only strategy comparison with:

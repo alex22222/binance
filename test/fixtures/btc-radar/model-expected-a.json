@@ -1,0 +1,181 @@
+{
+ "ts": "2026-10-01T16:40:00+08:00",
+ "price": 83417.3,
+ "score": 62.2,
+ "level": "orange",
+ "level_name": "警戒",
+ "summary": "综合 62 分（警戒）。主要压力来自美债收益率和美联储利率预期。",
+ "factors": [
+  {
+   "key": "poly",
+   "name": "预测市场 Polymarket",
+   "weight": 25,
+   "score": 45,
+   "metrics": [
+    [
+     "本周跌 4%",
+     "20%"
+    ],
+    [
+     "本周涨 4%",
+     "23%"
+    ],
+    [
+     "本月跌 8%",
+     "36%"
+    ],
+    [
+     "本月涨 8%",
+     "47%"
+    ]
+   ],
+   "note": "涨跌概率接近"
+  },
+  {
+   "key": "fed",
+   "name": "美联储利率预期",
+   "weight": 20,
+   "score": 81,
+   "metrics": [
+    [
+     "10月议息加息",
+     "34%"
+    ],
+    [
+     "10月议息降息",
+     "1%"
+    ],
+    [
+     "年内再加息",
+     "82%"
+    ]
+   ],
+   "note": "市场押注加息，流动性收紧"
+  },
+  {
+   "key": "ust",
+   "name": "美债收益率",
+   "weight": 20,
+   "score": 87,
+   "metrics": [
+    [
+     "10年期",
+     "5.26%"
+    ],
+    [
+     "2年期",
+     "4.89%"
+    ],
+    [
+     "10年期 10日变化",
+     "+26bp"
+    ],
+    [
+     "数据日期",
+     "2026-09-29"
+    ]
+   ],
+   "note": "收益率快速上行，压制风险资产"
+  },
+  {
+   "key": "gold",
+   "name": "黄金 (XAUT)",
+   "weight": 10,
+   "score": 72,
+   "metrics": [
+    [
+     "金价",
+     "4,158"
+    ],
+    [
+     "10日变化",
+     "-4.4%"
+    ],
+    [
+     "BTC 10日变化",
+     "-2.9%"
+    ]
+   ],
+   "note": "金价下跌，实际利率走高"
+  },
+  {
+   "key": "tech",
+   "name": "BTC 技术面",
+   "weight": 15,
+   "score": 38,
+   "metrics": [
+    [
+     "现价 / 20日均线",
+     "+2.2%"
+    ],
+    [
+     "现价 / 50日均线",
+     "+7.4%"
+    ],
+    [
+     "7日涨跌",
+     "-1.2%"
+    ],
+    [
+     "20日均线",
+     "81,633"
+    ]
+   ],
+   "note": "站上 20 日均线"
+  },
+  {
+   "key": "deriv",
+   "name": "衍生品与情绪",
+   "weight": 10,
+   "score": 45,
+   "metrics": [
+    [
+     "资金费率均值",
+     "0.0048%"
+    ],
+    [
+     "持仓量 7日",
+     "-4.3%"
+    ],
+    [
+     "舆情多 / 空",
+     "53% / 11%"
+    ]
+   ],
+   "note": "杠杆在出清"
+  }
+ ],
+ "position": {
+  "avg": 81250.5,
+  "tp": 84500.0,
+  "sl": 79300,
+  "liq": 72100.4,
+  "sz_btc": 0.05,
+  "lever": 10,
+  "total_pnl": -12.34,
+  "safety_filled": 3,
+  "safety_max": 8,
+  "next_safety": 78400.2,
+  "d_sl": -4.94,
+  "d_liq": -13.57,
+  "d_tp": 1.3,
+  "level": "orange",
+  "level_name": "离止损不远",
+  "p_sl_week": 0.15,
+  "p_tp_week": 0.315
+ },
+ "sources": [
+  [
+   "Polymarket",
+   "https://polymarket.com/crypto/bitcoin"
+  ],
+  [
+   "美国财政部收益率",
+   "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/TextView?type=daily_treasury_yield_curve"
+  ],
+  [
+   "OKX 行情 / 持仓",
+   "https://www.okx.com"
+  ]
+ ]
+}

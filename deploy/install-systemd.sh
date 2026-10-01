@@ -23,7 +23,8 @@ install -d -o binancebot -g binancebot -m 700 \
   /var/lib/binance-agentic-stock-bot \
   /var/lib/binance-agentic-stock-bot/.baw \
   "$project_dir/state" \
-  "$project_dir/state/weekly-etf-rotation-paper"
+  "$project_dir/state/weekly-etf-rotation-paper" \
+  "$project_dir/state/btc-radar"
 
 if [[ ! -f "$environment_file" ]]; then
   install -m 600 "$project_dir/deploy/binance-agentic-stock-bot.env.example" "$environment_file"
@@ -44,6 +45,8 @@ install -m 644 "$project_dir/deploy/binance-agentic-turtle-paper.service" "$unit
 install -m 644 "$project_dir/deploy/binance-agentic-turtle-paper.timer" "$unit_dir/"
 install -m 644 "$project_dir/deploy/binance-agentic-weekly-etf-paper.service" "$unit_dir/"
 install -m 644 "$project_dir/deploy/binance-agentic-weekly-etf-paper.timer" "$unit_dir/"
+install -m 644 "$project_dir/deploy/binance-agentic-btc-radar.service" "$unit_dir/"
+install -m 644 "$project_dir/deploy/binance-agentic-btc-radar.timer" "$unit_dir/"
 systemctl disable --now binance-agentic-watch.service >/dev/null 2>&1 || true
 rm -f "$unit_dir/binance-agentic-watch.service"
 systemctl daemon-reload

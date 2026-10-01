@@ -67,3 +67,23 @@ test("weekly ETF Paper runs independently without wallet or Live access", async 
   assert.match(timer, /OnCalendar=Mon\.\.Fri/);
   assert.match(timer, /weekly-etf-paper\.service/);
 });
+
+test("BTC risk radar runs every four hours with read-only state access and optional OKX credentials", async () => {
+  const [service, timer, installer, environment] = await Promise.all([
+    readFile(new URL("../deploy/binance-agentic-btc-radar.service", import.meta.url), "utf8"),
+    readFile(new URL("../deploy/binance-agentic-btc-radar.timer", import.meta.url), "utf8"),
+    readFile(new URL("../deploy/install-systemd.sh", import.meta.url), "utf8"),
+    readFile(new URL("../deploy/binance-agentic-btc-radar.env.example", import.meta.url), "utf8")
+  ]);
+  assert.match(service, /ExecStart=\/usr\/bin\/node scripts\/run-btc-radar\.mjs/);
+  assert.match(service, /EnvironmentFile=-\/etc\/binance-agentic-btc-radar\.env/);
+  assert.match(service, /ReadWritePaths=\/opt\/binance-agentic-stock-bot\/state\/btc-radar\n/);
+  assert.match(service, /ProtectSystem=strict/);
+  assert.doesNotMatch(service, /BOT_LIVE|BAW/);
+  assert.match(timer, /OnCalendar=\*-\*-\* 00\/4:43:00 UTC/);
+  assert.match(timer, /Persistent=true/);
+  assert.match(timer, /Unit=binance-agentic-btc-radar\.service/);
+  assert.match(installer, /"\$project_dir\/state\/btc-radar"/);
+  assert.match(installer, /binance-agentic-btc-radar\.timer/);
+  assert.match(environment, /READ-ONLY/);
+});

@@ -354,7 +354,7 @@ export function liveDashboardHtml() {
 <body>
   <header>
     <div class="shell nav">
-      <div class="brand"><span class="mark">A</span><span>Agentic Wallet</span><a class="nav-link" href="/strategies">策略</a><a class="nav-link" href="/reviews">复盘</a><a class="nav-link" href="/fund-manager">基金经理</a></div>
+      <div class="brand"><span class="mark">A</span><span>Agentic Wallet</span><a class="nav-link" href="/strategies">策略</a><a class="nav-link" href="/reviews">复盘</a><a class="nav-link" href="/fund-manager">基金经理</a><a class="nav-link" href="/btc-radar">BTC 风控</a></div>
       <div class="badges"><span class="badge market-index-badge" id="marketIndexStatus"><span>纳斯达克</span><strong id="nasdaqIndex">—</strong></span><span class="badge" id="walletStatus" aria-live="polite"><span class="dot"></span><span>钱包 未检测</span></span><span class="badge" id="mode"><span class="dot"></span><span></span></span><span class="badge" id="health"><span class="dot"></span><span></span></span><div class="control-actions"><button class="control-button" id="autoApprovalToggle" type="button" role="switch" aria-checked="false">自动审批：关</button><button class="control-button stop" id="stopButton" type="button">停机</button><button class="control-button resume" id="resumeButton" type="button" hidden>恢复</button></div></div>
     </div>
   </header>

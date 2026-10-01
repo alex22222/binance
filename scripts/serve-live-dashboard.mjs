@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -16,6 +16,8 @@ import { dashboardLoginHtml } from "../src/dashboard-login-html.mjs";
 import { strategyLabHtml } from "../src/strategy-lab-html.mjs";
 import { loadStrategyResearch } from "../src/strategy-research.mjs";
 import { tradeReviewHtml } from "../src/trade-review-html.mjs";
+import { btcRadarHtml } from "../src/btc-radar-html.mjs";
+import { loadBtcRadarView } from "../src/btc-radar.mjs";
 import { loadManagerPage } from "../src/fund-manager-html.mjs";
 import { weeklyReportStatus } from "../src/weekly-research-store.mjs";
 import { weeklyResearchHtml } from "../src/weekly-research-html.mjs";
@@ -46,6 +48,7 @@ const tradeReviewDirectory = resolve(
   projectRoot,
   process.env.TRADE_REVIEW_DIR || "state/trade-reviews"
 );
+const btcRadarDirectory = resolve(projectRoot, process.env.BTC_RADAR_DIR || "state/btc-radar");
 
 async function executeBaw(args) {
   let stdout;
@@ -141,7 +144,7 @@ function requireAllowedOrigin(request) {
 
 function requireAuthentication(request, response) {
   if (dashboardRequestAuthorized(request, authConfig)) return true;
-  if (request.method === "GET" && (["/", "/strategies", "/reviews"].includes(request.url) || ["/fund-manager", "/weekly-strategy"].includes(new URL(request.url, "http://localhost").pathname))) {
+  if (request.method === "GET" && (["/", "/strategies", "/reviews", "/btc-radar"].includes(request.url) || ["/fund-manager", "/weekly-strategy"].includes(new URL(request.url, "http://localhost").pathname))) {
     response.writeHead(303, {
       "Location": "/login",
       "Cache-Control": "no-store",
@@ -242,6 +245,26 @@ const server = createServer(async (request, response) => {
         "X-Content-Type-Options": "nosniff"
       });
       response.end(tradeReviewHtml());
+      return;
+    }
+    if (request.method === "GET" && request.url === "/btc-radar") {
+      const nonce = randomBytes(16).toString("base64");
+      response.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.end(btcRadarHtml({ nonce }));
+      return;
+    }
+    if (request.method === "GET" && request.url === "/api/btc-radar") {
+      response.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.end(JSON.stringify(await loadBtcRadarView(btcRadarDirectory)));
       return;
     }
     if (request.method === "GET" && new URL(request.url, `http://${host}:${port}`).pathname === "/fund-manager") {

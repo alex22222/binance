@@ -168,7 +168,7 @@ export function tradeReviewHtml() {
 <body>
   <header><div class="shell nav">
     <a class="brand" href="/reviews"><img src="/favicon.svg" alt=""><span>交易复盘</span></a>
-    <div class="nav-actions"><select id="reviewDate" aria-label="选择交易日"></select><a class="nav-link" href="/strategies">策略</a><a class="nav-link" href="/">仪表盘</a></div>
+    <div class="nav-actions"><select id="reviewDate" aria-label="选择交易日"></select><a class="nav-link" href="/strategies">策略</a><a class="nav-link" href="/btc-radar">BTC 风控</a><a class="nav-link" href="/">仪表盘</a></div>
   </div></header>
   <main class="shell">
     <div class="layout">
