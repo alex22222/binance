@@ -7,6 +7,7 @@ import {
   acquireProcessLock,
   activateEmergencyStop,
   assertQuoteFresh,
+  BawError,
   clearEmergencyStop,
   createOrderIntent,
   isEmergencyStopped,
@@ -33,6 +34,34 @@ test("retries only transient read failures", () => {
   assert.equal(isTransientNetworkError({ code: "ETIMEDOUT" }), true);
   assert.equal(isTransientNetworkError({ status: 503 }), true);
   assert.equal(isTransientNetworkError({ status: 400 }), false);
+});
+
+test("recognizes CLI and Node DNS failures without treating them as expired wallet sessions", () => {
+  const errors = [
+    new BawError({ code: 50001004, name: "DNS_RESOLVE_FAILED", message: "Host not found (www.binance.com)", operation: "market-order quote" }),
+    { code: "EAI_AGAIN" },
+    { code: "ENOTFOUND" },
+    { cause: { code: "EAI_AGAIN" } },
+    { cause: { code: "ENOTFOUND" } }
+  ];
+  for (const error of errors) {
+    assert.equal(isTransientNetworkError(error), true);
+    assert.equal(isWalletSessionExpired(error), false);
+  }
+  assert.equal(isTransientNetworkError(new BawError({ code: 316008, name: "SERVICE_ERROR", message: "Token has no available liquidity" })), false);
+});
+
+test("keeps exhausted DNS failures visible and preserves positions and wallet status", () => {
+  const state = { positions: [{ symbol: "QQQ" }], walletSession: { status: "CONNECTED" } };
+  const error = new BawError({ code: 50001004, name: "DNS_RESOLVE_FAILED", message: "Host not found (www.binance.com)", operation: "market-order quote" });
+  const first = runtimeFailureUpdate(state, error);
+  assert.equal(first.fingerprint, "network:50001004");
+  assert.equal(first.shouldNotify, true);
+  assert.equal(first.patch.lastError, error.message);
+  assert.equal(Object.hasOwn(first.patch, "walletSession"), false);
+  assert.equal(Object.hasOwn(first.patch, "positions"), false);
+  assert.equal(runtimeFailureUpdate({ ...state, ...first.patch }, error).shouldNotify, false);
+  assert.deepEqual(state, { positions: [{ symbol: "QQQ" }], walletSession: { status: "CONNECTED" } });
 });
 
 test("rejects stale quotes and calculates adverse quote drift", () => {

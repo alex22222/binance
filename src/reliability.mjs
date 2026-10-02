@@ -4,11 +4,13 @@ import { dirname, join } from "node:path";
 import { sameTokenAmount } from "./token-amount.mjs";
 
 const transientNetworkCodes = new Set([
+  "EAI_AGAIN",
   "ECONNRESET",
   "ECONNREFUSED",
   "EHOSTUNREACH",
   "ENETDOWN",
   "ENETUNREACH",
+  "ENOTFOUND",
   "ETIMEDOUT",
   "UND_ERR_CONNECT_TIMEOUT",
   "UND_ERR_HEADERS_TIMEOUT",
@@ -45,7 +47,7 @@ function hasPendingExit(state) {
 export function isTransientNetworkError(error) {
   if (error instanceof TypeError) return true;
   if (transientNetworkCodes.has(error?.code) || transientNetworkCodes.has(error?.cause?.code)) return true;
-  if (/REQUEST_TIMEOUT|NETWORK_ERROR|CONNECT_TIMEOUT/.test(String(error?.name || ""))) return true;
+  if (/REQUEST_TIMEOUT|NETWORK_ERROR|CONNECT_TIMEOUT|DNS_RESOLVE_FAILED/.test(String(error?.name || ""))) return true;
   if (/fetch failed|Connect Timeout|network/i.test(String(error?.message || ""))) return true;
   const status = Number(error?.status);
   return status === 429 || status >= 500;
