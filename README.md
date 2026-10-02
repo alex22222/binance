@@ -451,6 +451,8 @@ migrated from a claude.ai artifact. `scripts/run-btc-radar.mjs` evaluates it
 every four hours on the server with the same fixed six-factor model: Polymarket
 price-hit and Fed-rate markets, U.S. Treasury yields, OKX BTC technicals, XAUT
 gold, funding, and open interest. Results are written to `state/btc-radar/`.
+Daily RSI(14) and the alternative.me Fear & Greed Index are shown beside the
+technical and sentiment factors for reference only; they are never scored.
 
 ```bash
 npm run btc:radar

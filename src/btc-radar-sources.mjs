@@ -11,8 +11,12 @@ const MONTHS = ["January", "February", "March", "April", "May", "June", "July", 
 export const BTC_RADAR_SOURCES = Object.freeze([
   ["Polymarket", "https://polymarket.com/crypto/bitcoin"],
   ["美国财政部收益率", "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/TextView?type=daily_treasury_yield_curve"],
-  ["OKX 行情 / 持仓", "https://www.okx.com"]
+  ["OKX 行情 / 持仓", "https://www.okx.com"],
+  ["恐惧贪婪指数", "https://alternative.me/crypto/fear-and-greed-index/"]
 ]);
+const FEAR_GREED_LABELS = Object.freeze({
+  "Extreme Fear": "极度恐惧", Fear: "恐惧", Neutral: "中性", Greed: "贪婪", "Extreme Greed": "极度贪婪"
+});
 
 function finite(value, label) {
   const number = Number(value);
@@ -71,6 +75,53 @@ export async function loadBtcMarket({ fetchImpl = fetch } = {}) {
   if (btcCloses.length < 50) throw new Error(`BTC daily history has ${btcCloses.length} closes; 50 required`);
   btcCloses[0] = price;
   return { price, btc_closes: btcCloses };
+}
+
+// Wilder's RSI over closes ordered oldest first.
+export function wilderRsi(values, period = 14) {
+  if (values.length <= period) throw new Error(`RSI(${period}) needs more than ${period} closes`);
+  let gain = 0;
+  let loss = 0;
+  for (let index = 1; index <= period; index += 1) {
+    const change = values[index] - values[index - 1];
+    if (change > 0) gain += change;
+    else loss -= change;
+  }
+  gain /= period;
+  loss /= period;
+  for (let index = period + 1; index < values.length; index += 1) {
+    const change = values[index] - values[index - 1];
+    gain = (gain * (period - 1) + Math.max(change, 0)) / period;
+    loss = (loss * (period - 1) + Math.max(-change, 0)) / period;
+  }
+  if (loss === 0) return gain === 0 ? 50 : 100;
+  return 100 - 100 / (1 + gain / loss);
+}
+
+// Reference only, not scored: daily RSI(14) on UTC candles, from completed
+// candles and again including the candle still in progress.
+export async function loadBtcDailyRsi({ fetchImpl = fetch } = {}) {
+  const rows = [...await okxPublic("/api/v5/market/candles", { instId: "BTC-USDT", bar: "1Dutc", limit: "300" }, fetchImpl)].reverse();
+  const completed = rows.filter((row) => row[8] === "1");
+  if (completed.length < 30) throw new Error("BTC daily history is too short for RSI");
+  const close = (row) => finite(row[4], "BTC close");
+  return {
+    closed: Number(wilderRsi(completed.map(close)).toFixed(1)),
+    intraday: Number(wilderRsi(rows.map(close)).toFixed(1)),
+    date: new Date(Number(completed.at(-1)[0])).toISOString().slice(0, 10)
+  };
+}
+
+// Reference only, not scored: alternative.me crypto Fear & Greed Index.
+export async function loadFearGreed({ fetchImpl = fetch } = {}) {
+  const latest = (await request("https://api.alternative.me/fng/?limit=1", { fetchImpl }))?.data?.[0];
+  const value = finite(latest?.value, "Fear & Greed value");
+  if (value < 0 || value > 100) throw new Error("Fear & Greed value is outside 0-100");
+  return {
+    value,
+    label: FEAR_GREED_LABELS[latest.value_classification] || String(latest.value_classification || ""),
+    date: new Date(finite(latest.timestamp, "Fear & Greed timestamp") * 1000).toISOString().slice(0, 10)
+  };
 }
 
 export async function loadGoldCloses({ fetchImpl = fetch } = {}) {

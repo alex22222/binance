@@ -5,11 +5,14 @@ import {
   createOkxReadOnlyClient,
   dcaPosition,
   fedExpectations,
+  loadBtcDailyRsi,
   loadDcaPosition,
+  loadFearGreed,
   loadSentiment,
   parseTreasuryCsv,
   priceLadder,
   selectWeeklyEvent,
+  wilderRsi,
   yesPrice
 } from "../src/btc-radar-sources.mjs";
 
@@ -166,4 +169,38 @@ test("reads BTC news sentiment ratios and rejects malformed ones", async () => {
   assert.deepEqual(await loadSentiment(response({ bullishRatio: "0.53", bearishRatio: "0.11" })), { bull: 0.53, bear: 0.11 });
   await assert.rejects(loadSentiment(response({ bullishRatio: "", bearishRatio: "0.11" })), /bullish ratio/);
   await assert.rejects(loadSentiment(response({ bullishRatio: "1.2", bearishRatio: "0.11" })), /outside 0-1/);
+});
+
+test("computes Wilder's RSI from completed UTC daily candles and from the live candle", async () => {
+  assert.equal(wilderRsi([1, 2, 1, 3], 2), 100 - 100 / 6);
+  assert.equal(wilderRsi(Array.from({ length: 20 }, (_, index) => index)), 100);
+  assert.equal(wilderRsi(Array.from({ length: 20 }, (_, index) => 20 - index)), 0);
+  assert.equal(wilderRsi(Array(20).fill(5)), 50);
+  assert.throws(() => wilderRsi([1, 2, 3]), /needs more than 14/);
+
+  const start = Date.parse("2026-08-01T00:00:00Z");
+  const requests = [];
+  const rows = Array.from({ length: 40 }, (_, index) => [
+    String(start + index * 86_400_000), "0", "0", "0", String(index === 39 ? 100 + 38 - 30 : 100 + index), "0", "0", "0", index === 39 ? "0" : "1"
+  ]).reverse();
+  const fetchImpl = async (url) => {
+    requests.push(String(url));
+    return { ok: true, status: 200, json: async () => ({ code: "0", data: rows }) };
+  };
+  assert.deepEqual(await loadBtcDailyRsi({ fetchImpl }), { closed: 100, intraday: 30.2, date: "2026-09-08" });
+  assert.match(requests[0], /instId=BTC-USDT&bar=1Dutc&limit=300/);
+  const short = async () => ({ ok: true, status: 200, json: async () => ({ code: "0", data: rows.slice(0, 20) }) });
+  await assert.rejects(loadBtcDailyRsi({ fetchImpl: short }), /too short for RSI/);
+});
+
+test("reads the Fear & Greed Index with a Chinese label and its UTC date", async () => {
+  const response = (entry) => async () => ({ ok: true, status: 200, json: async () => ({ data: [entry] }) });
+  const timestamp = String(Date.parse("2026-10-01T00:00:00Z") / 1000);
+  assert.deepEqual(
+    await loadFearGreed({ fetchImpl: response({ value: "74", value_classification: "Greed", timestamp }) }),
+    { value: 74, label: "贪婪", date: "2026-10-01" }
+  );
+  assert.equal((await loadFearGreed({ fetchImpl: response({ value: "12", value_classification: "Extreme Fear", timestamp }) })).label, "极度恐惧");
+  await assert.rejects(loadFearGreed({ fetchImpl: response({ value: "101", value_classification: "Greed", timestamp }) }), /outside 0-100/);
+  await assert.rejects(loadFearGreed({ fetchImpl: response({ value: "", timestamp }) }), /not a finite number/);
 });

@@ -20,6 +20,10 @@ const treasuryCsv = ['Date,"2 Yr","10 Yr"', ...Array.from({ length: 11 }, (_, in
 function responses(overrides = {}) {
   const body = (value) => ({ ok: true, status: 200, json: async () => value, text: async () => value });
   const routes = [
+    ["bar=1Dutc", { code: "0", data: Array.from({ length: 40 }, (_, index) => [
+      String(Date.parse("2026-10-01T00:00:00Z") - (index - 1) * 86_400_000), "0", "0", "0", String(84000 - index * 50), "0", "0", "0", index === 0 ? "0" : "1"
+    ]) }],
+    ["api.alternative.me/fng", { data: [{ value: "72", value_classification: "Greed", timestamp: String(Date.parse("2026-10-02T00:00:00Z") / 1000) }] }],
     ["/market/ticker", { code: "0", data: [{ last: "84000" }] }],
     ["instId=BTC-USDT&bar=1D", { code: "0", data: Array.from({ length: 60 }, (_, index) => ["0", "0", "0", "0", String(84000 - index * 40)]) }],
     ["instId=XAUT-USDT", { code: "0", data: Array.from({ length: 15 }, (_, index) => ["0", "0", "0", "0", String(4100 + index * 8)]) }],
@@ -71,6 +75,10 @@ test("evaluates public data without OKX credentials and keeps a deduplicated his
   assert.deepEqual(first.snapshot.data_status, { okxConfigured: false, algoId: null, staleSources: [] });
   assert.deepEqual(first.snapshot.factors.find(({ key }) => key === "deriv").metrics[2], ["舆情多 / 空", "未接入"]);
   assert.deepEqual(first.alert, { status: "NONE", reasons: [] });
+  assert.deepEqual(first.snapshot.indicators, {
+    rsi14: { closed: 100, intraday: 100, date: "2026-10-01" },
+    fearGreed: { value: 72, label: "贪婪", date: "2026-10-02" }
+  });
   await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW });
   await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW + 4 * 3_600_000 });
   const history = await readJson(directory, "history");
@@ -94,6 +102,20 @@ test("reuses the last good value of a failed source and fails without one", asyn
     /资金费率获取失败且没有可沿用的旧值/
   );
   await assert.rejects(readFile(join(empty, "latest.json")), { code: "ENOENT" });
+});
+
+test("shows reference indicators without scoring them and survives their outage", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "btc-radar-reference-"));
+  const unavailable = { "api.alternative.me/fng": "FAIL", "bar=1Dutc": "FAIL" };
+  const missing = await runBtcRadar({ directory, environment: {}, fetchImpl: responses(unavailable), nowMs: NOW });
+  assert.deepEqual(missing.snapshot.indicators, { rsi14: null, fearGreed: null });
+  assert.deepEqual(missing.snapshot.data_status.staleSources, []);
+  const available = await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW + 60_000 });
+  assert.equal(available.snapshot.score, missing.snapshot.score);
+  assert.deepEqual(available.snapshot.factors, missing.snapshot.factors);
+  const stale = await runBtcRadar({ directory, environment: {}, fetchImpl: responses(unavailable), nowMs: NOW + 120_000 });
+  assert.equal(stale.snapshot.indicators.fearGreed.value, 72);
+  assert.deepEqual(stale.snapshot.data_status.staleSources.map(({ key }) => key).sort(), ["fearGreed", "rsi"]);
 });
 
 test("tracks the contract DCA bot with read-only credentials and alerts when it ends", async () => {

@@ -87,3 +87,20 @@ test("explains missing position access, empty storage, and an expired login", as
   const expired = await render({}, 401);
   assert.match(expired.get("stamp").innerHTML, /<a href="\/login">重新登录<\/a>/);
 });
+
+test("shows RSI and Fear & Greed as unscored reference rows inside their factor cards", async () => {
+  const factors = [
+    { key: "tech", name: "BTC 技术面", weight: 15, score: 35, metrics: [["7日涨跌", "-0.6%"]], note: "站上 20 日均线" },
+    { key: "deriv", name: "衍生品与情绪", weight: 10, score: 48, metrics: [["资金费率均值", "0.0048%"]], note: "杠杆水平正常" }
+  ];
+  const { get } = await render({
+    status: "AVAILABLE", history: [],
+    latest: { ...latest, factors, indicators: { rsi14: { closed: 64.8, intraday: 69.3, date: "2026-10-01" }, fearGreed: { value: 72, label: "贪婪<x>", date: "2026-10-02" } } }
+  });
+  const html = get("factors").innerHTML;
+  assert.match(html, /<dt class="ref-first">RSI\(14\) 日线收盘<span class="ref">参考<\/span><\/dt><dd class="ref-first">64\.8<\/dd>/);
+  assert.match(html, /RSI\(14\) 含当日盘中<span class="ref">参考<\/span><\/dt><dd class="">69\.3<\/dd>/);
+  assert.match(html, /恐惧贪婪指数<span class="ref">参考<\/span><\/dt><dd class="ref-first">72 贪婪&lt;x&gt;<\/dd>/);
+  const without = await render({ status: "AVAILABLE", history: [], latest: { ...latest, factors } });
+  assert.doesNotMatch(without.get("factors").innerHTML, /参考/);
+});

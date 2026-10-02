@@ -5,8 +5,10 @@ import { BTC_RADAR_LEVELS, evaluateBtcRadar, pyFixed } from "./btc-radar-model.m
 import {
   BTC_RADAR_SOURCES,
   createOkxReadOnlyClient,
+  loadBtcDailyRsi,
   loadBtcMarket,
   loadDcaPosition,
+  loadFearGreed,
   loadFedExpectations,
   loadFundingRates,
   loadGoldCloses,
@@ -32,6 +34,12 @@ const PUBLIC_SOURCES = [
   ["treasury", "美债收益率", loadTreasuryYields]
 ];
 
+// Displayed beside the factors but never scored.
+const REFERENCE_SOURCES = [
+  ["rsi", "BTC 日线 RSI", loadBtcDailyRsi],
+  ["fearGreed", "恐惧贪婪指数", loadFearGreed]
+];
+
 async function readJson(path, fallback) {
   try {
     return JSON.parse(await readFile(path, "utf8"));
@@ -51,12 +59,14 @@ export function beijingTimestamp(nowMs) {
 }
 
 // A failed source reuses its last successful value and is reported as stale,
-// matching the routine's rule; a source that never succeeded fails the run.
-async function collectSource([key, label, load], previousInputs, context, stale, inputs) {
+// matching the routine's rule; a required source that never succeeded fails
+// the run, while an optional one is simply left out.
+async function collectSource([key, label, load], previousInputs, context, stale, inputs, { optional = false } = {}) {
   try {
     inputs[key] = { value: await load(context), fetchedAt: new Date(context.nowMs).toISOString() };
   } catch (error) {
     const previous = previousInputs[key];
+    if (!previous && optional) return;
     if (!previous) throw new Error(`${label}获取失败且没有可沿用的旧值：${error.message}`);
     inputs[key] = previous;
     stale.push({ key, label, since: previous.fetchedAt, error: error.message });
@@ -134,7 +144,10 @@ export async function runBtcRadar({
   const context = { fetchImpl, nowMs };
   const inputs = {};
   const stale = [];
-  await Promise.all(PUBLIC_SOURCES.map((source) => collectSource(source, previousInputs, context, stale, inputs)));
+  await Promise.all([
+    ...PUBLIC_SOURCES.map((source) => collectSource(source, previousInputs, context, stale, inputs)),
+    ...REFERENCE_SOURCES.map((source) => collectSource(source, previousInputs, context, stale, inputs, { optional: true }))
+  ]);
 
   const credentials = okxCredentials(environment);
   let events = [];
@@ -168,6 +181,10 @@ export async function runBtcRadar({
     position: inputs.position?.value ?? null,
     sources: BTC_RADAR_SOURCES
   });
+  snapshot.indicators = {
+    rsi14: inputs.rsi?.value ?? null,
+    fearGreed: inputs.fearGreed?.value ?? null
+  };
   snapshot.data_status = {
     okxConfigured: Boolean(credentials),
     algoId,

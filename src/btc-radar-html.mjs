@@ -77,6 +77,8 @@ h2{font-size:13px;font-weight:700;margin:0;color:var(--muted);letter-spacing:.08
 .meter i{display:block;height:100%;border-radius:3px}
 .kv{display:grid;grid-template-columns:1fr auto;gap:2px 12px;font-size:13px;margin:0}
 .kv dt{color:var(--muted)} .kv dd{margin:0;font-family:var(--f-num);text-align:right}
+.kv .ref-first{border-top:1px dashed var(--line);padding-top:6px;margin-top:4px}
+.ref{margin-left:6px;padding:0 5px;border:1px solid var(--line);border-radius:4px;font-size:10px;color:var(--muted);font-family:var(--f-body)}
 .note{font-size:13px;margin:0}
 .hist svg{width:100%;height:auto;display:block}
 .hist text{fill:var(--muted);font-family:var(--f-num);font-size:11px}
@@ -130,6 +132,7 @@ h2{font-size:13px;font-weight:700;margin:0;color:var(--muted);letter-spacing:.08
       <span class="pill lv-orange">55–69 警戒</span><span class="pill lv-red">70–100 高风险</span>
     </div>
     <p>分数越高，BTC 下跌的压力越大。六个因子各自打 0–100 分，按权重加总：预测市场 25%、美联储利率预期 20%、美债收益率 20%、BTC 技术面 15%、黄金 10%、衍生品与情绪 10%。</p>
+    <p>「参考」标记的指标只展示、不计入评分：RSI(14) 按 OKX BTC-USDT 的 UTC 日线以 Wilder 方法计算，分别给出已收盘和含当日盘中的读数；恐惧贪婪指数来自 alternative.me。</p>
     <p>持仓警报单独计算：现价离止损不到 5% 为橙色，不到 3% 为红色。服务器每 4 小时自动评估一次（北京时间每 4 小时的第 43 分），综合等级升高、持仓接近止损、自动补仓增加或策略状态变化时推送飞书。</p>
     <p id="sources">数据来源：Polymarket、美国财政部、OKX。</p>
     <p>评分是对公开数据的机械汇总，用来提醒你该去看盘了，不预测价格，也不构成投资建议。</p>
@@ -185,11 +188,18 @@ function renderPosition(p, price, status){
   $("posstats").innerHTML=st.map(([k,v,c])=>\`<div class="stat"><div class="k">\${k}</div><div class="v \${c}">\${esc(v)}</div></div>\`).join("");
 }
 
-function renderFactors(F){
-  $("factors").innerHTML=F.map(f=>{const score=num(f.score), lv=lvOf(score);return \`<article class="panel fac lv-\${lv}-b">
+function referenceRows(key, indicators){
+  const rsi=indicators&&indicators.rsi14, fearGreed=indicators&&indicators.fearGreed;
+  if(key==="tech"&&rsi) return [["RSI(14) 日线收盘",fmt(rsi.closed,1)],["RSI(14) 含当日盘中",fmt(rsi.intraday,1)]];
+  if(key==="deriv"&&fearGreed) return [["恐惧贪婪指数",fmt(fearGreed.value)+" "+fearGreed.label]];
+  return [];
+}
+
+function renderFactors(F, indicators){
+  $("factors").innerHTML=F.map(f=>{const score=num(f.score), lv=lvOf(score), refs=referenceRows(f.key, indicators);return \`<article class="panel fac lv-\${lv}-b">
     <div class="fac-head"><div><h3>\${esc(f.name)}</h3><span class="w">权重 \${fmt(f.weight)}%</span></div><span class="score" style="color:\${LV[lv]}">\${fmt(score)}</span></div>
     <div class="meter"><i style="width:\${Math.max(0,Math.min(100,score||0))}%;background:\${LV[lv]}"></i></div>
-    <dl class="kv">\${(f.metrics||[]).map(([k,v])=>\`<dt>\${esc(k)}</dt><dd>\${esc(v)}</dd>\`).join("")}</dl>
+    <dl class="kv">\${(f.metrics||[]).map(([k,v])=>\`<dt>\${esc(k)}</dt><dd>\${esc(v)}</dd>\`).join("")}\${refs.map(([k,v],i)=>\`<dt class="\${i?"":"ref-first"}">\${esc(k)}<span class="ref">参考</span></dt><dd class="\${i?"":"ref-first"}">\${esc(v)}</dd>\`).join("")}</dl>
     <p class="note">\${esc(f.note)}</p></article>\`}).join("");
 }
 
@@ -201,7 +211,7 @@ function renderLatest(d){
   const stale=(d.data_status&&d.data_status.staleSources)||[];
   $("stamp").innerHTML=\`最近评估 <b class="num">\${esc(t.toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false}))}</b>\`+(age>5?\` · <span class="stale">已超过 \${Math.floor(age)} 小时未更新</span>\`:" · 每 4 小时更新")
     +(stale.length?\` · <span class="stale">沿用旧数据：\${stale.map(s=>esc(s.label)).join("、")}</span>\`:"");
-  renderPosition(d.position,d.price,d.data_status); renderFactors(d.factors||[]);
+  renderPosition(d.position,d.price,d.data_status); renderFactors(d.factors||[], d.indicators||{});
   const sources=(d.sources||[]).map(([n,u])=>[n,httpsUrl(u)]).filter(([,u])=>u);
   if(sources.length) $("sources").innerHTML="数据来源："+sources.map(([n,u])=>\`<a href="\${esc(u)}" target="_blank" rel="noopener noreferrer">\${esc(n)}</a>\`).join("、")+"。";
 }
