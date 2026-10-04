@@ -2,7 +2,30 @@
 # Caddy obtains and renews the TLS certificate automatically.
 stocks.example.com {
 	encode zstd gzip
-	reverse_proxy 127.0.0.1:4173
+	# >>> gmgn module >>>
+	# Optional GMGN dashboard (127.0.0.1:8765, user gmgn) at /gmgn/, behind the same Dashboard login:
+	# forward_auth asks the authenticated Dashboard /health and redirects to /login when signed out.
+	# Managed by deploy/gmgn/expose-gmgn-caddy.sh; drop this block if the GMGN module is not deployed.
+	redir /gmgn /gmgn/ 308
+	handle_path /gmgn/* {
+		@cross_site_write {
+			method POST PUT PATCH DELETE
+			not header_regexp Origin ^https://stocks\.example\.com$
+		}
+		respond @cross_site_write "forbidden" 403
+		forward_auth 127.0.0.1:4173 {
+			uri /health
+			@unauthorized status 401 403
+			handle_response @unauthorized {
+				redir * /login 303
+			}
+		}
+		reverse_proxy 127.0.0.1:8765
+	}
+	handle {
+		reverse_proxy 127.0.0.1:4173
+	}
+	# <<< gmgn module <<<
 
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"

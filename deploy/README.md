@@ -207,6 +207,40 @@ sudoedit /etc/binance-agentic-btc-radar.env
 Use the keys from `deploy/binance-agentic-btc-radar.env.example`. The next run
 picks them up; no service restart is needed.
 
+## GMGN module
+
+The GMGN monitor dashboard shares this server but stays separate from the bot:
+
+| Item | GMGN module |
+|---|---|
+| Code | separate `gmgn` repository, synced to `/home/gmgn/app` |
+| Linux user | `gmgn` (no sudo) |
+| GMGN keys | `/home/gmgn/.config/gmgn/` (dir 700, files 600; signing key generated on the server) |
+| systemd | `gmgn.slice` (MemoryMax 300M, CPUQuota 50%) and `gmgn-dashboard.service` |
+| Listener | `127.0.0.1:8765` only |
+| Public URL | `https://<dashboard-domain>/gmgn/`, same login as this Dashboard |
+
+Deploy or update it from the local gmgn checkout (default `~/projects/gmgn`,
+override with `GMGN_ROOT`). The script refuses to finish if the GMGN automation
+gate is open and never touches `binance-agentic-*` units:
+
+```bash
+bash deploy/gmgn/deploy-gmgn-vps.sh
+```
+
+Route `/gmgn/` through Caddy once. Caddy forward-auths every `/gmgn/*` request
+against the authenticated Dashboard `GET /health`, redirects signed-out
+browsers to `/login`, and rejects cross-site writes. The Dashboard route is
+wrapped into `handle {}`; the edit is validated and rolled back on failure:
+
+```bash
+bash deploy/gmgn/expose-gmgn-caddy.sh
+```
+
+`Caddyfile.example` already contains the same block between the
+`gmgn module` markers; remove it when the GMGN module is not deployed.
+Manage it with `systemctl status gmgn-dashboard` and `journalctl -t gmgn -f`.
+
 ## Explicit live cutover
 
 Never run the local Mac and server with `BOT_LIVE=1` at the same time. Before
