@@ -136,6 +136,7 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.match(html, />策略<\/a>/);
   assert.match(html, /href="\/reviews"/);
   assert.match(html, />复盘<\/a>/);
+  assert.match(html, /<a class="nav-link" href="\/gmgn\/">GMGN<\/a>/);
   assert.doesNotMatch(html, /id="strategyComparison"/);
   assert.doesNotMatch(html, /function renderStrategies\(data\)/);
 });

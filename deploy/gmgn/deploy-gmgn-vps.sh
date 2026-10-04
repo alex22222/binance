@@ -94,7 +94,7 @@ LockPersonality=true
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl daemon-reload && systemctl enable --now gmgn-dashboard && sleep 3 && systemctl --no-pager --lines=5 status gmgn-dashboard
+systemctl daemon-reload && systemctl enable gmgn-dashboard && systemctl restart gmgn-dashboard && sleep 3 && systemctl --no-pager --lines=5 status gmgn-dashboard
 echo "--- Binance units untouched:"; systemctl is-active binance-agentic-stock-bot binance-agentic-dashboard'
 
 echo
