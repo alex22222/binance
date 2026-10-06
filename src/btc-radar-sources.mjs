@@ -317,25 +317,40 @@ export async function loadSentiment(privateGet) {
 
 const round = (value, places) => Number(value.toFixed(places));
 
-export function dcaPosition(bot, details) {
+// OKX's fillSafetyOrds also counts manual add orders, so automatic safety fills
+// and the remaining ladder come from the cycle's orders when they are available.
+export function dcaPosition(bot, details, orders = null) {
   const stop = (bot.triggerParams || []).find((trigger) => trigger.triggerAction === "stop");
-  const filled = finite(details.fillSafetyOrds, "Filled safety orders");
+  const manual = Number(details.fillManualOrds) > 0 ? Number(details.fillManualOrds) : 0;
   const maximum = finite(bot.maxSafetyOrds, "Maximum safety orders");
+  const contractValue = Number(bot.ctVal) > 0 ? Number(bot.ctVal) : 0.01;
+  const listed = Array.isArray(orders) ? orders.filter((order) => order.ordType === "safety_order") : [];
+  const safety = listed.length ? listed : null;
+  const pending = (safety || [])
+    .filter((order) => order.state === "live")
+    .map((order) => [finite(order.px, "Safety order price"), finite(order.sz, "Safety order size")])
+    .sort((left, right) => right[0] - left[0]);
+  const filled = safety
+    ? safety.filter((order) => order.state === "filled").length
+    : Math.max(0, finite(details.fillSafetyOrds, "Filled safety orders") - manual);
   const step = finite(bot.pxSteps, "Price step");
   const multiplier = Number(bot.pxStepsMult) > 0 ? Number(bot.pxStepsMult) : 1;
   let deviation = 0;
   for (let order = 0; order <= filled; order += 1) deviation += step * multiplier ** order;
+  const formulaNext = filled >= maximum ? null : round(finite(details.initPx, "Initial price") * (1 - deviation), 1);
   return {
     avg: round(finite(details.avgPx, "Average price"), 2),
     tp: finite(details.tpPx, "Take-profit price"),
     sl: Number(stop?.triggerPx) > 0 ? Number(stop.triggerPx) : 0,
     liq: round(finite(details.liqPx, "Liquidation price"), 1),
-    sz_btc: round(finite(details.sz, "Contracts") * (Number(bot.ctVal) > 0 ? Number(bot.ctVal) : 0.01), 4),
+    sz_btc: round(finite(details.sz, "Contracts") * contractValue, 4),
     lever: finite(bot.lever, "Leverage"),
     total_pnl: round(finite(bot.totalPnl, "Total PnL"), 2),
     safety_filled: filled,
     safety_max: maximum,
-    next_safety: filled >= maximum ? null : round(finite(details.initPx, "Initial price") * (1 - deviation), 1)
+    next_safety: safety ? (pending[0]?.[0] ?? null) : formulaNext,
+    manual_adds: manual,
+    ladder: { pending, ctVal: contractValue, complete: Boolean(safety) }
   };
 }
 
@@ -358,5 +373,13 @@ export async function loadDcaPosition(privateGet, { pinnedAlgoId = null, tracked
   if (!bot) return { position: null, algoId: null, events };
   const [details] = await privateGet(`${DCA_BASE}/position-details`, { algoId: bot.algoId, algoOrdType: "contract_dca" });
   if (!details) throw new Error(`DCA position details missing for ${bot.algoId}`);
-  return { position: dcaPosition(bot, details), algoId: bot.algoId, events };
+  let orders = null;
+  try {
+    orders = await privateGet(`${DCA_BASE}/orders`, {
+      algoId: bot.algoId, algoOrdType: "contract_dca", cycleId: details.curCycleId, limit: "100"
+    });
+  } catch {
+    // Without the cycle's orders the counts fall back to OKX's summary fields.
+  }
+  return { position: dcaPosition(bot, details, orders), algoId: bot.algoId, events };
 }

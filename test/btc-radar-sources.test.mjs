@@ -130,11 +130,34 @@ const details = { avgPx: "81250.4567891", fillSafetyOrds: "6", initPx: "82000", 
 test("maps a contract DCA bot to the radar position", () => {
   assert.deepEqual(dcaPosition(bot(), details), {
     avg: 81250.46, tp: 84500, sl: 77000, liq: 73100, sz_btc: 0.105, lever: 20,
-    total_pnl: -12.35, safety_filled: 6, safety_max: 10, next_safety: 79704
+    total_pnl: -12.35, safety_filled: 6, safety_max: 10, next_safety: 79704,
+    manual_adds: 0, ladder: { pending: [], ctVal: 0.01, complete: false }
   });
   assert.equal(dcaPosition(bot({ triggerParams: [] }), details).sl, 0);
   assert.equal(dcaPosition(bot({ maxSafetyOrds: "6" }), details).next_safety, null);
   assert.equal(dcaPosition(bot({ pxStepsMult: "2" }), { ...details, fillSafetyOrds: "1" }).next_safety, 81016);
+});
+
+test("counts automatic safety fills apart from manual adds and keeps the live ladder", () => {
+  const order = (ordType, state, px, sz) => ({ ordType, state, px, sz });
+  const orders = [
+    order("tp_order", "live", "84500", "10.5"),
+    order("manual_add_order", "filled", "81900", "3"),
+    order("safety_order", "live", "78700", "1.5"),
+    order("safety_order", "live", "79500", "1.2"),
+    order("safety_order", "filled", "80300", "1"),
+    order("safety_order", "filled", "81100", "0.8"),
+    order("init_order", "filled", "", "1")
+  ];
+  const mapped = dcaPosition(bot(), { ...details, fillSafetyOrds: "3", fillManualOrds: "1" }, orders);
+  assert.equal(mapped.safety_filled, 2);
+  assert.equal(mapped.manual_adds, 1);
+  assert.equal(mapped.next_safety, 79500);
+  assert.deepEqual(mapped.ladder, { pending: [[79500, 1.2], [78700, 1.5]], ctVal: 0.01, complete: true });
+  const summaryOnly = dcaPosition(bot(), { ...details, fillSafetyOrds: "3", fillManualOrds: "1" }, [order("tp_order", "live", "84500", "10.5")]);
+  assert.equal(summaryOnly.safety_filled, 2);
+  assert.equal(summaryOnly.ladder.complete, false);
+  assert.equal(summaryOnly.next_safety, Number((82000 * (1 - 0.004 * 3)).toFixed(1)));
 });
 
 test("follows the newest running BTC long bot and reports a stopped one", async () => {
@@ -150,7 +173,8 @@ test("follows the newest running BTC long bot and reports a stopped one", async 
       ];
     }
     if (path.endsWith("history-list")) return [{ algoId: "gone", state: "stopped" }];
-    return [details];
+    if (path.endsWith("/orders")) return [{ ordType: "safety_order", state: "live", px: "81000", sz: "1" }];
+    return [{ ...details, curCycleId: "7" }];
   };
   const followed = await loadDcaPosition(privateGet, { trackedAlgoId: "gone" });
   assert.equal(followed.algoId, "new");
@@ -158,7 +182,16 @@ test("follows the newest running BTC long bot and reports a stopped one", async 
     { type: "STRATEGY_ENDED", algoId: "gone", state: "stopped" },
     { type: "STRATEGY_SWITCHED", algoId: "new", previousAlgoId: "gone" }
   ]);
-  assert.deepEqual(requests.at(-1), ["/api/v5/tradingBot/dca/position-details", { algoId: "new", algoOrdType: "contract_dca" }]);
+  assert.deepEqual(requests.slice(-2), [
+    ["/api/v5/tradingBot/dca/position-details", { algoId: "new", algoOrdType: "contract_dca" }],
+    ["/api/v5/tradingBot/dca/orders", { algoId: "new", algoOrdType: "contract_dca", cycleId: "7", limit: "100" }]
+  ]);
+  assert.deepEqual(followed.position.ladder.pending, [[81000, 1]]);
+  const withoutOrders = await loadDcaPosition(async (path, params) => {
+    if (path.endsWith("/orders")) throw new Error("OKX /orders failed: 50001");
+    return privateGet(path, params);
+  }, {});
+  assert.equal(withoutOrders.position.ladder.complete, false);
   assert.equal((await loadDcaPosition(privateGet, { pinnedAlgoId: "old", trackedAlgoId: "old" })).algoId, "old");
   const none = await loadDcaPosition(async () => [], {});
   assert.deepEqual(none, { position: null, algoId: null, events: [] });

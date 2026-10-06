@@ -124,7 +124,7 @@ test("dashboard records one exact approval without writing the bot state", async
     assert.match(radarHtml, /href="\/btc-radar" aria-current="page"/);
     const nextRadarPolicy = (await fetch(`${origin}/btc-radar`)).headers.get("content-security-policy");
     assert.notEqual(nextRadarPolicy, radarPolicy);
-    assert.deepEqual(await fetch(`${origin}/api/btc-radar`).then((response) => response.json()), { status: "MISSING", latest: null, history: [] });
+    assert.deepEqual(await fetch(`${origin}/api/btc-radar`).then((response) => response.json()), { status: "MISSING", latest: null, history: [], settings: {} });
     await mkdir(join(directory, "btc-radar"), { recursive: true });
     await writeFile(join(directory, "btc-radar", "latest.json"), JSON.stringify({ ts: "2026-10-01T21:43:00+08:00", score: 63.5, level: "orange" }));
     await writeFile(join(directory, "btc-radar", "history.json"), JSON.stringify([{ ts: "2026-10-01T21:43:00+08:00", price: 83555.9, score: 63.5 }]));
@@ -134,6 +134,15 @@ test("dashboard records one exact approval without writing the bot state", async
     assert.equal(radar.status, "AVAILABLE");
     assert.equal(radar.latest.score, 63.5);
     assert.equal(radar.history.length, 1);
+    const saveCapital = (capitalUsdt, requestOrigin = origin) => fetch(`${origin}/api/btc-radar/settings`, {
+      method: "POST", headers: { "Content-Type": "application/json", Origin: requestOrigin }, body: JSON.stringify({ capitalUsdt })
+    });
+    const saved = await saveCapital(5000);
+    assert.equal(saved.status, 200);
+    assert.equal((await saved.json()).settings.capitalUsdt, 5000);
+    assert.equal((await saveCapital(-1)).status, 400);
+    assert.equal((await saveCapital(1, "https://evil.example")).status, 403);
+    assert.equal((await fetch(`${origin}/api/btc-radar`).then((response) => response.json())).settings.capitalUsdt, 5000);
 
     const reviews = await fetch(`${origin}/api/trade-reviews`).then((response) => response.json());
     assert.equal(reviews.available, false);
@@ -359,6 +368,7 @@ test("dashboard protects public access with basic auth and an exact HTTPS origin
     assert.equal(radarEntry.status, 303);
     assert.equal(radarEntry.headers.get("location"), "/login");
     assert.equal((await fetch(`${origin}/api/btc-radar`)).status, 401);
+    assert.equal((await fetch(`${origin}/api/btc-radar/settings`, { method: "POST", body: "{}" })).status, 401);
 
     const weeklyEntry = await fetch(`${origin}/weekly-strategy`, { redirect: "manual" });
     assert.equal(weeklyEntry.status, 303);

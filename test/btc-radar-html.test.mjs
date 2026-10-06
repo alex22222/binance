@@ -11,7 +11,7 @@ class Element {
   get textContent() { return this.text; }
 }
 
-async function render(payload, status = 200) {
+async function render(payload, status = 200, post = null) {
   const html = btcRadarHtml({ nonce: "test-nonce" });
   const script = html.match(/<script nonce="test-nonce">([\s\S]*)<\/script>/)[1];
   const elements = new Map();
@@ -24,11 +24,13 @@ async function render(payload, status = 200) {
     AbortSignal,
     URL,
     setInterval: () => 0,
-    fetch: async () => ({ status, ok: status === 200, text: async () => JSON.stringify(payload) })
+    fetch: async (url, options = {}) => options.method === "POST"
+      ? post(url, options)
+      : { status, ok: status === 200, text: async () => JSON.stringify(payload) }
   });
   runInContext(script, context);
   for (let tick = 0; tick < 5; tick += 1) await new Promise((resolvePromise) => setImmediate(resolvePromise));
-  return { html, get };
+  return { html, get, run: (code) => runInContext(code, context) };
 }
 
 const latest = {
@@ -103,4 +105,52 @@ test("shows RSI and Fear & Greed as unscored reference rows inside their factor 
   assert.match(html, /恐惧贪婪指数<span class="ref">参考<\/span><\/dt><dd class="ref-first">72 贪婪&lt;x&gt;<\/dd>/);
   const without = await render({ status: "AVAILABLE", history: [], latest: { ...latest, factors } });
   assert.doesNotMatch(without.get("factors").innerHTML, /参考/);
+});
+
+const ladderPosition = {
+  ...latest.position, level: "green", level_name: "安全距离", avg: 100, sz_btc: 1, sl: 95, tp: 104, liq: 90, lever: 10,
+  next_safety: 98, safety_filled: 4, safety_max: 10, manual_adds: 2, ladder: { ctVal: 0.01, complete: true, pending: [[98, 50], [96, 50]] }
+};
+const ladderPayload = {
+  status: "AVAILABLE", history: [], settings: { capitalUsdt: 100 },
+  latest: { ...latest, price: 102, position: ladderPosition, ladders: { week: { dips: { 95: 0.1, 99: 0.3 }, reaches: { 104: 0.4, 108: 0.1 } } } }
+};
+
+test("previews the worst case at a dragged stop and resets to the bot's real settings", async () => {
+  const view = await render(ladderPayload);
+  const body = view.get("riskBody").innerHTML;
+  assert.match(body, /-7\.1 USDT/);
+  assert.match(body, /约占总资金 7\.1%/);
+  assert.match(body, /会先成交 2 笔补仓，仓位 2\.0000 BTC，均价 99/);
+  assert.match(body, /止损 10% · 止盈 40%/);
+  assert.doesNotMatch(body, /预览中/);
+  assert.match(view.get("posstats").innerHTML, /4 \/ 10 · 手动 2/);
+  view.run('setPreview("sl", 97, radar.position, radar.price, null)');
+  const moved = view.get("riskBody").innerHTML;
+  assert.match(moved, /会先成交 1 笔补仓，仓位 1\.5000 BTC/);
+  assert.match(moved, /预览中 · 不会修改 OKX/);
+  view.run('setPreview("tp", 500, radar.position, radar.price, null)');
+  assert.ok(view.run("preview.tp") < 500);
+  view.run("resetPreview()");
+  assert.equal(view.run("Object.keys(preview).length"), 0);
+  assert.doesNotMatch(view.get("riskBody").innerHTML, /预览中/);
+});
+
+test("saves the total capital through the authenticated settings endpoint", async () => {
+  const requests = [];
+  const view = await render({ ...ladderPayload, settings: {} }, 200, async (url, options) => {
+    requests.push({ url, options });
+    return { ok: true, status: 200, json: async () => ({ success: true, settings: { capitalUsdt: 5000 } }) };
+  });
+  assert.match(view.get("riskBody").innerHTML, /填写总资金后显示占比/);
+  view.get("capitalInput").value = "5,000";
+  await view.run("saveCapital()");
+  assert.equal(requests[0].url, "/api/btc-radar/settings");
+  assert.deepEqual(JSON.parse(requests[0].options.body), { capitalUsdt: 5000 });
+  assert.equal(view.get("capitalStatus").textContent, "已保存");
+  assert.match(view.get("riskBody").innerHTML, /约占总资金 0\.1%/);
+  view.get("capitalInput").value = "-3";
+  await view.run("saveCapital()");
+  assert.equal(view.get("capitalStatus").textContent, "请输入大于 0 的数字");
+  assert.equal(requests.length, 1);
 });

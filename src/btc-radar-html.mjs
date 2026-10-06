@@ -1,5 +1,9 @@
+import { dcaScenario, ladderProbability } from "./btc-radar-risk.mjs";
+
 // BTC risk radar page, migrated from the claude.ai artifact. Data comes from
 // /api/btc-radar, written every four hours by scripts/run-btc-radar.mjs.
+// Dragging the stop or take-profit only previews scenarios on this page; the
+// server holds a read-only OKX key and nothing here changes the OKX bot.
 export function btcRadarHtml({ nonce }) {
   return `<!doctype html>
 <html lang="zh-CN">
@@ -42,7 +46,7 @@ h2{font-size:13px;font-weight:700;margin:0;color:var(--muted);letter-spacing:.08
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px}
 .hero{display:grid;grid-template-columns:minmax(0,300px) minmax(0,1fr);gap:16px}
 @media (max-width:760px){.hero{grid-template-columns:minmax(0,1fr)}}
-.gauge{display:grid;justify-items:center;gap:6px;text-align:center}
+.gauge{display:grid;justify-items:center;align-content:start;gap:6px;text-align:center}
 .gauge svg{width:100%;max-width:280px;height:auto}
 .pill{display:inline-flex;align-items:center;gap:6px;padding:3px 12px;border-radius:999px;font-weight:700;font-size:13px}
 .lv-green{color:var(--ok);background:var(--ok-bg)} .lv-yellow{color:var(--warn);background:var(--warn-bg)}
@@ -86,6 +90,26 @@ h2{font-size:13px;font-weight:700;margin:0;color:var(--muted);letter-spacing:.08
 .method{display:grid;gap:8px;font-size:13px;color:var(--muted)}
 .method p{margin:0;max-width:75ch}
 .legend{display:flex;flex-wrap:wrap;gap:8px}
+.mk.drag{cursor:ew-resize;touch-action:none;z-index:2}
+.mk.drag .t{color:var(--ink);font-weight:700}
+.mk.drag .tick{width:4px;height:22px;border-radius:2px;background:var(--ink)}
+.mk.drag:focus{outline:none}
+.mk.drag:focus-visible .tick{box-shadow:0 0 0 3px var(--panel),0 0 0 5px var(--ink)}
+.mk.drag.moved .v{color:var(--warn);font-weight:700}
+.ruler .rung{position:absolute;top:40px;width:1px;height:8px;margin-left:-.5px;background:var(--muted);opacity:.55}
+.risk{display:grid;gap:10px;border-top:1px solid var(--line);padding-top:12px}
+.risk-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.risk-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+.risk-item{border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:grid;gap:2px}
+.risk-item .k{font-size:12px;color:var(--muted)}
+.risk-item .v{font-family:var(--f-num);font-size:17px;font-weight:600}
+.risk-item .s{font-size:12px;color:var(--muted)}
+.preview-tag{color:var(--warn);font-size:12px;font-weight:700}
+.capital{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+.capital input{width:130px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font-family:var(--f-num)}
+.btn{padding:6px 12px;border:1px solid var(--line);border-radius:6px;background:var(--track);color:var(--ink);cursor:pointer;font:inherit;font-size:13px}
+.btn:focus-visible,.capital input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.foot{font-size:12px;color:var(--muted);margin:0}
 </style>
 </head>
 <body>
@@ -113,8 +137,9 @@ h2{font-size:13px;font-weight:700;margin:0;color:var(--muted);letter-spacing:.08
         <span class="pill" id="pospill">—</span>
       </div>
       <div class="ruler" id="ruler"></div>
-      <div class="stamp">青色竖线是现价，红橙色段是止损以下的危险区。</div>
+      <div class="stamp">青色竖线是现价，红橙色段是止损以下的危险区。拖动「止损」「止盈」可以预览调整后的结果，不会修改 OKX。</div>
       <div class="stats" id="posstats"></div>
+      <div class="risk" id="risk" hidden></div>
     </div>
   </section>
 
@@ -149,6 +174,9 @@ const fmt = (n,d=0) => Number.isFinite(num(n)) ? num(n).toLocaleString("en-US",{
 const pct = n => Number.isFinite(num(n)) ? (num(n)>0?"+":"")+num(n).toFixed(2)+"%" : "—";
 const esc = s => String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const httpsUrl = u => { try { const url = new URL(String(u)); return url.protocol === "https:" ? url.href : null; } catch { return null; } };
+${ladderProbability.toString()}
+${dcaScenario.toString()}
+let radar = null, settings = {}, preview = {}, dragging = null, scale = null;
 
 function gauge(score){
   const cx=120, cy=120, r=96;
@@ -163,29 +191,152 @@ function gauge(score){
   $("gauge").innerHTML=s;
 }
 
+const effective = (kind, p) => preview[kind] != null ? preview[kind] : num(kind === "sl" ? p.sl : p.tp);
+const shift = q => q > 88 ? "translateX(-90%)" : q < 12 ? "translateX(-10%)" : "translateX(-50%)";
+
+function rulerScale(p, price){
+  const rungs = ((p.ladder && p.ladder.pending) || []).map(([px]) => px);
+  const values = [p.liq, p.sl, p.next_safety, p.avg, p.tp, price, ...rungs].map(num).filter(v => Number.isFinite(v) && v > 0);
+  return { lo: Math.min(...values) * 0.98, hi: Math.max(...values) * 1.03 };
+}
+
 function renderPosition(p, price, status){
+  const risk = $("risk");
   if(!p){
-    $("pospill").textContent="未接入持仓";$("pospill").className="pill";$("ruler").innerHTML="";
+    $("pospill").textContent="未接入持仓";$("pospill").className="pill";$("ruler").innerHTML="";risk.hidden=true;
     $("posstats").innerHTML='<div class="empty">'+(status&&status.okxConfigured?"没有正在运行的 BTC-USDT 永续合约马丁格尔。":"服务器尚未配置 OKX 只读 API Key，持仓与舆情暂未接入。")+'</div>';
     return;
   }
   $("poshead").textContent="合约马丁格尔 · BTCUSDT 永续 "+(Number.isFinite(num(p.lever))?num(p.lever)+"x ":"")+"做多";
   $("pospill").textContent=p.level_name; $("pospill").className="pill lv-"+lvSafe(p.level);
-  const values=[p.liq,p.sl,p.next_safety,p.avg,p.tp,price].map(num).filter(v=>Number.isFinite(v)&&v>0);
-  const lo=Math.min(...values)*0.985, hi=Math.max(...values)*1.01, x=v=>((v-lo)/(hi-lo)*100);
-  const marks=[["强平",p.liq,"low"],["止损",p.sl,""],["下次补仓",p.next_safety,"low"],["均价",p.avg,""],["止盈",p.tp,"low"]];
-  let h=\`<div class="bar" style="--slp:\${(num(p.sl)>0?x(num(p.sl)):0).toFixed(1)}%"></div>\`;
-  const tf=v=>{const q=x(v);return q>88?"translateX(-90%)":q<12?"translateX(-10%)":"translateX(-50%)"};
-  marks.forEach(([t,v,c])=>{ const n=num(v); if(Number.isFinite(n)&&n>0) h+=\`<div class="mk \${c}" style="left:\${x(n).toFixed(2)}%;transform:\${tf(n)}"><span class="t">\${t}</span><span class="v">\${fmt(n)}</span><span class="tick"></span></div>\`});
-  if(Number.isFinite(num(price))) h+=\`<div class="now" style="left:\${x(num(price)).toFixed(2)}%" title="现价 \${fmt(price)}"></div>\`;
-  $("ruler").innerHTML=h;
+  scale = rulerScale(p, price);
+  const x = v => (v - scale.lo) / (scale.hi - scale.lo) * 100;
+  const stop = effective("sl", p), target = effective("tp", p);
+  let h = '<div class="bar" id="dangerBar" style="--slp:' + (stop > 0 ? x(stop) : 0).toFixed(1) + '%"></div>';
+  ((p.ladder && p.ladder.pending) || []).forEach(([px]) => { const n = num(px); if(n > 0) h += '<div class="rung" style="left:' + x(n).toFixed(2) + '%"></div>'; });
+  [["强平", p.liq, "low"], ["下次补仓", p.next_safety, "low"], ["均价", p.avg, ""]].forEach(([t, v, c]) => {
+    const n = num(v);
+    if(Number.isFinite(n) && n > 0) h += '<div class="mk ' + c + '" style="left:' + x(n).toFixed(2) + '%;transform:' + shift(x(n)) + '"><span class="t">' + t + '</span><span class="v">' + fmt(n) + '</span><span class="tick"></span></div>';
+  });
+  [["sl", "止损", stop, ""], ["tp", "止盈", target, "low"]].forEach(([kind, t, n, c]) => {
+    if(!(n > 0)) return;
+    h += '<div class="mk drag ' + c + (preview[kind] != null ? " moved" : "") + '" data-kind="' + kind + '" role="slider" tabindex="0" aria-label="拖动预览' + t + '价" aria-valuemin="' + Math.round(scale.lo) + '" aria-valuemax="' + Math.round(scale.hi) + '" aria-valuenow="' + Math.round(n) + '" style="left:' + x(n).toFixed(2) + '%;transform:' + shift(x(n)) + '"><span class="t">' + t + '</span><span class="v">' + fmt(n) + '</span><span class="tick"></span></div>';
+  });
+  if(Number.isFinite(num(price))) h += '<div class="now" style="left:' + x(num(price)).toFixed(2) + '%" title="现价 ' + fmt(price) + '"></div>';
+  $("ruler").innerHTML = h;
+  bindRuler(p, price);
   const pnl=num(p.total_pnl);
   const st=[["现价",fmt(price,1),""],["距止损",num(p.sl)>0?pct(p.d_sl):"未设置止损",num(p.sl)>0&&num(p.d_sl)>-5?"neg":""],["距强平",pct(p.d_liq),""],["距止盈",pct(p.d_tp),""],
     ["策略总收益",Number.isFinite(pnl)?(pnl>0?"+":"")+fmt(pnl,2)+" USDT":"—",pnl<0?"neg":"pos-c"],
-    ["自动补仓",\`\${fmt(p.safety_filled)} / \${fmt(p.safety_max)}\`,""],
+    ["自动补仓",fmt(p.safety_filled)+" / "+fmt(p.safety_max)+(num(p.manual_adds)>0?" · 手动 "+fmt(p.manual_adds):""),""],
     ["本周触及止损概率",p.p_sl_week!=null&&Number.isFinite(num(p.p_sl_week))?Math.round(num(p.p_sl_week)*100)+"%":"—",""],
     ["本周触及止盈概率",p.p_tp_week!=null&&Number.isFinite(num(p.p_tp_week))?Math.round(num(p.p_tp_week)*100)+"%":"—",""]];
-  $("posstats").innerHTML=st.map(([k,v,c])=>\`<div class="stat"><div class="k">\${k}</div><div class="v \${c}">\${esc(v)}</div></div>\`).join("");
+  $("posstats").innerHTML=st.map(([k,v,c])=>'<div class="stat"><div class="k">'+k+'</div><div class="v '+c+'">'+esc(v)+'</div></div>').join("");
+  const capital = num(settings.capitalUsdt) > 0 ? num(settings.capitalUsdt) : "";
+  risk.hidden = false;
+  risk.innerHTML = '<div id="riskBody"></div>'
+    + '<div class="capital"><label for="capitalInput">总资金</label><input id="capitalInput" inputmode="decimal" autocomplete="off" placeholder="例如 5000" value="' + esc(capital) + '"> USDT <button class="btn" id="saveCapital" type="button">保存</button><span id="capitalStatus" role="status"></span></div>'
+    + '<p class="foot">' + (p.ladder && p.ladder.complete ? "" : "补仓挂单数据暂缺，最坏亏损可能偏低。") + '按 0.05% 吃单手续费、0.4% 维持保证金率估算，未计滑点。总资金只用于计算占比，保存在服务器上。</p>';
+  const save = $("saveCapital");
+  if(save && save.addEventListener) save.addEventListener("click", saveCapital);
+  renderRisk(p, price);
+}
+
+function bindRuler(p, price){
+  const ruler = $("ruler");
+  if(!ruler.querySelectorAll) return;
+  ruler.querySelectorAll(".mk.drag").forEach(handle => {
+    const kind = handle.getAttribute("data-kind");
+    const follow = e => {
+      const rect = ruler.getBoundingClientRect();
+      const fraction = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+      setPreview(kind, scale.lo + fraction * (scale.hi - scale.lo), p, price, handle);
+    };
+    handle.addEventListener("pointerdown", e => { e.preventDefault(); dragging = kind; if(handle.setPointerCapture) handle.setPointerCapture(e.pointerId); handle.focus({ preventScroll: true }); follow(e); });
+    handle.addEventListener("pointermove", e => { if(dragging === kind) follow(e); });
+    const finish = () => { if(dragging === kind) dragging = null; };
+    handle.addEventListener("pointerup", finish);
+    handle.addEventListener("pointercancel", finish);
+    handle.addEventListener("lostpointercapture", finish);
+    handle.addEventListener("keydown", e => {
+      if(e.key === "Escape"){ resetPreview(); return; }
+      const steps = { ArrowLeft: -1, ArrowDown: -1, PageDown: -10, ArrowRight: 1, ArrowUp: 1, PageUp: 10 }[e.key];
+      if(!steps) return;
+      e.preventDefault();
+      setPreview(kind, effective(kind, p) + steps * num(price) * 0.001, p, price, handle);
+    });
+  });
+}
+
+// Moves one handle in place, so an active pointer capture survives the update.
+function setPreview(kind, value, p, price, handle){
+  const low = kind === "sl" ? scale.lo : num(price) * 1.001;
+  const high = kind === "sl" ? num(price) * 0.999 : scale.hi;
+  preview[kind] = Math.round(Math.min(high, Math.max(low, value)) * 10) / 10;
+  const q = (preview[kind] - scale.lo) / (scale.hi - scale.lo) * 100;
+  if(handle){
+    handle.style.left = q.toFixed(2) + "%";
+    handle.style.transform = shift(q);
+    handle.setAttribute("aria-valuenow", String(Math.round(preview[kind])));
+    handle.classList.add("moved");
+    const label = handle.querySelector(".v");
+    if(label) label.textContent = fmt(preview[kind]);
+  }
+  const bar = $("dangerBar");
+  if(kind === "sl" && bar && bar.style && bar.style.setProperty) bar.style.setProperty("--slp", q.toFixed(1) + "%");
+  renderRisk(p, price);
+}
+
+function resetPreview(){
+  preview = {};
+  if(radar) renderPosition(radar.position, radar.price, radar.data_status);
+}
+
+function renderRisk(p, price){
+  const s = dcaScenario({ position: p, price: num(price), stop: effective("sl", p), takeProfit: effective("tp", p), capitalUsdt: num(settings.capitalUsdt) > 0 ? num(settings.capitalUsdt) : null });
+  const week = (radar && radar.ladders && radar.ladders.week) || {};
+  const touchStop = s.stop ? ladderProbability(week.dips, s.stop) : null;
+  const touchTarget = s.takeProfit ? ladderProbability(week.reaches, s.takeProfit) : null;
+  const share = v => v == null ? "填写总资金后显示占比" : "约占总资金 " + (v * 100).toFixed(1) + "%";
+  const chance = v => v == null ? "—" : Math.round(v * 100) + "%";
+  const previewing = preview.sl != null || preview.tp != null;
+  const items = [
+    ["止损触发时", s.lossAtStop == null ? "未设置止损" : "-" + fmt(s.lossAtStop, 1) + " USDT", s.lossAtStop == null ? "最坏情况是被强平" : share(s.lossShare),
+      "会先成交 " + s.fills + " 笔补仓，仓位 " + fmt(s.worstSize, 4) + " BTC，均价 " + fmt(s.worstAverage)],
+    ["止盈触发时", s.profitAtTarget == null ? "—" : (s.profitAtTarget > 0 ? "+" : "") + fmt(s.profitAtTarget, 1) + " USDT", share(s.profitShare),
+      "均价上方 " + pct(s.targetFromAverage * 100) + " · 距现价 " + pct(s.targetDistance * 100)],
+    ["补仓全部成交后的强平价", s.worstLiquidation ? "约 " + fmt(s.worstLiquidation) : "—",
+      s.stopAboveLiquidation == null ? "" : s.stopAboveLiquidation > 0 ? "止损高于强平 " + (s.stopAboveLiquidation * 100).toFixed(1) + "%" : "止损低于估算强平价，会先被强平",
+      s.stop ? "止损距现价 " + pct(s.stopDistance * 100) : ""],
+    ["打平所需止盈比例", s.breakevenWinRate == null ? "—" : (s.breakevenWinRate * 100).toFixed(1) + "%", "按一次止损对一次止盈计算", ""],
+    ["本周触及概率", "止损 " + chance(touchStop) + " · 止盈 " + chance(touchTarget), "Polymarket 本周触价盘插值", ""]
+  ];
+  $("riskBody").innerHTML = '<div class="risk-head"><h2>风险测算</h2>'
+    + (previewing ? '<span class="preview-tag">预览中 · 不会修改 OKX</span><button class="btn" id="resetPreview" type="button">恢复实际设置</button>' : "")
+    + '</div><div class="risk-grid">'
+    + items.map(([k, v, a, b]) => '<div class="risk-item"><span class="k">' + esc(k) + '</span><span class="v">' + esc(v) + '</span>' + (a ? '<span class="s">' + esc(a) + '</span>' : "") + (b ? '<span class="s">' + esc(b) + '</span>' : "") + '</div>').join("")
+    + '</div>';
+  const reset = $("resetPreview");
+  if(previewing && reset && reset.addEventListener) reset.addEventListener("click", resetPreview);
+}
+
+async function saveCapital(){
+  const status = $("capitalStatus");
+  const raw = String($("capitalInput").value || "").split(",").join("").trim();
+  const value = raw === "" ? null : Number(raw);
+  if(value !== null && !(value > 0)){ status.textContent = "请输入大于 0 的数字"; return; }
+  status.textContent = "保存中…";
+  try{
+    const response = await fetch("/api/btc-radar/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ capitalUsdt: value }), signal: AbortSignal.timeout(15000) });
+    if(response.status === 401){ status.textContent = "登录已过期，请重新登录"; return; }
+    const result = await response.json();
+    if(!response.ok) throw new Error(result.error || "保存失败");
+    settings = result.settings || {};
+    status.textContent = value === null ? "已清除" : "已保存";
+    if(radar && radar.position) renderRisk(radar.position, radar.price);
+  }catch(error){
+    status.textContent = error.message || "保存失败";
+  }
 }
 
 function referenceRows(key, indicators){
@@ -204,6 +355,7 @@ function renderFactors(F, indicators){
 }
 
 function renderLatest(d){
+  radar = d;
   gauge(d.score);
   $("lvpill").textContent=d.level_name; $("lvpill").className="pill lv-"+lvSafe(d.level);
   $("summary").textContent=d.summary; $("price").textContent=fmt(d.price,1);
@@ -238,7 +390,7 @@ function renderHist(rows){
 
 let busy = false, lastPayload = "";
 async function refresh(){
-  if(busy) return; busy = true;
+  if(busy || dragging) return; busy = true;
   try{
     const response = await fetch("/api/btc-radar", { cache: "no-store", signal: AbortSignal.timeout(15000) });
     if(response.status === 401){ $("stamp").innerHTML='登录已过期，请<a href="/login">重新登录</a>'; return; }
@@ -250,6 +402,7 @@ async function refresh(){
       $("stamp").textContent = data.status === "ERROR" ? "评估数据读取失败，稍后刷新再试" : "等待服务器第一次评估写入数据";
       return;
     }
+    settings = data.settings || {};
     renderLatest(data.latest); renderHist(data.history||[]); lastPayload = payload;
   }catch(error){
     if(!lastPayload) $("stamp").textContent="暂时读不到评估数据，稍后刷新页面再试";

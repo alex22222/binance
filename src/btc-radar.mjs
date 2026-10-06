@@ -181,6 +181,8 @@ export async function runBtcRadar({
     position: inputs.position?.value ?? null,
     sources: BTC_RADAR_SOURCES
   });
+  // The page interpolates dragged stop and take-profit levels on this ladder.
+  snapshot.ladders = { week: inputs.polyWeek.value };
   snapshot.indicators = {
     rsi14: inputs.rsi?.value ?? null,
     fearGreed: inputs.fearGreed?.value ?? null
@@ -221,13 +223,38 @@ export async function runBtcRadar({
   return { snapshot, alert };
 }
 
+// Operator settings for the page, such as total capital for the loss share.
+export async function loadBtcRadarSettings(directory) {
+  try {
+    const settings = await readJson(join(directory, "settings.json"), {});
+    return Number(settings.capitalUsdt) > 0 ? { capitalUsdt: Number(settings.capitalUsdt), updatedAt: settings.updatedAt || null } : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function saveBtcRadarSettings(directory, { capitalUsdt } = {}, nowMs = Date.now()) {
+  const numeric = typeof capitalUsdt === "number" || (typeof capitalUsdt === "string" && capitalUsdt.trim() !== "");
+  const value = capitalUsdt === null || capitalUsdt === "" ? null : numeric ? Number(capitalUsdt) : Number.NaN;
+  if (value !== null && !(Number.isFinite(value) && value > 0 && value <= 1e9)) {
+    const error = new Error("总资金必须是大于 0 的数字");
+    error.statusCode = 400;
+    throw error;
+  }
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const settings = value === null ? {} : { capitalUsdt: Number(value.toFixed(2)), updatedAt: new Date(nowMs).toISOString() };
+  await writeJson(join(directory, "settings.json"), settings);
+  return settings;
+}
+
 export async function loadBtcRadarView(directory) {
+  const settings = await loadBtcRadarSettings(directory);
   try {
     const latest = await readJson(join(directory, "latest.json"), null);
-    if (!latest) return { status: "MISSING", latest: null, history: [] };
+    if (!latest) return { status: "MISSING", latest: null, history: [], settings };
     const history = await readJson(join(directory, "history.json"), []);
-    return { status: "AVAILABLE", latest, history: history.slice(-BTC_RADAR_HISTORY_LIMIT) };
+    return { status: "AVAILABLE", latest, history: history.slice(-BTC_RADAR_HISTORY_LIMIT), settings };
   } catch {
-    return { status: "ERROR", latest: null, history: [] };
+    return { status: "ERROR", latest: null, history: [], settings };
   }
 }

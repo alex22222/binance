@@ -17,7 +17,7 @@ import { strategyLabHtml } from "../src/strategy-lab-html.mjs";
 import { loadStrategyResearch } from "../src/strategy-research.mjs";
 import { tradeReviewHtml } from "../src/trade-review-html.mjs";
 import { btcRadarHtml } from "../src/btc-radar-html.mjs";
-import { loadBtcRadarView } from "../src/btc-radar.mjs";
+import { loadBtcRadarView, saveBtcRadarSettings } from "../src/btc-radar.mjs";
 import { loadManagerPage } from "../src/fund-manager-html.mjs";
 import { weeklyReportStatus } from "../src/weekly-research-store.mjs";
 import { weeklyResearchHtml } from "../src/weekly-research-html.mjs";
@@ -265,6 +265,17 @@ const server = createServer(async (request, response) => {
         "X-Content-Type-Options": "nosniff"
       });
       response.end(JSON.stringify(await loadBtcRadarView(btcRadarDirectory)));
+      return;
+    }
+    if (request.method === "POST" && request.url === "/api/btc-radar/settings") {
+      requireAllowedOrigin(request);
+      const settings = await saveBtcRadarSettings(btcRadarDirectory, await readJsonBody(request));
+      response.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.end(JSON.stringify({ success: true, settings }));
       return;
     }
     if (request.method === "GET" && new URL(request.url, `http://${host}:${port}`).pathname === "/fund-manager") {

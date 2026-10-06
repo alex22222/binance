@@ -3,7 +3,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { btcRadarAlertReasons, btcRadarAlertText, loadBtcRadarView, runBtcRadar } from "../src/btc-radar.mjs";
+import { btcRadarAlertReasons, btcRadarAlertText, loadBtcRadarSettings, loadBtcRadarView, runBtcRadar, saveBtcRadarSettings } from "../src/btc-radar.mjs";
 
 const NOW = Date.parse("2026-10-01T13:00:00Z");
 const ladderMarket = (kind, level, yes) => ({
@@ -75,6 +75,7 @@ test("evaluates public data without OKX credentials and keeps a deduplicated his
   assert.deepEqual(first.snapshot.data_status, { okxConfigured: false, algoId: null, staleSources: [] });
   assert.deepEqual(first.snapshot.factors.find(({ key }) => key === "deriv").metrics[2], ["舆情多 / 空", "未接入"]);
   assert.deepEqual(first.alert, { status: "NONE", reasons: [] });
+  assert.deepEqual(first.snapshot.ladders.week.dips, { 76000: 0.05, 80000: 0.2 });
   assert.deepEqual(first.snapshot.indicators, {
     rsi14: { closed: 100, intraday: 100, date: "2026-10-01" },
     fearGreed: { value: 72, label: "贪婪", date: "2026-10-02" }
@@ -193,7 +194,7 @@ test("applies the routine's important-change rules", () => {
 
 test("serves saved radar data with an explicit availability status", async () => {
   const directory = await mkdtemp(join(tmpdir(), "btc-radar-view-"));
-  assert.deepEqual(await loadBtcRadarView(directory), { status: "MISSING", latest: null, history: [] });
+  assert.deepEqual(await loadBtcRadarView(directory), { status: "MISSING", latest: null, history: [], settings: {} });
   await writeFile(join(directory, "latest.json"), JSON.stringify({ ts: "2026-10-01T21:00:00+08:00", score: 60 }));
   await writeFile(join(directory, "history.json"), JSON.stringify(Array.from({ length: 200 }, (_, index) => ({ ts: String(index) }))));
   const view = await loadBtcRadarView(directory);
@@ -202,5 +203,18 @@ test("serves saved radar data with an explicit availability status", async () =>
   assert.equal(view.history.length, 180);
   assert.equal(view.history[0].ts, "20");
   await writeFile(join(directory, "latest.json"), "{");
-  assert.deepEqual(await loadBtcRadarView(directory), { status: "ERROR", latest: null, history: [] });
+  assert.deepEqual(await loadBtcRadarView(directory), { status: "ERROR", latest: null, history: [], settings: {} });
+});
+
+test("stores the total capital used for the page's loss share and rejects bad input", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "btc-radar-settings-"));
+  assert.deepEqual(await loadBtcRadarSettings(directory), {});
+  assert.deepEqual(await saveBtcRadarSettings(directory, { capitalUsdt: "5000.456" }, NOW), { capitalUsdt: 5000.46, updatedAt: new Date(NOW).toISOString() });
+  assert.equal((await loadBtcRadarView(directory)).settings.capitalUsdt, 5000.46);
+  for (const capitalUsdt of [0, -1, "abc", 2e9, true]) {
+    await assert.rejects(saveBtcRadarSettings(directory, { capitalUsdt }), (error) => error.statusCode === 400);
+  }
+  assert.equal((await loadBtcRadarSettings(directory)).capitalUsdt, 5000.46);
+  assert.deepEqual(await saveBtcRadarSettings(directory, { capitalUsdt: null }), {});
+  assert.deepEqual(await loadBtcRadarSettings(directory), {});
 });
