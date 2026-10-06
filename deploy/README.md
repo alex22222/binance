@@ -52,6 +52,8 @@ Set a long random `DASHBOARD_PASSWORD`, an operator username, and the exact
 HTTPS origin in `/etc/binance-agentic-stock-bot.env`. Copy `Caddyfile.example`
 to `/etc/caddy/Caddyfile`, replace the domain, validate it, and reload Caddy.
 Bot notifications append `DASHBOARD_PUBLIC_ORIGIN` as a mobile Dashboard link.
+List extra hostnames, such as a `www` alias, after it separated by commas; links
+always use the first entry.
 The same credentials work in the `/login` form used by Feishu and other mobile
 webviews that do not display an HTTP Basic Auth prompt.
 If the bot confirms a wallet disconnect, the Dashboard service may start the
@@ -60,7 +62,7 @@ directory with the bot.
 
 HTTP Basic Auth is accepted only over the TLS reverse proxy. The Node dashboard
 continues to bind to loopback and rejects state-changing requests from origins
-other than loopback or `DASHBOARD_PUBLIC_ORIGIN`.
+other than loopback or the origins listed in `DASHBOARD_PUBLIC_ORIGIN`.
 
 ## Start in safe mode
 

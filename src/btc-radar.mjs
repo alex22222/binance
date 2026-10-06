@@ -18,6 +18,7 @@ import {
   loadSentiment,
   loadTreasuryYields
 } from "./btc-radar-sources.mjs";
+import { dashboardPublicOrigin } from "./dashboard-auth.mjs";
 import { sendManagerFeishu } from "./fund-manager-delivery.mjs";
 
 export const BTC_RADAR_HISTORY_LIMIT = 180;
@@ -117,7 +118,7 @@ export function btcRadarAlertText(snapshot, reasons, environment = process.env) 
   ];
   if (position) lines.push(`策略总收益 ${position.total_pnl} USDT · 补仓 ${position.safety_filled}/${position.safety_max}`);
   try {
-    const origin = new URL(environment.DASHBOARD_PUBLIC_ORIGIN || "");
+    const origin = new URL(dashboardPublicOrigin(environment));
     if (origin.protocol === "https:") lines.push(`看板：${origin.origin}/btc-radar`);
   } catch {
     // No public dashboard link configured.

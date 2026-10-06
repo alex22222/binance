@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { dashboardPublicOrigin } from "./dashboard-auth.mjs";
 import { publishManagerHtml } from "./fund-manager-html.mjs";
 
 export const REPORT_SECTIONS = ["经理结论", "实盘回溯", "Paper", "全球动态", "美联储", "黄金", "美股", "重大事件", "风险与行动", "数据与来源"];
@@ -22,7 +23,7 @@ async function atomicJson(path, value) {
 }
 
 export function managerReportUrl(date, edition, environment = process.env) {
-  const origin = new URL(environment.DASHBOARD_PUBLIC_ORIGIN || environment.DASHBOARD_URL || "");
+  const origin = new URL(dashboardPublicOrigin(environment) || environment.DASHBOARD_URL || "");
   if (origin.protocol !== "https:" || origin.username || origin.password) throw new Error("A public HTTPS Dashboard origin is required");
   return `${origin.origin}/fund-manager?date=${date}&edition=${edition}`;
 }

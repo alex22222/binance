@@ -11,6 +11,15 @@ test("adds the public HTTPS Dashboard link to a Feishu notification", () => {
   );
 });
 
+test("links to the first public origin when several are allowed", () => {
+  assert.equal(
+    feishuMessageWithDashboardLink("[Agentic Stock Bot] TEST OK", {
+      DASHBOARD_PUBLIC_ORIGIN: "https://stocks.example.com, https://www.stocks.example.com"
+    }),
+    "[Agentic Stock Bot] TEST OK\n\n📱 打开手机 Dashboard：https://stocks.example.com"
+  );
+});
+
 test("never sends a loopback Dashboard address to a phone", () => {
   assert.equal(
     feishuMessageWithDashboardLink("[Agentic Stock Bot] TEST OK", {

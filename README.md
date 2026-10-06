@@ -251,11 +251,13 @@ export DASHBOARD_PASSWORD='use-a-long-random-password'
 An HTTPS reverse proxy must be used for public access. Set
 `DASHBOARD_PUBLIC_ORIGIN` to the exact public origin, such as
 `https://stocks.example.com`; state-changing requests from any other Origin are
-rejected. Bot notifications sent to Feishu append this HTTPS address as the
-mobile Dashboard link. Loopback and non-HTTPS addresses are never sent as phone
-links. Mobile browsers that do not show an HTTP Basic Auth prompt are redirected
-to `/login`; successful login creates a signed, twelve-hour, HTTPS-only session
-cookie without putting credentials in the URL.
+rejected. When the Dashboard answers on several hostnames, such as a domain and
+its `www` alias, list them separated by commas; every entry is accepted and
+links use the first. Bot notifications sent to Feishu append that first HTTPS
+address as the mobile Dashboard link. Loopback and non-HTTPS addresses are
+never sent as phone links. Mobile browsers that do not show an HTTP Basic Auth
+prompt are redirected to `/login`; successful login creates a signed,
+twelve-hour, HTTPS-only session cookie without putting credentials in the URL.
 
 When the bot has confirmed that the wallet session is `EXPIRED`, the mobile
 Dashboard exposes a one-time Binance sign-in flow. It returns only the official

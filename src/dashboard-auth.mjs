@@ -89,3 +89,9 @@ export function dashboardAllowedOrigins({ host, port, environment = process.env 
   }
   return origins;
 }
+
+// DASHBOARD_PUBLIC_ORIGIN may list several origins (a domain and its aliases).
+// Every entry is accepted as a request Origin; links always use the first.
+export function dashboardPublicOrigin(environment = process.env) {
+  return String(environment.DASHBOARD_PUBLIC_ORIGIN || "").split(",")[0].trim();
+}

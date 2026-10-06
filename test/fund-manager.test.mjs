@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { beijingDate, paperSummary } from "../src/fund-manager-evidence.mjs";
 import { newYorkDate } from "../src/strategy-data.mjs";
-import { REPORT_SECTIONS, deliverManagerReport, managerReportCard, sendManagerFeishu, validateManagerReport } from "../src/fund-manager-delivery.mjs";
+import { REPORT_SECTIONS, deliverManagerReport, managerReportCard, managerReportUrl, sendManagerFeishu, validateManagerReport } from "../src/fund-manager-delivery.mjs";
 
 const date = "2026-09-13";
 const text = `基金经理日报 ${date}\n${REPORT_SECTIONS.map((section) => `## ${section}\n已核实或注明缺失`).join("\n")}\nhttps://www.federalreserve.gov/`;
@@ -51,6 +51,13 @@ test("shows the complete report in the Feishu card without requiring Dashboard l
   }
   assert.equal(card.elements.some((element) => element.tag === "action"), false);
   assert.match(serialized, /完整报告已在本卡片展示/);
+});
+
+test("links the report through the first public Dashboard origin", () => {
+  assert.equal(
+    managerReportUrl(date, "preview", { DASHBOARD_PUBLIC_ORIGIN: "https://stocks.example.com, https://www.stocks.example.com" }),
+    `https://stocks.example.com/fund-manager?date=${date}&edition=preview`
+  );
 });
 
 test("archives delivery receipts, uses configured recipient, and skips repeat daily sends", async () => {

@@ -190,6 +190,12 @@ test("applies the routine's important-change rules", () => {
     "现价 83,556；距止损 -4.61%，距强平 -12.51%，距止盈 +1.13%",
     "策略总收益 -12.35 USDT · 补仓 6/10"
   ].join("\n"));
+  assert.match(
+    btcRadarAlertText({ score: 63.4, level_name: "警戒", price: 83555.9, factors: [], position: null }, ["综合等级升至警戒"], {
+      DASHBOARD_PUBLIC_ORIGIN: "https://stocks.example.com, https://www.stocks.example.com"
+    }),
+    /\n看板：https:\/\/stocks\.example\.com\/btc-radar$/
+  );
 });
 
 test("serves saved radar data with an explicit availability status", async () => {

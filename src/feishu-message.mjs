@@ -1,3 +1,5 @@
+import { dashboardPublicOrigin } from "./dashboard-auth.mjs";
+
 function publicHttpsUrl(value) {
   if (!value) return null;
   try {
@@ -13,7 +15,7 @@ function publicHttpsUrl(value) {
 export function feishuMessageWithDashboardLink(text, environment = process.env) {
   const message = String(text);
   const dashboardUrl = (
-    publicHttpsUrl(environment.DASHBOARD_PUBLIC_ORIGIN) ||
+    publicHttpsUrl(dashboardPublicOrigin(environment)) ||
     publicHttpsUrl(environment.DASHBOARD_URL)
   );
   if (!dashboardUrl || message.includes(dashboardUrl)) return message;
