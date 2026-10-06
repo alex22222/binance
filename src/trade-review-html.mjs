@@ -1,3 +1,5 @@
+import { SITE_CSS, siteHeader } from "./site-shell.mjs";
+
 export function tradeReviewHtml() {
   return `<!doctype html>
 <html lang="zh-CN">
@@ -8,29 +10,16 @@ export function tradeReviewHtml() {
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <title>策略体检 · Agentic Wallet</title>
   <style>
-    :root {
-      --bg: #080c11; --panel: #10161d; --panel-raised: #141c25; --line: #26313d;
-      --line-soft: rgba(255,255,255,.07); --text: #f4f6f8; --muted: #96a2b1;
-      --gold: #f6c85d; --gold-soft: rgba(246,200,93,.12); --green: #55d7a0;
-      --green-soft: rgba(85,215,160,.11); --red: #ff6978; --red-soft: rgba(255,105,120,.11);
-      --blue: #78afff; --blue-soft: rgba(120,175,255,.11);
-    }
+    ${SITE_CSS}
+    :root { --site-width: 1420px; }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
-    body { margin: 0; min-height: 100vh; color: var(--text); font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: linear-gradient(135deg, rgba(22,31,41,.32), transparent 42rem), var(--bg); }
     button, select, a { font: inherit; }
     button, select { color: inherit; }
     button:focus-visible, select:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
     .shell { width: min(1420px, calc(100% - 40px)); margin: 0 auto; }
-    header { position: sticky; top: 0; z-index: 10; border-bottom: 1px solid var(--line-soft); background: rgba(8,12,17,.91); backdrop-filter: blur(18px); }
-    .nav { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-    .brand, .nav-actions { display: flex; align-items: center; gap: 12px; }
-    .brand { color: var(--text); font-size: 14px; font-weight: 760; text-decoration: none; }
-    .brand img { width: 27px; height: 27px; border-radius: 7px; }
-    .nav-actions { justify-content: flex-end; }
-    .nav-link, select, .button { min-height: 40px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-raised); }
-    .nav-link { display: inline-flex; align-items: center; justify-content: center; padding: 8px 18px; color: var(--text); text-decoration: none; font-size: 13px; }
-    .nav-link:hover, .button.secondary:hover { border-color: #465467; background: #18222d; }
+    select, .button { min-height: 40px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-raised); }
+    .button.secondary:hover { border-color: #465467; background: #18222d; }
     select { min-width: 190px; padding: 8px 12px; font-size: 13px; }
     main { padding: 22px 0 48px; }
     .layout { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 22px; align-items: start; }
@@ -137,11 +126,7 @@ export function tradeReviewHtml() {
     }
     @media (max-width: 760px) {
       .shell { width: min(100% - 24px, 1420px); }
-      .nav { min-height: 62px; }
-      .brand span { display: none; }
-      .nav-actions { gap: 7px; }
       select { min-width: 0; width: 156px; }
-      .nav-link { padding-inline: 12px; }
       .page-head { align-items: flex-start; flex-direction: column; }
       .page-head-side { width: 100%; align-items: flex-start; }
       .actions { width: 100%; }
@@ -157,7 +142,6 @@ export function tradeReviewHtml() {
       .mobile-table-note { display: block; padding: 10px 16px 0; color: var(--gold); font-size: 11px; }
     }
     @media (max-width: 480px) {
-      .nav-link:first-of-type { display: none; }
       .health-title { align-items: flex-start; flex-direction: column; gap: 5px; }
       .health-title strong { font-size: 30px; }
       .scope-note { display: none; }
@@ -166,10 +150,7 @@ export function tradeReviewHtml() {
   </style>
 </head>
 <body>
-  <header><div class="shell nav">
-    <a class="brand" href="/reviews"><img src="/favicon.svg" alt=""><span>交易复盘</span></a>
-    <div class="nav-actions"><select id="reviewDate" aria-label="选择交易日"></select><a class="nav-link" href="/strategies">策略</a><a class="nav-link" href="/btc-radar">BTC 风控</a><a class="nav-link" href="/">仪表盘</a></div>
-  </div></header>
+  ${siteHeader("/reviews", '<select id="reviewDate" aria-label="选择交易日"></select>')}
   <main class="shell">
     <div class="layout">
       <div class="primary">

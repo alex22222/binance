@@ -1,4 +1,5 @@
 import { dcaScenario, ladderProbability } from "./btc-radar-risk.mjs";
+import { SITE_CSS, siteHeader } from "./site-shell.mjs";
 
 // BTC risk radar page, migrated from the claude.ai artifact. Data comes from
 // /api/btc-radar, written every four hours by scripts/run-btc-radar.mjs.
@@ -14,27 +15,17 @@ export function btcRadarHtml({ nonce }) {
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>BTC 风控雷达 · Agentic Wallet</title>
 <style>
-:root{
-  --bg:#0f1514; --panel:#161e1d; --ink:#e4ebe9; --muted:#93a29f; --line:#2a3634;
-  --accent:#5cc4bc; --track:#25302e;
-  --ok:#5fc283; --warn:#e2b54a; --alert:#f08a4b; --crit:#f0645d;
-  --ok-bg:#183126; --warn-bg:#33291a; --alert-bg:#3a2417; --crit-bg:#3d1c1b;
-  --f-body:"Noto Sans SC",system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
-  --f-num:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
-  color-scheme:dark;
-}
+${SITE_CSS}
+:root{--site-width:1120px;
+  --ink:var(--text); --accent:var(--blue); --track:#232b36;
+  --ok:var(--green); --warn:#e7b94c; --alert:var(--orange); --crit:var(--red);
+  --ok-bg:var(--green-soft); --warn-bg:rgba(231,185,76,.13); --alert-bg:rgba(240,160,75,.14); --crit-bg:var(--red-soft);
+  --f-body:var(--font); --f-num:var(--font-num)}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
-body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.6;margin:0;padding-bottom:env(safe-area-inset-bottom,0px)}
-a{color:var(--accent)}
-a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
-.topbar{display:flex;align-items:center;gap:28px;min-height:60px;padding:0 20px;border-bottom:1px solid var(--line);background:var(--panel)}
-.brand{display:flex;align-items:center;gap:10px;color:var(--ink);font-weight:700;font-size:17px;text-decoration:none;white-space:nowrap}
-.brand img{width:24px;height:24px}
-.topbar nav{display:flex;align-self:stretch;gap:20px;overflow-x:auto;scrollbar-width:none}
-.topbar nav a{display:flex;align-items:center;color:var(--muted);text-decoration:none;font-weight:600;white-space:nowrap;border-bottom:3px solid transparent}
-.topbar nav a[aria-current]{color:var(--accent);border-color:var(--accent)}
-@media (max-width:640px){.topbar{gap:14px;padding:0 14px}.brand span{display:none}.topbar nav{gap:14px}}
+body{font-size:14px;line-height:1.6;padding-bottom:env(safe-area-inset-bottom,0px)}
+a{color:var(--blue)}
+a:focus-visible{outline:2px solid var(--brand);outline-offset:3px}
 .wrap{max-width:1120px;margin:0 auto;padding-inline:16px;padding-block:20px 48px;display:grid;gap:16px}
 .num{font-family:var(--f-num);font-variant-numeric:tabular-nums}
 h1{font-size:22px;font-weight:900;margin:0;letter-spacing:.02em}
@@ -43,7 +34,7 @@ h2{font-size:13px;font-weight:700;margin:0;color:var(--muted);letter-spacing:.08
 .stamp{color:var(--muted);font-size:12px}
 .stamp b{font-weight:500;color:var(--ink)}
 .stale{color:var(--crit);font-weight:700}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow)}
 .hero{display:grid;grid-template-columns:minmax(0,300px) minmax(0,1fr);gap:16px}
 @media (max-width:760px){.hero{grid-template-columns:minmax(0,1fr)}}
 .gauge{display:grid;justify-items:center;align-content:start;gap:6px;text-align:center}
@@ -113,10 +104,7 @@ h2{font-size:13px;font-weight:700;margin:0;color:var(--muted);letter-spacing:.08
 </style>
 </head>
 <body>
-<header class="topbar">
-  <a class="brand" href="/"><img src="/favicon.svg" alt=""><span>Agentic Wallet</span></a>
-  <nav aria-label="主导航"><a href="/">仪表盘</a><a href="/strategies">策略</a><a href="/reviews">复盘</a><a href="/fund-manager">基金经理</a><a href="/btc-radar" aria-current="page">BTC 风控</a></nav>
-</header>
+${siteHeader("/btc-radar")}
 <main class="wrap">
   <header class="top">
     <h1>BTC 风控雷达</h1>
@@ -137,7 +125,7 @@ h2{font-size:13px;font-weight:700;margin:0;color:var(--muted);letter-spacing:.08
         <span class="pill" id="pospill">—</span>
       </div>
       <div class="ruler" id="ruler"></div>
-      <div class="stamp">青色竖线是现价，红橙色段是止损以下的危险区。拖动「止损」「止盈」可以预览调整后的结果，不会修改 OKX。</div>
+      <div class="stamp">蓝色竖线是现价，红橙色段是止损以下的危险区。拖动「止损」「止盈」可以预览调整后的结果，不会修改 OKX。</div>
       <div class="stats" id="posstats"></div>
       <div class="risk" id="risk" hidden></div>
     </div>

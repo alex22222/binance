@@ -1,3 +1,5 @@
+import { SITE_CSS, siteHeader } from "./site-shell.mjs";
+
 export function strategyLabHtml() {
   return `<!doctype html>
 <html lang="zh-CN">
@@ -8,27 +10,22 @@ export function strategyLabHtml() {
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <title>策略研究 · Agentic Wallet</title>
   <style>
-    :root { --bg: #080b0f; --panel: #11161e; --line: #28313d; --text: #f1f4f8; --muted: #9caabc; --blue: #88b2ff; --green: #56d7a4; --gold: #edc36e; --red: #ff7885; }
+    ${SITE_CSS}
+    :root { --site-width: 1680px; }
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
-    body { margin: 0; background: var(--bg); color: var(--text); font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; line-height: 1.6; }
+    body { font-size: 14px; line-height: 1.6; }
     a { color: var(--blue); text-decoration: none; }
     a:hover { text-decoration: underline; }
     button, input, select { font: inherit; color: var(--text); }
     button { cursor: pointer; }
-    button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; }
+    button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--brand); outline-offset: 4px; }
     button:disabled { cursor: wait; opacity: .6; }
     .skip { position: absolute; top: -80px; left: 20px; z-index: 10; background: var(--panel); padding: 12px; }
     .skip:focus { top: 8px; }
-    .topbar { height: 69px; padding: 0 28px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 50px; }
-    .brand { display: flex; align-items: center; gap: 12px; color: var(--text); font-size: 21px; font-weight: 700; white-space: nowrap; }
-    .brand img { width: 30px; height: 30px; }
-    .topbar nav { display: flex; align-self: stretch; gap: 32px; }
-    .topbar nav a { display: flex; align-items: center; color: var(--muted); border-bottom: 3px solid transparent; padding: 0 8px; font-weight: 600; }
-    .topbar nav a[aria-current] { color: var(--blue); border-color: var(--blue); }
-    .top-meta { margin-left: auto; color: var(--muted); font-size: 12px; }
+    .top-meta { color: var(--muted); font-size: 12px; }
     .workspace { display: grid; grid-template-columns: 370px minmax(0, 1fr); max-width: 1680px; margin: auto; }
-    .directory { padding: 28px 26px; border-right: 1px solid var(--line); height: calc(100vh - 69px); position: sticky; top: 0; display: flex; flex-direction: column; }
+    .directory { padding: 28px 26px; border-right: 1px solid var(--line); height: calc(100vh - 80px); position: sticky; top: 80px; display: flex; flex-direction: column; }
     .directory h1 { font-size: 23px; margin: 0 0 2px; letter-spacing: -.03em; }
     .muted, .directory p { color: var(--muted); }
     .directory p { margin: 0 0 18px; }
@@ -40,7 +37,7 @@ export function strategyLabHtml() {
     .strategy-item { width: 100%; background: transparent; border: 0; border-bottom: 1px solid var(--line); border-left: 3px solid transparent; padding: 17px 14px; text-align: left; }
     .strategy-item:first-child { border-top: 1px solid var(--line); }
     .strategy-item:hover { background: #131b27; }
-    .strategy-item[aria-pressed="true"] { border-left-color: var(--blue); background: #131d2f; }
+    .strategy-item[aria-pressed="true"] { border-left-color: var(--brand); background: var(--brand-soft); }
     .item-top { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
     .item-top strong { font-size: 15px; line-height: 1.5; }
     .item-meta { color: var(--muted); font-size: 12px; margin-top: 5px; display: flex; justify-content: space-between; gap: 8px; }
@@ -59,14 +56,14 @@ export function strategyLabHtml() {
     .verdict p { margin: 4px 0 0; color: #c5c2b6; }
     .section-tabs { display: flex; gap: 16px; border-bottom: 1px solid var(--line); margin-bottom: 24px; }
     .section-tabs button { color: var(--muted); background: transparent; border: 0; border-bottom: 3px solid transparent; padding: 12px 19px; font-weight: 600; }
-    .section-tabs button[aria-pressed="true"] { color: var(--blue); border-bottom-color: var(--blue); }
+    .section-tabs button[aria-pressed="true"] { color: var(--brand); border-bottom-color: var(--brand); }
     h3 { font-size: 18px; margin: 0 0 12px; }
     h4 { font-size: 15px; margin: 0 0 7px; }
     p { margin: 0 0 12px; }
     .analysis-head { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
     .evidence-tabs { display: flex; gap: 3px; background: #161d27; border: 1px solid var(--line); border-radius: 9px; padding: 3px; }
     .evidence-tabs button { background: none; border: 0; border-radius: 7px; color: #b7c1d0; padding: 5px 18px; }
-    .evidence-tabs button[aria-pressed="true"] { background: var(--blue); color: #081426; font-weight: 700; }
+    .evidence-tabs button[aria-pressed="true"] { background: var(--brand); color: var(--brand-ink); font-weight: 700; }
     .source-meta { color: var(--muted); font-size: 12px; }
     .analysis-head .source-meta { margin: 0; }
     .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; margin: 25px 0 29px; }
@@ -87,10 +84,11 @@ export function strategyLabHtml() {
     .insight { border-left: 1px solid #425064; padding-left: 20px; }
     .insight p { color: #b5c0d0; margin: 0; }
     .actions { display: flex; align-items: center; gap: 18px; margin-top: 28px; flex-wrap: wrap; }
-    .primary, .secondary { border-radius: 6px; padding: 10px 18px; font-weight: 600; }
-    .primary { background: var(--blue); color: #0a1424; border: 1px solid var(--blue); }
-    .primary:hover { background: #a1c3ff; }
-    .secondary { color: var(--blue); background: transparent; border: 1px solid var(--line); }
+    .primary, .secondary { border-radius: var(--radius-sm); padding: 10px 18px; font-weight: 650; }
+    .primary { background: var(--brand); color: var(--brand-ink); border: 1px solid var(--brand); }
+    .primary:hover { background: var(--brand-strong); }
+    .secondary { color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
+    .secondary:hover { border-color: #465365; }
     .empty { padding: 23px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin: 18px 0; color: var(--muted); }
     .empty strong { color: var(--text); display: block; margin-bottom: 5px; }
     .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; margin: 22px 0; }
@@ -103,10 +101,9 @@ export function strategyLabHtml() {
     .read-status { margin-top: 26px; padding-top: 15px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }
     .read-status button { padding: 5px 10px; border: 1px solid var(--line); border-radius: 5px; background: transparent; }
     .error { color: var(--red); }
-    @media (max-width: 1200px) { .workspace { grid-template-columns: 300px minmax(0, 1fr); } .directory { padding: 24px 18px; } .dossier { padding: 24px; } .metric strong { font-size: 23px; } .topbar { gap: 28px; } }
+    @media (max-width: 1200px) { .workspace { grid-template-columns: 300px minmax(0, 1fr); } .directory { padding: 24px 18px; } .dossier { padding: 24px; } .metric strong { font-size: 23px; } }
     @media (max-width: 760px) {
-      .topbar { height: 60px; padding: 0 16px; gap: 14px; } .brand { font-size: 15px; gap: 7px; } .brand img { width: 23px; height: 23px; }
-      .topbar nav { gap: 12px; margin-left: auto; } .topbar nav a { padding: 0; font-size: 12px; } .top-meta { display: none; }
+      .top-meta { display: none; }
       .workspace { display: block; } .directory { height: auto; position: static; padding: 16px; border-right: 0; border-bottom: 1px solid var(--line); }
       .directory h1 { font-size: 19px; } .directory p, .directory-footer { display: none; }
       .directory-toggle { display: block; margin-top: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); text-align: left; }
@@ -122,11 +119,7 @@ export function strategyLabHtml() {
 </head>
 <body>
   <a class="skip" href="#dossier">跳到研究档案</a>
-  <header class="topbar">
-    <a class="brand" href="/"><img src="/favicon.svg" alt="">Agentic Wallet</a>
-    <nav aria-label="主导航"><a href="/strategies" aria-current="page">策略研究</a><a href="/reviews">复盘</a><a href="/btc-radar">BTC 风控</a></nav>
-    <span class="top-meta">只读研究 · 交易管理请前往仪表盘</span>
-  </header>
+  ${siteHeader("/strategies", '<span class="top-meta">只读研究 · 交易管理请前往仪表盘</span>')}
   <div class="workspace">
     <aside class="directory" aria-label="策略目录">
       <h1>策略研究档案</h1><p>从研究假设，到可验证的表现。</p>

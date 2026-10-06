@@ -1,3 +1,5 @@
+import { SITE_CSS, siteHeader } from "./site-shell.mjs";
+
 export function dashboardStrongSignals(data, nowMs = Date.now()) {
   if (data.strategy?.activeStrategyId === "weekly-etf-dual-momentum-defense") return [];
   if (data.marketSession !== "regular" || data.health?.status !== "RUNNING") return [];
@@ -23,42 +25,11 @@ export function liveDashboardHtml() {
   <meta name="color-scheme" content="dark">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <title>Agentic Wallet · 实时持仓</title>
-  <style>
-    :root {
-      --bg: #07090d; --panel: #11151c; --panel-2: #171d26; --line: #29313d;
-      --text: #f5f7fa; --muted: #8f9baa; --gold: #f5c14f; --green: #51d6a3;
-      --red: #ff6c78; --blue: #78a9ff; --panel-shadow: 0 18px 48px rgba(0,0,0,.24);
-    }
+  <style>${SITE_CSS}
     * { box-sizing: border-box; }
-    body {
-      margin: 0; min-height: 100vh; color: var(--text);
-      -webkit-text-size-adjust: 100%;
-      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background:
-        radial-gradient(circle at 15% -8%, rgba(245,193,79,.12), transparent 31rem),
-        radial-gradient(circle at 95% 26%, rgba(120,169,255,.08), transparent 34rem),
-        linear-gradient(rgba(255,255,255,.012) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,.012) 1px, transparent 1px), var(--bg);
-      background-size: auto, auto, 32px 32px, 32px 32px, auto;
-    }
     .shell { width: min(1440px, calc(100% - 48px)); margin: 0 auto; }
-    header {
-      position: sticky; top: 0; z-index: 5; padding: 12px 0 0;
-      background: linear-gradient(var(--bg) 0%, rgba(7,9,13,.92) 72%, transparent);
-    }
-    .nav {
-      min-height: 70px; padding: 10px 12px; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px 18px;
-      border: 1px solid rgba(255,255,255,.08); border-radius: 17px;
-      background: rgba(14,18,24,.88); box-shadow: 0 12px 38px rgba(0,0,0,.22);
-      backdrop-filter: blur(18px);
-    }
-    .brand { grid-column: 1; grid-row: 1; display: flex; align-items: center; gap: 11px; font-weight: 750; white-space: nowrap; }
     .top-command { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; margin-bottom: 20px; }
     .top-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; background: var(--line); }
-    .mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 12px; background: var(--gold); color: #171108; font-weight: 900; box-shadow: 0 0 24px rgba(245,193,79,.18); }
-    .nav-link { margin-left: 6px; padding: 8px 11px; border: 1px solid rgba(120,169,255,.35); border-radius: 9px; color: #d8e5ff; background: rgba(120,169,255,.08); text-decoration: none; font-size: 12px; transition: background-color .2s, border-color .2s; }
-    .nav-link:hover { border-color: rgba(120,169,255,.65); background: rgba(120,169,255,.16); }
-    .nav-link:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
     .top-stat { display: flex; flex-direction: column; justify-content: center; gap: 10px; min-width: 0; padding: 18px 14px; background: #0f1319; }
     .top-stat span { color: var(--muted); font-size: 11px; }
     .top-stat strong { font-size: clamp(15px, 1.5vw, 22px); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
@@ -274,7 +245,6 @@ export function liveDashboardHtml() {
     }
     @media (max-width: 900px) {
       .operations-grid { grid-template-columns: 1fr; }
-      .nav { display: flex; align-items: stretch; flex-direction: column; }
       .badges { justify-content: flex-start; }
       .top-command { width: 100%; grid-template-columns: 1fr; }
       .top-asset-trend { height: 68px; }
@@ -285,7 +255,6 @@ export function liveDashboardHtml() {
     }
     @media (max-width: 600px) {
       .shell { width: min(100% - 24px, 480px); }
-      header { position: static; padding-top: calc(8px + env(safe-area-inset-top)); }
       main { padding-top: 16px; padding-bottom: calc(36px + env(safe-area-inset-bottom)); }
       .dashboard-grid { grid-template-columns: 1fr; gap: 18px; }
       .policy-grid, .risk-section .policy-grid { grid-template-columns: 1fr; }
@@ -302,9 +271,6 @@ export function liveDashboardHtml() {
       .timeline-filter { min-width: 0; padding-inline: 4px; white-space: nowrap; }
       .event { grid-template-columns: 54px minmax(0, 1fr); padding-inline: 9px; }
       .control-button { min-height: 44px; }
-      .nav { align-items: stretch; flex-direction: column; gap: 12px; padding: 12px; border-radius: 16px; }
-      .brand { min-height: 44px; flex-wrap: wrap; }
-      .nav-link { min-height: 40px; display: inline-flex; align-items: center; }
       .top-command { display: grid; grid-template-columns: 1fr; gap: 1px; padding-top: 0; border-top: 0; }
       .top-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0; }
       .top-stat { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 8px 6px; text-align: center; }
@@ -352,12 +318,7 @@ export function liveDashboardHtml() {
   </style>
 </head>
 <body>
-  <header>
-    <div class="shell nav">
-      <div class="brand"><span class="mark">A</span><span>Agentic Wallet</span><a class="nav-link" href="/strategies">策略</a><a class="nav-link" href="/reviews">复盘</a><a class="nav-link" href="/fund-manager">基金经理</a><a class="nav-link" href="/btc-radar">BTC 风控</a><a class="nav-link" href="/gmgn/">GMGN</a></div>
-      <div class="badges"><span class="badge market-index-badge" id="marketIndexStatus"><span>纳斯达克</span><strong id="nasdaqIndex">—</strong></span><span class="badge" id="walletStatus" aria-live="polite"><span class="dot"></span><span>钱包 未检测</span></span><span class="badge" id="mode"><span class="dot"></span><span></span></span><span class="badge" id="health"><span class="dot"></span><span></span></span><div class="control-actions"><button class="control-button" id="autoApprovalToggle" type="button" role="switch" aria-checked="false">自动审批：关</button><button class="control-button stop" id="stopButton" type="button">停机</button><button class="control-button resume" id="resumeButton" type="button" hidden>恢复</button></div></div>
-    </div>
-  </header>
+  ${siteHeader("/", `<div class="badges"><span class="badge market-index-badge" id="marketIndexStatus"><span>纳斯达克</span><strong id="nasdaqIndex">—</strong></span><span class="badge" id="walletStatus" aria-live="polite"><span class="dot"></span><span>钱包 未检测</span></span><span class="badge" id="mode"><span class="dot"></span><span></span></span><span class="badge" id="health"><span class="dot"></span><span></span></span><div class="control-actions"><button class="control-button" id="autoApprovalToggle" type="button" role="switch" aria-checked="false">自动审批：关</button><button class="control-button stop" id="stopButton" type="button">停机</button><button class="control-button resume" id="resumeButton" type="button" hidden>恢复</button></div></div>`)}
   <main class="shell">
     <div class="page-intro"><h1>交易总览</h1><p>账户概况 · 实时信号 · 执行监控</p></div>
       <div class="top-command">
