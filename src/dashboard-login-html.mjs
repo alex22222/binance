@@ -19,6 +19,8 @@ export function dashboardLoginHtml({ invalid = false } = {}) {
     label { display: block; margin-top: 14px; color: #cbd2db; font-size: 13px; }
     input { width: 100%; min-height: 48px; margin-top: 7px; padding: 10px 12px; border: 1px solid #34404e; border-radius: 10px; color: var(--text); background: var(--bg); font: inherit; font-size: 16px; }
     input:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; border-color: transparent; }
+    .remember { display: flex; align-items: center; gap: 10px; margin-top: 16px; color: var(--muted); font-size: 14px; cursor: pointer; }
+    .remember input { width: 20px; height: 20px; min-height: 0; margin: 0; padding: 0; accent-color: var(--brand); }
     button { width: 100%; min-height: 50px; margin-top: 22px; border: 0; border-radius: 10px; color: var(--brand-ink); background: var(--brand); font: inherit; font-size: 16px; font-weight: 760; cursor: pointer; }
     button:hover { background: var(--brand-strong); }
     button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
@@ -29,11 +31,12 @@ export function dashboardLoginHtml({ invalid = false } = {}) {
   <main>
     <div class="login-brand"><span class="site-mark" aria-hidden="true">A</span><span>Agentic Wallet</span></div>
     <h1>登录手机 Dashboard</h1>
-    <p>使用 Dashboard 用户名和密码。登录仅在 HTTPS 加密连接中有效。</p>
+    <p>使用 Dashboard 用户名和密码。登录仅在 HTTPS 加密连接中有效。共用的电脑请取消「保持登录」。</p>
     ${invalid ? '<div class="error" role="alert">用户名或密码错误</div>' : ""}
     <form method="post" action="/login">
       <label>用户名<input name="username" autocomplete="username" required></label>
       <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
+      <label class="remember"><input name="remember" type="checkbox" value="1" checked>在这台设备上保持登录 30 天</label>
       <button type="submit">登录并打开 Dashboard</button>
     </form>
   </main>

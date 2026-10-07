@@ -2,6 +2,8 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 const sessionCookieName = "dashboard_session";
 const sessionMaxAgeSeconds = 12 * 60 * 60;
+// "Stay signed in on this device" on the login form.
+const rememberedMaxAgeSeconds = 30 * 24 * 60 * 60;
 
 function equalString(left, right) {
   const leftBuffer = Buffer.from(String(left));
@@ -50,10 +52,19 @@ function sessionSignature(config, expiresAtMs) {
     .digest("base64url");
 }
 
-export function dashboardSessionCookie(config, nowMs = Date.now()) {
-  const expiresAtMs = nowMs + sessionMaxAgeSeconds * 1000;
+// Lax still withholds the cookie from cross-site POSTs (which also need an
+// allowed Origin), but sends it when a Feishu or other link opens a page, so
+// those links no longer land on the login form. Changing DASHBOARD_PASSWORD
+// invalidates every issued session, because it keys the signature.
+export function dashboardSessionCookie(config, nowMs = Date.now(), { remember = false } = {}) {
+  const maxAgeSeconds = remember ? rememberedMaxAgeSeconds : sessionMaxAgeSeconds;
+  const expiresAtMs = nowMs + maxAgeSeconds * 1000;
   const value = `${expiresAtMs}.${sessionSignature(config, expiresAtMs)}`;
-  return `${sessionCookieName}=${value}; Path=/; Max-Age=${sessionMaxAgeSeconds}; HttpOnly; Secure; SameSite=Strict`;
+  return `${sessionCookieName}=${value}; Path=/; Max-Age=${maxAgeSeconds}; HttpOnly; Secure; SameSite=Lax`;
+}
+
+export function dashboardSessionAuthorized(request, config, nowMs = Date.now()) {
+  return config.enabled && sessionRequestAuthorized(request, config, nowMs);
 }
 
 function sessionRequestAuthorized(request, config, nowMs) {

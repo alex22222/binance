@@ -4,6 +4,7 @@ import {
   dashboardAllowedOrigins,
   dashboardAuthConfig,
   dashboardRequestAuthorized,
+  dashboardSessionAuthorized,
   dashboardSessionCookie
 } from "../src/dashboard-auth.mjs";
 
@@ -55,6 +56,22 @@ test("dashboard session cookies are signed and expire after twelve hours", () =>
     dashboardRequestAuthorized({ headers: { cookie: `${cookie}tampered` } }, config, nowMs + 1_000),
     false
   );
+});
+
+test("a remembered device stays signed in for thirty days until the password changes", () => {
+  const config = dashboardAuthConfig({ DASHBOARD_USERNAME: "operator", DASHBOARD_PASSWORD: "correct horse" });
+  const nowMs = Date.parse("2026-10-07T10:00:00.000Z");
+  const header = dashboardSessionCookie(config, nowMs, { remember: true });
+  assert.match(header, /; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax$/);
+  assert.match(dashboardSessionCookie(config, nowMs), /; Max-Age=43200; HttpOnly; Secure; SameSite=Lax$/);
+  const sessionRequest = { headers: { cookie: header.split(";")[0] } };
+  assert.equal(dashboardSessionAuthorized(sessionRequest, config, nowMs + 29 * 86_400_000), true);
+  assert.equal(dashboardSessionAuthorized(sessionRequest, config, nowMs + 30 * 86_400_000 + 1), false);
+  const rotated = dashboardAuthConfig({ DASHBOARD_USERNAME: "operator", DASHBOARD_PASSWORD: "new battery staple" });
+  assert.equal(dashboardSessionAuthorized(sessionRequest, rotated, nowMs + 1_000), false);
+  assert.equal(dashboardSessionAuthorized({ headers: { authorization: `Basic ${Buffer.from("operator:correct horse").toString("base64")}` } }, config), false,
+    "only a session cookie skips the login form; Basic credentials do not");
+  assert.equal(dashboardSessionAuthorized(sessionRequest, dashboardAuthConfig({}), nowMs), false);
 });
 
 test("dashboard allowed origins include loopback and configured HTTPS origins", () => {

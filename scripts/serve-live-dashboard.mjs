@@ -32,6 +32,7 @@ import {
   dashboardAllowedOrigins,
   dashboardAuthConfig,
   dashboardCredentialsAuthorized,
+  dashboardSessionAuthorized,
   dashboardSessionCookie,
   dashboardRequestAuthorized
 } from "../src/dashboard-auth.mjs";
@@ -153,10 +154,14 @@ function requireAuthentication(request, response) {
     response.end();
     return false;
   }
+  // A page's own fetch (Sec-Fetch-Mode other than navigate) gets no Basic
+  // challenge, so an expired session does not pop up the browser's login box;
+  // the page sends the user to /login instead. Scripts still get the challenge.
+  const pageFetch = Boolean(request.headers["sec-fetch-mode"]) && request.headers["sec-fetch-mode"] !== "navigate";
   response.writeHead(401, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
-    "WWW-Authenticate": 'Basic realm="Agentic Wallet Dashboard", charset="UTF-8"',
+    ...(pageFetch ? {} : { "WWW-Authenticate": 'Basic realm="Agentic Wallet Dashboard", charset="UTF-8"' }),
     "X-Content-Type-Options": "nosniff"
   });
   response.end(JSON.stringify({ error: "Authentication required" }));
@@ -175,6 +180,11 @@ const server = createServer(async (request, response) => {
       return;
     }
     if (request.method === "GET" && request.url === "/login") {
+      if (dashboardSessionAuthorized(request, authConfig)) {
+        response.writeHead(303, { "Location": "/", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+        response.end();
+        return;
+      }
       response.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-store",
@@ -203,7 +213,7 @@ const server = createServer(async (request, response) => {
       }
       response.writeHead(303, {
         "Location": "/",
-        "Set-Cookie": dashboardSessionCookie(authConfig),
+        "Set-Cookie": dashboardSessionCookie(authConfig, Date.now(), { remember: body.get("remember") === "1" }),
         "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff"
       });

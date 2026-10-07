@@ -1516,6 +1516,7 @@ export function liveDashboardHtml() {
     async function refresh() {
       try {
         const response = await fetch("/api/snapshot", { cache: "no-store", signal: AbortSignal.timeout(15000) });
+        if (response.status === 401) { location.assign("/login"); return; }
         if (!response.ok) throw new Error("HTTP " + response.status);
         const data = await response.json();
         autoApprovalEnabled = data.autoApproval?.enabled === true;

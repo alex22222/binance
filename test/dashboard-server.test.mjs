@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { get as httpGet } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -379,7 +380,9 @@ test("dashboard protects public access with basic auth and an exact HTTPS origin
 
     const loginPage = await fetch(`${origin}/login`);
     assert.equal(loginPage.status, 200);
-    assert.match(await loginPage.text(), /登录手机 Dashboard/);
+    const loginHtml = await loginPage.text();
+    assert.match(loginHtml, /登录手机 Dashboard/);
+    assert.match(loginHtml, /<input name="remember" type="checkbox" value="1" checked>在这台设备上保持登录 30 天/);
 
     const invalidLogin = await fetch(`${origin}/login`, {
       method: "POST",
@@ -399,13 +402,32 @@ test("dashboard protects public access with basic auth and an exact HTTPS origin
     assert.equal(login.headers.get("location"), "/");
     const sessionCookie = login.headers.get("set-cookie");
     assert.match(sessionCookie, /^dashboard_session=/);
+    assert.match(sessionCookie, /Max-Age=43200/);
     assert.match(sessionCookie, /HttpOnly/);
     assert.match(sessionCookie, /Secure/);
-    assert.match(sessionCookie, /SameSite=Strict/);
+    assert.match(sessionCookie, /SameSite=Lax/);
 
-    const unauthorized = await fetch(`${origin}/api/snapshot`);
-    assert.equal(unauthorized.status, 401);
-    assert.match(unauthorized.headers.get("www-authenticate"), /Basic/);
+    const remembered = await fetch(`${origin}/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username: "operator", password: "server-secret", remember: "1" }),
+      redirect: "manual"
+    });
+    assert.match(remembered.headers.get("set-cookie"), /Max-Age=2592000/);
+    const signedIn = await fetch(`${origin}/login`, { headers: { Cookie: remembered.headers.get("set-cookie").split(";")[0] }, redirect: "manual" });
+    assert.equal(signedIn.status, 303);
+    assert.equal(signedIn.headers.get("location"), "/");
+
+    // Scripts (no Sec-Fetch headers, like curl) still get the Basic challenge;
+    // a page's own fetch does not, so the browser shows no login box.
+    const unauthorized = await new Promise((resolvePromise, reject) => {
+      httpGet(`${origin}/api/snapshot`, (response) => { response.resume(); resolvePromise(response); }).on("error", reject);
+    });
+    assert.equal(unauthorized.statusCode, 401);
+    assert.match(unauthorized.headers["www-authenticate"], /Basic/);
+    const pageFetch = await fetch(`${origin}/api/snapshot`);
+    assert.equal(pageFetch.status, 401);
+    assert.equal(pageFetch.headers.get("www-authenticate"), null);
 
     const sessionAuthorized = await fetch(`${origin}/api/snapshot`, {
       headers: { Cookie: sessionCookie.split(";")[0] }

@@ -257,7 +257,13 @@ links use the first. Bot notifications sent to Feishu append that first HTTPS
 address as the mobile Dashboard link. Loopback and non-HTTPS addresses are
 never sent as phone links. Mobile browsers that do not show an HTTP Basic Auth
 prompt are redirected to `/login`; successful login creates a signed,
-twelve-hour, HTTPS-only session cookie without putting credentials in the URL.
+HTTPS-only session cookie without putting credentials in the URL. It lasts 30
+days when "stay signed in on this device" is ticked (the default) and twelve
+hours otherwise. The cookie is `SameSite=Lax`, so links from Feishu open pages
+already signed in, while cross-site writes are still refused by both the cookie
+and the Origin check. Changing `DASHBOARD_PASSWORD` signs out every device. A
+page's own requests get no Basic challenge when the session expires, so the
+browser shows no login box; the main Dashboard moves to `/login` instead.
 
 When the bot has confirmed that the wallet session is `EXPIRED`, the mobile
 Dashboard exposes a one-time Binance sign-in flow. It returns only the official

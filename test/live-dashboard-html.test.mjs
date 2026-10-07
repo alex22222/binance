@@ -269,3 +269,8 @@ test("live dashboard shows today's execution stages two through five on every si
   assert.match(html, /renderSignalDecisionStages\(symbol, data\.signalDecisionStages\?\.\[symbol\]\)/);
   assert.match(html, /\.signal-journey \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
 });
+
+test("live dashboard sends an expired session to the login form instead of an error badge", () => {
+  const html = liveDashboardHtml();
+  assert.match(html, /const response = await fetch\("\/api\/snapshot"[^\n]*\n\s*if \(response\.status === 401\) \{ location\.assign\("\/login"\); return; \}/);
+});
