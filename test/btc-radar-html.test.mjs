@@ -75,6 +75,33 @@ test("renders the migrated radar from the server API and escapes every saved str
   assert.match(get("hist").innerHTML, /<svg viewBox="0 0 720 220"/);
 });
 
+test("shows the 200-day trend state and explains a missing or undecided one", async () => {
+  const trend = { date: "2026-10-05", close: 85835, average: 71578.12, distance: 0.19918, band: 0.03, state: "LONG", since: "2026-08-22", previous: "AVOID" };
+  const { html, get } = await render({ status: "AVAILABLE", latest: { ...latest, trend }, history: [] });
+  assert.match(html, /回避只表示不持有多头，不是做空信号/);
+  assert.equal(get("trendpill").textContent, "多头环境");
+  assert.equal(get("trendpill").className, "pill lv-green");
+  const stats = get("trendstats").innerHTML;
+  assert.match(stats, /日收盘 2026-10-05<\/div><div class="v">85,835</);
+  assert.match(stats, /200 日均线<\/div><div class="v">71,578</);
+  assert.match(stats, /<span class="pos-c">\+19\.92%<\/span>/);
+  assert.match(stats, /2026-08-22<small>此前为回避环境<\/small>/);
+
+  const avoid = await render({ status: "AVAILABLE", latest: { ...latest, trend: { ...trend, state: "AVOID", distance: -0.05, since: null, previous: null } }, history: [] });
+  assert.equal(avoid.get("trendpill").className, "pill lv-orange");
+  assert.match(avoid.get("trendstats").innerHTML, /<span class="neg">-5\.00%<\/span>/);
+  assert.match(avoid.get("trendstats").innerHTML, /近 100 天内未切换/);
+
+  const odd = await render({ status: "AVAILABLE", latest: { ...latest, trend: { ...trend, state: "<b>", date: "<i>x</i>" } }, history: [] });
+  assert.equal(odd.get("trendpill").textContent, "未确定");
+  assert.equal(odd.get("trendpill").className, "pill");
+  assert.match(odd.get("trendstats").innerHTML, /日收盘 &lt;i&gt;x&lt;\/i&gt;/);
+
+  const missing = await render({ status: "AVAILABLE", latest: { ...latest, trend: null }, history: [] });
+  assert.equal(missing.get("trendpill").textContent, "暂无数据");
+  assert.match(missing.get("trendstats").innerHTML, /不足 200 天/);
+});
+
 test("explains missing position access, empty storage, and an expired login", async () => {
   const unconfigured = await render({
     status: "AVAILABLE", latest: { ...latest, position: null, data_status: { okxConfigured: false, staleSources: [] } }, history: []

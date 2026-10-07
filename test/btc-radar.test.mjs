@@ -65,6 +65,15 @@ function responses(overrides = {}) {
 
 const readJson = async (directory, name) => JSON.parse(await readFile(join(directory, `${name}.json`), "utf8"));
 const OKX = { OKX_API_KEY: "key", OKX_API_SECRET: "secret", OKX_API_PASSPHRASE: "phrase" };
+const HOUR = 3_600_000;
+
+// OKX UTC daily candles, newest first: completed closes through 09-30, then
+// 10-01 still in progress.
+function dailyCandles(closes) {
+  const rows = closes.map((close, index) => [Date.parse("2026-09-30T00:00:00Z") - (closes.length - 1 - index) * 24 * HOUR, close, "1"]);
+  rows.push([Date.parse("2026-10-01T00:00:00Z"), closes.at(-1), "0"]);
+  return { code: "0", data: rows.reverse().map(([ts, close, confirm]) => [String(ts), "0", "0", "0", String(close), "0", "0", "0", confirm]) };
+}
 
 test("evaluates public data without OKX credentials and keeps a deduplicated history", async () => {
   const directory = await mkdtemp(join(tmpdir(), "btc-radar-"));
@@ -80,6 +89,7 @@ test("evaluates public data without OKX credentials and keeps a deduplicated his
     rsi14: { closed: 100, intraday: 100, date: "2026-10-01" },
     fearGreed: { value: 72, label: "贪婪", date: "2026-10-02" }
   });
+  assert.equal(first.snapshot.trend, null, "40 daily closes cannot form a 200-day average");
   await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW });
   await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW + 4 * 3_600_000 });
   const history = await readJson(directory, "history");
@@ -161,6 +171,57 @@ test("records an undeliverable alert without losing the evaluation", async () =>
   assert.equal(failed.alert.error, "Feishu rejected request: HTTP 500");
   assert.equal((await readJson(directory, "latest")).ts, failed.snapshot.ts);
   assert.equal((await readJson(directory, "state")).lastAlert.status, "FAILED");
+});
+
+test("adopts the first trend state silently and pushes each later switch once", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "btc-radar-trend-"));
+  const environment = { FEISHU_WEBHOOK_URL: "https://open.feishu.cn/hook/test", DASHBOARD_PUBLIC_ORIGIN: "https://spaceflag.site,https://173-199-122-23.sslip.io" };
+  const sent = [];
+  const attempts = [];
+  const deliver = async (...args) => { sent.push(args); };
+  const run = (closes, nowMs, send = deliver, env = environment, dir = directory) =>
+    runBtcRadar({ directory: dir, environment: env, fetchImpl: responses({ "bar=1Dutc": dailyCandles(closes) }), nowMs, send });
+  const rising = Array.from({ length: 299 }, (_, index) => 60000 + index * 100);
+  const crash = [...rising.slice(0, -1), 70000];
+
+  const first = await run(rising, NOW);
+  assert.deepEqual(first.snapshot.trend, {
+    date: "2026-09-30", close: 89800, average: 79850, distance: 0.12461, band: 0.03, state: "LONG", since: null, previous: null
+  });
+  assert.equal(first.trendAlert.status, "NONE");
+  assert.equal((await readJson(directory, "state")).trend.notified, "LONG");
+
+  const failed = await run(crash, NOW + 4 * HOUR, async (...args) => { attempts.push(args); throw new Error("Feishu rejected request: HTTP 500"); });
+  assert.deepEqual(failed.trendAlert, { status: "FAILED", state: "AVOID", error: "Feishu rejected request: HTTP 500" });
+  assert.equal((await readJson(directory, "state")).trend.notified, "LONG");
+
+  const switched = await run(crash, NOW + 8 * HOUR);
+  assert.deepEqual(switched.trendAlert, { status: "SENT", state: "AVOID" });
+  assert.equal(sent.length, 1);
+  const [text, uuid] = sent[0];
+  assert.equal(uuid, attempts[0][1], "the retry reuses the message id so Feishu can drop a duplicate");
+  assert.deepEqual(text.split("\n"), [
+    "[BTC 趋势状态] 切换为回避环境",
+    "2026-09-30 日收盘 70,000，低于 200 日均线 79,751 约 12.2%（切换线 ±3%）",
+    "此前：多头环境",
+    `参考（回测中没有稳定预测力）：雷达 ${Math.round(switched.snapshot.score)} 分（${switched.snapshot.level_name}） · 恐惧贪婪 72（贪婪） · 日线 RSI ${switched.snapshot.indicators.rsi14.closed} · 资金费率均值 0.0100%`,
+    "规则：日收盘高于 200 日均线 3% 以上为多头环境，低于 3% 以下为回避环境。回避只表示不持有多头，不是做空信号。",
+    "看板：https://spaceflag.site/btc-radar"
+  ]);
+
+  const again = await run(crash, NOW + 12 * HOUR);
+  assert.equal(again.trendAlert.status, "NONE");
+  assert.equal(sent.length, 1);
+  assert.deepEqual((await readJson(directory, "state")).trend, {
+    notified: "AVOID", lastAlert: { ts: switched.snapshot.ts, status: "SENT", state: "AVOID" }
+  });
+
+  const quiet = await mkdtemp(join(tmpdir(), "btc-radar-trend-quiet-"));
+  await run(rising, NOW, deliver, {}, quiet);
+  const skipped = await run(crash, NOW + 4 * HOUR, deliver, {}, quiet);
+  assert.deepEqual(skipped.trendAlert, { status: "SKIPPED_NO_FEISHU", state: "AVOID" });
+  assert.equal((await readJson(quiet, "state")).trend.notified, "AVOID");
+  assert.equal(sent.length, 1);
 });
 
 test("applies the routine's important-change rules", () => {

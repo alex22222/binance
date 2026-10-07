@@ -101,6 +101,8 @@ h2{font-size:13px;font-weight:700;margin:0;color:var(--muted);letter-spacing:.08
 .btn{padding:6px 12px;border:1px solid var(--line);border-radius:6px;background:var(--track);color:var(--ink);cursor:pointer;font:inherit;font-size:13px}
 .btn:focus-visible,.capital input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .foot{font-size:12px;color:var(--muted);margin:0}
+.trend{display:grid;gap:12px}
+.stat .v small{display:block;font-family:var(--f-body);font-size:12px;font-weight:400;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -131,6 +133,15 @@ ${siteHeader("/btc-radar")}
     </div>
   </section>
 
+  <section class="panel trend" aria-label="趋势状态">
+    <div class="pos-head">
+      <h2>趋势状态 · 200 日均线</h2>
+      <span class="pill" id="trendpill">—</span>
+    </div>
+    <div class="stats" id="trendstats"></div>
+    <p class="foot">日收盘高于 200 日均线 3% 以上为多头环境，低于 3% 以下为回避环境，在 ±3% 之内维持原状态；状态切换时推送飞书。回避只表示不持有多头，不是做空信号。回测（2022 年以来，现货、次日执行、含手续费）：按此规则持有的最大回撤 −39%，一直持有为 −67%；其他常见的多空信号没有通过同样的检验。</p>
+  </section>
+
   <section class="grid" id="factors"></section>
 
   <section class="panel hist">
@@ -146,7 +157,7 @@ ${siteHeader("/btc-radar")}
     </div>
     <p>分数越高，BTC 下跌的压力越大。六个因子各自打 0–100 分，按权重加总：预测市场 25%、美联储利率预期 20%、美债收益率 20%、BTC 技术面 15%、黄金 10%、衍生品与情绪 10%。</p>
     <p>「参考」标记的指标只展示、不计入评分：RSI(14) 按 OKX BTC-USDT 的 UTC 日线以 Wilder 方法计算，分别给出已收盘和含当日盘中的读数；恐惧贪婪指数来自 alternative.me。</p>
-    <p>持仓警报单独计算：现价离止损不到 5% 为橙色，不到 3% 为红色。服务器每 4 小时自动评估一次（北京时间每 4 小时的第 43 分），综合等级升高、持仓接近止损、自动补仓增加或策略状态变化时推送飞书。</p>
+    <p>持仓警报单独计算：现价离止损不到 5% 为橙色，不到 3% 为红色。服务器每 4 小时自动评估一次（北京时间每 4 小时的第 43 分），综合等级升高、持仓接近止损、自动补仓增加或策略状态变化时推送飞书；200 日均线趋势状态切换时另发一条。</p>
     <p id="sources">数据来源：Polymarket、美国财政部、OKX。</p>
     <p>评分是对公开数据的机械汇总，用来提醒你该去看盘了，不预测价格，也不构成投资建议。</p>
   </section>
@@ -342,6 +353,23 @@ function renderFactors(F, indicators){
     <p class="note">\${esc(f.note)}</p></article>\`}).join("");
 }
 
+const TREND = {LONG:["多头环境","green"],AVOID:["回避环境","orange"]};
+function renderTrend(t){
+  if(!t){
+    $("trendpill").textContent="暂无数据"; $("trendpill").className="pill";
+    $("trendstats").innerHTML='<div class="empty">日线数据暂时读取失败或不足 200 天，下一次评估会重试。</div>';
+    return;
+  }
+  const known = TREND[t.state], previous = TREND[t.previous], dist = num(t.distance)*100;
+  $("trendpill").textContent = known ? known[0] : "未确定"; $("trendpill").className = known ? "pill lv-"+known[1] : "pill";
+  $("trendstats").innerHTML = [
+    ["日收盘 "+esc(t.date), fmt(t.close)],
+    ["200 日均线", fmt(t.average)],
+    ["距均线", '<span class="'+(dist>=0?"pos-c":"neg")+'">'+pct(dist)+'</span>'],
+    ["状态开始", t.since ? esc(t.since)+(previous ? "<small>此前为"+previous[0]+"</small>" : "") : "近 100 天内未切换"]
+  ].map(([k,v])=>'<div class="stat"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>').join("");
+}
+
 function renderLatest(d){
   radar = d;
   gauge(d.score);
@@ -351,7 +379,7 @@ function renderLatest(d){
   const stale=(d.data_status&&d.data_status.staleSources)||[];
   $("stamp").innerHTML=\`最近评估 <b class="num">\${esc(t.toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false}))}</b>\`+(age>5?\` · <span class="stale">已超过 \${Math.floor(age)} 小时未更新</span>\`:" · 每 4 小时更新")
     +(stale.length?\` · <span class="stale">沿用旧数据：\${stale.map(s=>esc(s.label)).join("、")}</span>\`:"");
-  renderPosition(d.position,d.price,d.data_status); renderFactors(d.factors||[], d.indicators||{});
+  renderPosition(d.position,d.price,d.data_status); renderTrend(d.trend||null); renderFactors(d.factors||[], d.indicators||{});
   const sources=(d.sources||[]).map(([n,u])=>[n,httpsUrl(u)]).filter(([,u])=>u);
   if(sources.length) $("sources").innerHTML="数据来源："+sources.map(([n,u])=>\`<a href="\${esc(u)}" target="_blank" rel="noopener noreferrer">\${esc(n)}</a>\`).join("、")+"。";
 }

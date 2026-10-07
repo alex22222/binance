@@ -1,5 +1,6 @@
 // Robustness of the one component that replicated: the slow moving-average regime.
 // Every variant is printed; the plain 200-day rule was fixed before this run.
+import { btcTrendHistory } from "../../src/btc-trend.mjs";
 import { at, dayIndex, days, mean, median, pct, price } from "./data.mjs";
 
 const END = days.length - 1;
@@ -25,7 +26,8 @@ const line = (name, r) => `${name.padEnd(20)} 年化 ${pct(r.cagr).padStart(7)} 
 
 // Stateful rules with confirmation must be evaluated in order.
 function confirmed(n, days2) { const cache = new Map(); let state = false; return (i) => { if (cache.has(i)) return cache.get(i); const above = [...Array(days2).keys()].every((k) => price[i - k] > sma(i - k, n)); const below = [...Array(days2).keys()].every((k) => price[i - k] < sma(i - k, n)); if (above) state = true; else if (below) state = false; cache.set(i, state); return state; }; }
-function banded(n, band) { let state = false; const cache = new Map(); return (i) => { if (cache.has(i)) return cache.get(i); const m = sma(i, n); if (price[i] > m * (1 + band)) state = true; else if (price[i] < m * (1 - band)) state = false; cache.set(i, state); return state; }; }
+
+const trendStates = btcTrendHistory(days.map((date, i) => ({ date, close: price[i] })));
 
 console.log("# 均线长度与确认方式（现货多/空仓，0.1% 手续费，次日执行）");
 for (const [label, from, to] of PERIODS) {
@@ -34,8 +36,8 @@ for (const [label, from, to] of PERIODS) {
   for (const n of [100, 150, 200, 250]) console.log(line(`MA${n}`, run((i) => price[i] > sma(i, n), from, to)));
   const c2 = confirmed(200, 2); for (let i = from - 5; i <= to; i += 1) c2(i);
   console.log(line("MA200 连续2日确认", run(c2, from, to)));
-  const b3 = banded(200, 0.03); for (let i = from - 5; i <= to; i += 1) b3(i);
-  console.log(line("MA200 ±3% 缓冲带", run(b3, from, to)));
+  // The production rule (src/btc-trend.mjs), carried over the whole history.
+  console.log(line("MA200 ±3% 缓冲带", run((i) => trendStates[i - 199]?.state === "LONG", from, to)));
 }
 
 console.log("\n# MA200 穿越事件（首次穿越 + 30 天冷却；次日收盘入场）");

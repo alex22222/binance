@@ -5,6 +5,7 @@ import { BTC_RADAR_LEVELS, evaluateBtcRadar, pyFixed } from "./btc-radar-model.m
 import {
   BTC_RADAR_SOURCES,
   createOkxReadOnlyClient,
+  loadBtcDailyCloses,
   loadBtcDailyRsi,
   loadBtcMarket,
   loadDcaPosition,
@@ -18,6 +19,7 @@ import {
   loadSentiment,
   loadTreasuryYields
 } from "./btc-radar-sources.mjs";
+import { BTC_TREND_LABELS, btcTrendSummary } from "./btc-trend.mjs";
 import { dashboardPublicOrigin } from "./dashboard-auth.mjs";
 import { sendManagerFeishu } from "./fund-manager-delivery.mjs";
 
@@ -38,7 +40,8 @@ const PUBLIC_SOURCES = [
 // Displayed beside the factors but never scored.
 const REFERENCE_SOURCES = [
   ["rsi", "BTC 日线 RSI", loadBtcDailyRsi],
-  ["fearGreed", "恐惧贪婪指数", loadFearGreed]
+  ["fearGreed", "恐惧贪婪指数", loadFearGreed],
+  ["trend", "BTC 200 日均线", loadBtcDailyCloses]
 ];
 
 async function readJson(path, fallback) {
@@ -117,12 +120,38 @@ export function btcRadarAlertText(snapshot, reasons, environment = process.env) 
       : `现价 ${pyFixed(snapshot.price, 0, { grouping: true })}；未接入持仓`
   ];
   if (position) lines.push(`策略总收益 ${position.total_pnl} USDT · 补仓 ${position.safety_filled}/${position.safety_max}`);
+  const link = radarLink(environment);
+  if (link) lines.push(link);
+  return lines.join("\n");
+}
+
+function radarLink(environment) {
   try {
     const origin = new URL(dashboardPublicOrigin(environment));
-    if (origin.protocol === "https:") lines.push(`看板：${origin.origin}/btc-radar`);
+    return origin.protocol === "https:" ? `看板：${origin.origin}/btc-radar` : null;
   } catch {
-    // No public dashboard link configured.
+    return null; // No public dashboard link configured.
   }
+}
+
+// Pushed once for each switch between the long and avoid environments.
+export function btcTrendAlertText(trend, snapshot, environment = process.env) {
+  const band = pyFixed(trend.band * 100, 0);
+  const references = [`雷达 ${pyFixed(snapshot.score, 0)} 分（${snapshot.level_name}）`];
+  const { fearGreed, rsi14 } = snapshot.indicators || {};
+  if (fearGreed) references.push(`恐惧贪婪 ${fearGreed.value}（${fearGreed.label}）`);
+  if (rsi14) references.push(`日线 RSI ${rsi14.closed}`);
+  const funding = snapshot.factors.find(({ key }) => key === "deriv")?.metrics?.[0];
+  if (funding) references.push(funding.join(" "));
+  const lines = [
+    `[BTC 趋势状态] 切换为${BTC_TREND_LABELS[trend.state]}`,
+    `${trend.date} 日收盘 ${pyFixed(trend.close, 0, { grouping: true })}，${trend.distance >= 0 ? "高于" : "低于"} 200 日均线 ${pyFixed(trend.average, 0, { grouping: true })} 约 ${pyFixed(Math.abs(trend.distance) * 100, 1)}%（切换线 ±${band}%）`,
+    ...(trend.previous ? [`此前：${BTC_TREND_LABELS[trend.previous]}`] : []),
+    `参考（回测中没有稳定预测力）：${references.join(" · ")}`,
+    `规则：日收盘高于 200 日均线 ${band}% 以上为多头环境，低于 ${band}% 以下为回避环境。回避只表示不持有多头，不是做空信号。`
+  ];
+  const link = radarLink(environment);
+  if (link) lines.push(link);
   return lines.join("\n");
 }
 
@@ -188,6 +217,7 @@ export async function runBtcRadar({
     rsi14: inputs.rsi?.value ?? null,
     fearGreed: inputs.fearGreed?.value ?? null
   };
+  snapshot.trend = inputs.trend ? btcTrendSummary(inputs.trend.value) : null;
   snapshot.data_status = {
     okxConfigured: Boolean(credentials),
     algoId,
@@ -220,8 +250,35 @@ export async function runBtcRadar({
       alert = { status: "FAILED", reasons, error: error.message };
     }
   }
-  await writeJson(paths.state, { trackedAlgoId: algoId, lastRunAt: new Date(nowMs).toISOString(), lastAlert: { ts: snapshot.ts, ...alert } });
-  return { snapshot, alert };
+
+  // The first trend state seen is adopted silently; after that each switch is
+  // pushed once, and a failed push is retried on the next run.
+  const trend = snapshot.trend;
+  let notified = state.trend?.notified ?? null;
+  let trendAlert = { status: "NONE" };
+  if (trend?.state && !notified) notified = trend.state;
+  else if (trend?.state && trend.state !== notified) {
+    if (!feishuConfigured(environment)) {
+      trendAlert = { status: "SKIPPED_NO_FEISHU", state: trend.state };
+      notified = trend.state;
+    } else {
+      const uuid = createHash("sha256").update(`btc-trend:${trend.date}:${trend.state}`).digest("hex").slice(0, 40);
+      try {
+        await send(btcTrendAlertText(trend, snapshot, environment), uuid, environment, fetchImpl, null);
+        trendAlert = { status: "SENT", state: trend.state };
+        notified = trend.state;
+      } catch (error) {
+        trendAlert = { status: "FAILED", state: trend.state, error: error.message };
+      }
+    }
+  }
+  await writeJson(paths.state, {
+    trackedAlgoId: algoId,
+    lastRunAt: new Date(nowMs).toISOString(),
+    lastAlert: { ts: snapshot.ts, ...alert },
+    trend: { notified, lastAlert: trendAlert.status === "NONE" ? state.trend?.lastAlert ?? null : { ts: snapshot.ts, ...trendAlert } }
+  });
+  return { snapshot, alert, trendAlert };
 }
 
 // Operator settings for the page, such as total capital for the loss share.

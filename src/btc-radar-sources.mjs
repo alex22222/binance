@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { BTC_TREND_DAYS } from "./btc-trend.mjs";
 import { isTransientNetworkError } from "./reliability.mjs";
 import { retry } from "./retry.mjs";
 
@@ -110,6 +111,17 @@ export async function loadBtcDailyRsi({ fetchImpl = fetch } = {}) {
     intraday: Number(wilderRsi(rows.map(close)).toFixed(1)),
     date: new Date(Number(completed.at(-1)[0])).toISOString().slice(0, 10)
   };
+}
+
+// Completed UTC daily closes, oldest first, for the 200-day trend state.
+export async function loadBtcDailyCloses({ fetchImpl = fetch } = {}) {
+  const rows = [...await okxPublic("/api/v5/market/candles", { instId: "BTC-USDT", bar: "1Dutc", limit: "300" }, fetchImpl)].reverse();
+  const closes = rows.filter((row) => row[8] === "1").map((row) => ({
+    date: new Date(Number(row[0])).toISOString().slice(0, 10),
+    close: finite(row[4], "BTC close")
+  }));
+  if (closes.length < BTC_TREND_DAYS) throw new Error(`BTC daily history has ${closes.length} closes; ${BTC_TREND_DAYS} required`);
+  return closes;
 }
 
 // Reference only, not scored: alternative.me crypto Fear & Greed Index.
