@@ -124,6 +124,49 @@ export async function loadBtcDailyCloses({ fetchImpl = fetch } = {}) {
   return closes;
 }
 
+// Observation mode inputs (src/btc-observe.mjs), oldest first.
+export async function loadFearGreedHistory({ fetchImpl = fetch } = {}) {
+  const rows = (await request("https://api.alternative.me/fng/?limit=100", { fetchImpl }))?.data;
+  if (!Array.isArray(rows) || rows.length < 7) throw new Error("Fear & Greed history is too short");
+  return rows.map((row) => ({
+    date: new Date(finite(row.timestamp, "Fear & Greed timestamp") * 1000).toISOString().slice(0, 10),
+    value: finite(row.value, "Fear & Greed value")
+  })).reverse();
+}
+
+// About 100 days of settled 8-hour funding, three pages of 100.
+export async function loadFundingHistory({ fetchImpl = fetch } = {}) {
+  const events = [];
+  let after = null;
+  for (let page = 0; page < 3; page += 1) {
+    const rows = await okxPublic("/api/v5/public/funding-rate-history", {
+      instId: "BTC-USDT-SWAP", limit: "100", ...(after ? { after } : {})
+    }, fetchImpl);
+    if (!rows.length) break;
+    events.push(...rows.map((row) => ({
+      ts: finite(row.fundingTime, "Funding time"),
+      rate: finite(row.realizedRate || row.fundingRate, "Funding rate")
+    })));
+    after = rows.at(-1).fundingTime;
+  }
+  if (events.length < 90) throw new Error(`Funding history has ${events.length} rates; 90 required`);
+  return events.sort((left, right) => left.ts - right.ts);
+}
+
+// FRED broad dollar index and 10-year real yield for the last eight months.
+export async function loadMacroSeries({ fetchImpl = fetch, nowMs = Date.now() } = {}) {
+  const since = new Date(nowMs - 240 * 86_400_000).toISOString().slice(0, 10);
+  const [dollar, realYield] = await Promise.all(["DTWEXBGS", "DFII10"].map(async (id) => {
+    const csv = await request(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${id}&cosd=${since}`, { fetchImpl, text: true });
+    return csv.trim().split(/\r?\n/).slice(1)
+      .map((line) => line.split(","))
+      .filter(([date, value]) => /^\d{4}-\d{2}-\d{2}$/.test(date) && value && value !== ".")
+      .map(([date, value]) => ({ date, value: finite(value, `${id} value`) }));
+  }));
+  if (dollar.length < 60 || realYield.length < 60) throw new Error("FRED history is too short");
+  return { dollar, realYield };
+}
+
 // Reference only, not scored: alternative.me crypto Fear & Greed Index.
 export async function loadFearGreed({ fetchImpl = fetch } = {}) {
   const latest = (await request("https://api.alternative.me/fng/?limit=1", { fetchImpl }))?.data?.[0];

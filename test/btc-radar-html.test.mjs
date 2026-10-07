@@ -102,6 +102,40 @@ test("shows the 200-day trend state and explains a missing or undecided one", as
   assert.match(missing.get("trendstats").innerHTML, /不足 200 天/);
 });
 
+test("lists the observed candidate rules with their record since the start", async () => {
+  const rule = (overrides) => ({
+    id: "A_LONG", label: "趋势延续 · 做多", direction: 1, horizon: 7, evidence: "2022 年后 7 天胜率 75%", today: false,
+    lastEvent: null, events: 0, matured: 0, hit: null, mean: null, base: null, p: null, ...overrides
+  });
+  const observation = {
+    startedAt: "2026-10-06", asOf: "2026-10-07", minEvents: 10,
+    inputs: { trend: 1, r28: 0.086, funding7: 0.041, funding30: 0.03, fng: 70, macro: -1 },
+    rules: [
+      rule({ lastEvent: { date: "2026-09-18", beforeStart: true } }),
+      rule({ id: "A_SHORT", label: "<b>x</b>", direction: -1, today: null }),
+      rule({
+        id: "FUNDING_HOT", label: "资金费率过热", direction: -1, horizon: 30, today: true, lastEvent: { date: "2026-10-07", beforeStart: false },
+        events: 12, matured: 11, hit: 0.636, mean: 0.0412, base: 0.011, p: 0.031, crashRate: 0.182, baseCrashRate: 0.05
+      })
+    ]
+  };
+  const { get } = await render({ status: "AVAILABLE", latest: { ...latest, observation }, history: [] });
+  assert.equal(get("obsstamp").textContent, "自 2026-10-06 起记录 · 数据截至 2026-10-07");
+  assert.equal(get("obsinputs").textContent, "今日输入：站上 4/4 条均线 · 4 周 +8.6% · 资金费率年化 7 日 +4.1%、30 日 +3.0% · 恐惧贪婪 70 · 宏观逆风（美元、实际利率都在升）");
+  const cards = get("obsrules").innerHTML;
+  assert.match(cards, /最近触发：2026-09-18（观察开始前） · 观察开始后 0 次/);
+  assert.match(cards, /还没有到期的触发/);
+  assert.equal(cards.match(/样本不足：已到期 0 \/ 10 次/g).length, 2);
+  assert.match(cards, /<b>&lt;b&gt;x&lt;\/b&gt;<\/b><span class="pill">数据不全<\/span>/);
+  assert.match(cards, /<span class="pill lv-orange">今天触发<\/span>/);
+  assert.match(cards, /30 天：方向正确 64%，平均 \+4\.1%（同期随机 \+1\.1%） · p=0\.03/);
+  assert.match(cards, /30 天内跌超 20%：18%（随机 5%）/);
+  assert.match(cards, /回测：2022 年后 7 天胜率 75%/);
+
+  const missing = await render({ status: "AVAILABLE", latest: { ...latest, observation: null }, history: [] });
+  assert.match(missing.get("obsrules").innerHTML, /观察所需的数据暂时读取失败/);
+});
+
 test("explains missing position access, empty storage, and an expired login", async () => {
   const unconfigured = await render({
     status: "AVAILABLE", latest: { ...latest, position: null, data_status: { okxConfigured: false, staleSources: [] } }, history: []

@@ -1,6 +1,7 @@
 // Replicates published BTC return predictors on our data, splitting each into the
 // paper's own sample and the period after it became public. Entries are one day
 // after the signal; fees included where a strategy trades.
+import { OBSERVED_RULES } from "../../src/btc-observe.mjs";
 import { at, dayIndex, days, mean, median, pct, price, rows } from "./data.mjs";
 
 const END = days.length - 1;
@@ -76,9 +77,10 @@ for (const [label, from, to] of [["2016-06~2021", idx("2016-06-01"), idx("2021-1
 
 // R4 — K33 Research (2024): 30-day average funding turning negative preceded strong returns.
 console.log("\n## R4 30 日平均资金费率转负（K33 2024）");
-const funding30 = (i) => mean(rows.slice(Math.max(0, i - 29), i + 1).map((row) => row.funding7));
+// The radar's observation mode runs this same rule (src/btc-observe.mjs).
+const fundingNegative = OBSERVED_RULES.find(({ id }) => id === "FUNDING_NEGATIVE");
 for (const [label, from, to] of [["2016-06~2021", idx("2016-07-01"), idx("2021-12-31")], ["2022-至今", idx("2022-01-01"), END]]) {
-  const list = firstDays((i) => funding30(i) < 0, from, to, 30);
+  const list = firstDays((i) => fundingNegative.test(rows, i), from, to, fundingNegative.cooldown);
   for (const h of [30, 90]) {
     const values = valid(list.map((i) => fwd(i, h)));
     if (!values.length) { console.log(`${label} ${h}d：无事件`); continue; }

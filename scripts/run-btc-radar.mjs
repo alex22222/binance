@@ -19,6 +19,7 @@ console.log(JSON.stringify({
   reasons: alert.reasons,
   ...(alert.error ? { alertError: alert.error } : {}),
   trend: snapshot.trend?.state ?? null,
+  observing: snapshot.observation ? snapshot.observation.rules.filter(({ today }) => today).map(({ id }) => id) : null,
   trendAlert: trendAlert.status,
   ...(trendAlert.error ? { trendAlertError: trendAlert.error } : {})
 }));

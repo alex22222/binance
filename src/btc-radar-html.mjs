@@ -102,6 +102,11 @@ h2{font-size:13px;font-weight:700;margin:0;color:var(--muted);letter-spacing:.08
 .btn:focus-visible,.capital input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .foot{font-size:12px;color:var(--muted);margin:0}
 .trend{display:grid;gap:12px}
+.obs{display:grid;gap:12px}
+.obs-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}
+.obs-item{border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:grid;gap:4px;align-content:start;font-size:13px}
+.obs-item .obs-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.obs-item .s{color:var(--muted);font-size:12px}
 .stat .v small{display:block;font-family:var(--f-body);font-size:12px;font-weight:400;color:var(--muted)}
 </style>
 </head>
@@ -140,6 +145,16 @@ ${siteHeader("/btc-radar")}
     </div>
     <div class="stats" id="trendstats"></div>
     <p class="foot">日收盘高于 200 日均线 3% 以上为多头环境，低于 3% 以下为回避环境，在 ±3% 之内维持原状态；状态切换时推送飞书。回避只表示不持有多头，不是做空信号。回测（2022 年以来，现货、次日执行、含手续费）：按此规则持有的最大回撤 −39%，一直持有为 −67%；其他常见的多空信号没有通过同样的检验。</p>
+  </section>
+
+  <section class="panel obs" aria-label="观察模式">
+    <div class="pos-head">
+      <h2>观察模式 · 只记录，不推送</h2>
+      <span class="stamp" id="obsstamp"></span>
+    </div>
+    <p class="foot" id="obsinputs"></p>
+    <div class="obs-grid" id="obsrules"></div>
+    <p class="foot">这些候选信号在调研中没有通过 2022 年以后的检验。服务器每天按 UTC 日收盘检查一次，记录每次触发，以及之后 7、30、90 天的涨跌（从次日收盘算起），再与同期随机日子比较。某条规则要在观察开始后积累至少 10 次到期的触发、并且明显好于随机（p&lt;0.05），才值得考虑改为推送。</p>
   </section>
 
   <section class="grid" id="factors"></section>
@@ -370,6 +385,34 @@ function renderTrend(t){
   ].map(([k,v])=>'<div class="stat"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>').join("");
 }
 
+const frac = v => Number.isFinite(num(v)) ? (num(v)>0?"+":"")+(num(v)*100).toFixed(1)+"%" : "—";
+function renderObservation(o){
+  if(!o){
+    $("obsstamp").textContent=""; $("obsinputs").textContent="";
+    $("obsrules").innerHTML='<div class="empty">观察所需的数据暂时读取失败，下一次评估会重试。</div>';
+    return;
+  }
+  const i = o.inputs || {}, trend = num(i.trend), macro = num(i.macro);
+  $("obsstamp").textContent = "自 "+o.startedAt+" 起记录 · 数据截至 "+o.asOf;
+  $("obsinputs").textContent = "今日输入：站上 "+(Number.isFinite(trend) ? Math.round((trend+1)*2) : "—")+"/4 条均线 · 4 周 "+frac(i.r28)
+    +" · 资金费率年化 7 日 "+frac(i.funding7)+"、30 日 "+frac(i.funding30)+" · 恐惧贪婪 "+(Number.isFinite(num(i.fng)) ? num(i.fng) : "—")
+    +" · 宏观"+(macro===1 ? "顺风（美元、实际利率都在降）" : macro===-1 ? "逆风（美元、实际利率都在升）" : Number.isFinite(macro) ? "分歧" : "暂无数据");
+  $("obsrules").innerHTML = (o.rules||[]).map(r => {
+    const today = r.today===true ? ['今天触发', r.direction>0 ? "pill lv-green" : "pill lv-orange"] : r.today===false ? ["未触发","pill"] : ["数据不全","pill"];
+    const last = r.lastEvent ? esc(r.lastEvent.date)+(r.lastEvent.beforeStart ? "（观察开始前）" : "") : "尚未触发";
+    const h = num(r.horizon);
+    const result = num(r.matured) > 0
+      ? h+" 天：方向正确 "+Math.round(num(r.hit)*100)+"%，平均 "+frac(r.mean)+"（同期随机 "+frac(r.base)+"）"+(r.p!=null ? " · p="+num(r.p).toFixed(2) : "")
+      : "还没有到期的触发";
+    const crash = r.crashRate!=null ? '<div class="s">30 天内跌超 20%：'+Math.round(num(r.crashRate)*100)+"%（随机 "+(r.baseCrashRate!=null ? Math.round(num(r.baseCrashRate)*100)+"%" : "—")+"）</div>" : "";
+    const enough = num(r.matured) >= num(o.minEvents) ? "" : '<div class="s">样本不足：已到期 '+fmt(r.matured)+" / "+fmt(o.minEvents)+" 次</div>";
+    return '<article class="obs-item"><div class="obs-head"><b>'+esc(r.label)+'</b><span class="'+today[1]+'">'+today[0]+'</span></div>'
+      +'<div class="s">最近触发：'+last+' · 观察开始后 '+fmt(r.events)+' 次</div>'
+      +'<div>'+esc(result)+'</div>'+crash+enough
+      +'<div class="s">回测：'+esc(r.evidence)+'</div></article>';
+  }).join("");
+}
+
 function renderLatest(d){
   radar = d;
   gauge(d.score);
@@ -379,7 +422,7 @@ function renderLatest(d){
   const stale=(d.data_status&&d.data_status.staleSources)||[];
   $("stamp").innerHTML=\`最近评估 <b class="num">\${esc(t.toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false}))}</b>\`+(age>5?\` · <span class="stale">已超过 \${Math.floor(age)} 小时未更新</span>\`:" · 每 4 小时更新")
     +(stale.length?\` · <span class="stale">沿用旧数据：\${stale.map(s=>esc(s.label)).join("、")}</span>\`:"");
-  renderPosition(d.position,d.price,d.data_status); renderTrend(d.trend||null); renderFactors(d.factors||[], d.indicators||{});
+  renderPosition(d.position,d.price,d.data_status); renderTrend(d.trend||null); renderObservation(d.observation||null); renderFactors(d.factors||[], d.indicators||{});
   const sources=(d.sources||[]).map(([n,u])=>[n,httpsUrl(u)]).filter(([,u])=>u);
   if(sources.length) $("sources").innerHTML="数据来源："+sources.map(([n,u])=>\`<a href="\${esc(u)}" target="_blank" rel="noopener noreferrer">\${esc(n)}</a>\`).join("、")+"。";
 }

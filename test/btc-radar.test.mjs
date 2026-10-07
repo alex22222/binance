@@ -55,7 +55,9 @@ function responses(overrides = {}) {
   return async (url) => {
     const href = String(url);
     for (const [pattern, value] of Object.entries(overrides)) {
-      if (href.includes(pattern)) return value === "FAIL" ? { ok: false, status: 404, json: async () => ({}), text: async () => "" } : body(value);
+      if (!href.includes(pattern)) continue;
+      if (value === "FAIL") return { ok: false, status: 404, json: async () => ({}), text: async () => "" };
+      return body(typeof value === "function" ? value(href) : value);
     }
     const route = routes.find(([pattern]) => href.includes(pattern));
     if (!route) throw new Error(`Unexpected request ${href}`);
@@ -222,6 +224,44 @@ test("adopts the first trend state silently and pushes each later switch once", 
   assert.deepEqual(skipped.trendAlert, { status: "SKIPPED_NO_FEISHU", state: "AVOID" });
   assert.equal((await readJson(quiet, "state")).trend.notified, "AVOID");
   assert.equal(sent.length, 1);
+});
+
+test("records the candidate rules each day without pushing them", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "btc-radar-observe-"));
+  const sent = [];
+  const day = (ms) => new Date(ms).toISOString().slice(0, 10);
+  const fredCsv = (id, start, step) => [`observation_date,${id}`, ...Array.from({ length: 200 }, (_, k) =>
+    `${day(Date.parse("2026-03-15T00:00:00Z") + k * 24 * HOUR)},${(start + k * step).toFixed(4)}`)].join("\n");
+  const fundingPage = (href) => {
+    const after = Number(new URL(href).searchParams.get("after") || Date.parse("2026-10-01T08:00:00Z"));
+    return { code: "0", data: Array.from({ length: 100 }, (_, k) => ({ fundingTime: String(after - (k + 1) * 8 * HOUR), fundingRate: "0.0001", realizedRate: "0.0001" })) };
+  };
+  const observed = {
+    "bar=1Dutc": dailyCandles(Array.from({ length: 299 }, (_, index) => 60000 + index * 100)),
+    "fng/?limit=100": { data: Array.from({ length: 100 }, (_, k) => ({ value: "55", value_classification: "Greed", timestamp: String(Date.parse("2026-09-30T00:00:00Z") / 1000 - k * 86_400) })) },
+    "funding-rate-history?instId=BTC-USDT-SWAP&limit=100": fundingPage,
+    "id=DTWEXBGS": fredCsv("DTWEXBGS", 125, -0.01),
+    "id=DFII10": fredCsv("DFII10", 2.5, -0.002)
+  };
+  const environment = { FEISHU_WEBHOOK_URL: "https://open.feishu.cn/hook/test" };
+  const { snapshot } = await runBtcRadar({ directory, environment, fetchImpl: responses(observed), nowMs: NOW, send: async (...args) => { sent.push(args); } });
+  const { observation } = snapshot;
+  assert.deepEqual([observation.startedAt, observation.asOf, observation.minEvents], ["2026-09-30", "2026-09-30", 10]);
+  assert.deepEqual(observation.rules.map(({ id }) => id), ["A_LONG", "A_SHORT", "B_LONG", "B_SHORT", "FUNDING_NEGATIVE", "FUNDING_HOT"]);
+  assert.deepEqual([observation.inputs.trend, observation.inputs.fng, observation.inputs.macro], [1, 55, 1]);
+  assert.ok(Math.abs(observation.inputs.funding7 - 0.1095) < 1e-9);
+  const trendLong = observation.rules.find(({ id }) => id === "A_LONG");
+  assert.equal(trendLong.today, true);
+  assert.equal(trendLong.events, 0, "the first window only shows triggers from before the start");
+  assert.equal(trendLong.lastEvent.beforeStart, true);
+  assert.equal(sent.length, 0, "observation never pushes");
+  const record = await readJson(directory, "observations");
+  assert.equal(record.startedAt, "2026-09-30");
+  assert.equal(record.evaluated.A_LONG, "2026-09-30");
+
+  const missing = await runBtcRadar({ directory: await mkdtemp(join(tmpdir(), "btc-radar-observe-missing-")), environment: {}, fetchImpl: responses({ ...observed, "fng/?limit=100": "FAIL" }), nowMs: NOW });
+  assert.equal(missing.snapshot.observation, null);
+  assert.ok(missing.snapshot.trend, "the trend state does not depend on observation inputs");
 });
 
 test("applies the routine's important-change rules", () => {

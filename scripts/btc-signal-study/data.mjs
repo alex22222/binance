@@ -81,7 +81,7 @@ export const rows = days.map((day, index) => {
   const realChange = r0 >= 0 && r3 >= 0 ? realYield[r0].value - realYield[r3].value : Number.NaN;
   const y0 = asOfIndex(nominal10, lag);
   return {
-    day, index, P,
+    day, index, P, date: day, close: P,
     ma, trend: votes.some(Number.isNaN) ? Number.NaN : mean(votes),
     r28: index >= 28 ? P / price[index - 28] - 1 : Number.NaN,
     move7: index >= 7 ? P / price[index - 7] - 1 : Number.NaN,

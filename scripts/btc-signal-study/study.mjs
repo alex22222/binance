@@ -1,26 +1,16 @@
-import { DAY, at, clamp, dayIndex, days, iso, mean, median, ms, pct, price, recent, rows, sign } from "./data.mjs";
+import { OBSERVED_RULES } from "../../src/btc-observe.mjs";
+import { DAY, at, clamp, dayIndex, days, iso, mean, median, ms, pct, price, rows, sign } from "./data.mjs";
 
 // ---- Pre-registered rules.
-const RULES = {
-  // Trend continuation: all four moving averages agree, 4-week momentum agrees,
-  // positioning not overheated against the trade, sentiment not at the opposite
-  // extreme, macro (dollar + real yields, 3-month change) not against the trade.
-  A_LONG: (i) => { const r = at(i); return r.trend === 1 && r.r28 > 0 && r.funding7 < 0.30 && r.fng < 80 && r.macro >= 0; },
-  A_SHORT: (i) => { const r = at(i); return r.trend === -1 && r.r28 < 0 && r.funding7 > 0 && r.fng > 20 && r.macro <= 0; },
-  // Extreme reversal: capitulation (or euphoria) plus crowded positioning,
-  // confirmed by price reclaiming (or losing) the 20-day average within 3 days.
-  B_LONG: (i) => {
-    const r = at(i);
-    if (!(Math.min(...recent(i, 7, (x) => x.fng)) <= 20 && r.funding7 <= 0 && r.P > r.ma[20])) return false;
-    return recent(i - 1, 3, (x) => x.P <= x.ma[20]).some(Boolean);
-  },
-  B_SHORT: (i) => {
-    const r = at(i);
-    if (!(Math.max(...recent(i, 7, (x) => x.fng)) >= 80 && r.funding7 >= 0.30 && r.P < r.ma[20])) return false;
-    return recent(i - 1, 3, (x) => x.P >= x.ma[20]).some(Boolean);
-  }
-};
-const DIRECTION = { A_LONG: 1, A_SHORT: -1, B_LONG: 1, B_SHORT: -1 };
+// Pre-registered rules, shared with the radar's observation mode
+// (src/btc-observe.mjs). A: trend continuation — all four moving averages and
+// 4-week momentum agree, positioning not overheated against the trade, sentiment
+// not at the opposite extreme, macro (dollar + real yields, 3-month change) not
+// against it. B: extreme reversal — capitulation (or euphoria) plus crowded
+// positioning, confirmed by price reclaiming (or losing) the 20-day average.
+const SHARED = OBSERVED_RULES.filter(({ id }) => /^[AB]_/.test(id));
+const RULES = Object.fromEntries(SHARED.map((rule) => [rule.id, (i) => rule.test(rows, i)]));
+const DIRECTION = Object.fromEntries(SHARED.map((rule) => [rule.id, rule.direction]));
 
 const START = dayIndex.get("2018-02-08");
 const END = days.length - 1;

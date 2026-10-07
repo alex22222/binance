@@ -10,15 +10,19 @@ import {
   loadBtcMarket,
   loadDcaPosition,
   loadFearGreed,
+  loadFearGreedHistory,
   loadFedExpectations,
+  loadFundingHistory,
   loadFundingRates,
   loadGoldCloses,
+  loadMacroSeries,
   loadOpenInterestChange,
   loadPolymarketMonth,
   loadPolymarketWeek,
   loadSentiment,
   loadTreasuryYields
 } from "./btc-radar-sources.mjs";
+import { observationRows, updateObservations } from "./btc-observe.mjs";
 import { BTC_TREND_LABELS, btcTrendSummary } from "./btc-trend.mjs";
 import { dashboardPublicOrigin } from "./dashboard-auth.mjs";
 import { sendManagerFeishu } from "./fund-manager-delivery.mjs";
@@ -42,6 +46,14 @@ const REFERENCE_SOURCES = [
   ["rsi", "BTC 日线 RSI", loadBtcDailyRsi],
   ["fearGreed", "恐惧贪婪指数", loadFearGreed],
   ["trend", "BTC 200 日均线", loadBtcDailyCloses]
+];
+
+// Observation mode only (src/btc-observe.mjs): recorded and shown, never
+// scored or pushed. The daily closes come from the trend source above.
+const OBSERVATION_SOURCES = [
+  ["fearGreedHistory", "恐惧贪婪历史", loadFearGreedHistory],
+  ["fundingHistory", "资金费率历史", loadFundingHistory],
+  ["macro", "美元与实际利率", loadMacroSeries]
 ];
 
 async function readJson(path, fallback) {
@@ -167,16 +179,17 @@ export async function runBtcRadar({
   send = sendManagerFeishu
 }) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  const paths = Object.fromEntries(["latest", "history", "inputs", "state"].map((name) => [name, join(directory, `${name}.json`)]));
-  const [previous, history, previousInputs, state] = await Promise.all([
-    readJson(paths.latest, null), readJson(paths.history, []), readJson(paths.inputs, {}), readJson(paths.state, {})
+  const paths = Object.fromEntries(["latest", "history", "inputs", "state", "observations"].map((name) => [name, join(directory, `${name}.json`)]));
+  const [previous, history, previousInputs, state, observations] = await Promise.all([
+    readJson(paths.latest, null), readJson(paths.history, []), readJson(paths.inputs, {}), readJson(paths.state, {}),
+    readJson(paths.observations, null)
   ]);
   const context = { fetchImpl, nowMs };
   const inputs = {};
   const stale = [];
   await Promise.all([
     ...PUBLIC_SOURCES.map((source) => collectSource(source, previousInputs, context, stale, inputs)),
-    ...REFERENCE_SOURCES.map((source) => collectSource(source, previousInputs, context, stale, inputs, { optional: true }))
+    ...[...REFERENCE_SOURCES, ...OBSERVATION_SOURCES].map((source) => collectSource(source, previousInputs, context, stale, inputs, { optional: true }))
   ]);
 
   const credentials = okxCredentials(environment);
@@ -218,6 +231,18 @@ export async function runBtcRadar({
     fearGreed: inputs.fearGreed?.value ?? null
   };
   snapshot.trend = inputs.trend ? btcTrendSummary(inputs.trend.value) : null;
+  snapshot.observation = null;
+  if (inputs.trend && inputs.fearGreedHistory && inputs.fundingHistory) {
+    const { record, summary } = updateObservations(observations, observationRows({
+      closes: inputs.trend.value,
+      fearGreed: inputs.fearGreedHistory.value,
+      funding: inputs.fundingHistory.value,
+      dollar: inputs.macro?.value.dollar,
+      realYield: inputs.macro?.value.realYield
+    }));
+    await writeJson(paths.observations, record);
+    snapshot.observation = summary;
+  }
   snapshot.data_status = {
     okxConfigured: Boolean(credentials),
     algoId,
