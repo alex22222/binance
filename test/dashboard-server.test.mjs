@@ -101,7 +101,8 @@ test("dashboard records one exact approval without writing the bot state", async
 
     const reviewPage = await fetch(`${origin}/reviews`);
     assert.equal(reviewPage.status, 200);
-    assert.match(await reviewPage.text(), /id="dailyMetrics"/);
+    assert.match(reviewPage.headers.get("content-security-policy"), /script-src 'nonce-/);
+    assert.match(await reviewPage.text(), /id="findings"/);
 
     const managerPage = await fetch(`${origin}/fund-manager`);
     assert.equal(managerPage.status, 200);
@@ -377,6 +378,21 @@ test("dashboard protects public access with basic auth and an exact HTTPS origin
     assert.equal((await fetch(`${origin}/api/weekly-strategy`)).status, 401);
     assert.equal((await fetch(`${origin}/api/strategy-research`)).status, 401);
     assert.equal((await fetch(`${origin}/api/strategy-research`, { headers: { Authorization: authorization } })).status, 200);
+
+    const reviewEntry = await fetch(`${origin}/reviews?period=7d`, { redirect: "manual" });
+    assert.equal(reviewEntry.status, 303);
+    assert.equal(reviewEntry.headers.get("location"), "/login");
+    assert.equal((await fetch(`${origin}/api/review`)).status, 401);
+    const reviewPage = await fetch(`${origin}/reviews?period=all`, { headers: { Authorization: authorization } });
+    assert.equal(reviewPage.status, 200);
+    const reviewNonce = reviewPage.headers.get("content-security-policy").match(/script-src 'nonce-([^']+)'/)[1];
+    assert.match(await reviewPage.text(), new RegExp(`<script nonce="${reviewNonce.replace(/[+/=]/g, "\\$&")}">`));
+    const review = await fetch(`${origin}/api/review?period=all`, { headers: { Authorization: authorization } });
+    assert.equal(review.status, 200);
+    const reviewBody = await review.json();
+    assert.equal(reviewBody.period.id, "all");
+    assert.deepEqual([reviewBody.trades, reviewBody.positions], [[], []], "no trace yet means an empty review, not an error");
+    assert.ok(reviewBody.findings.length > 0);
 
     const loginPage = await fetch(`${origin}/login`);
     assert.equal(loginPage.status, 200);

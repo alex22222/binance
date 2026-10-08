@@ -56,13 +56,35 @@ test("missing live results render unknown instead of zero and keep the true stra
   assert.match(text, /自动审批/);
   assert.match(text, /未获新增实盘资格/);
   assert.doesNotMatch(text, /仅在人工逐笔审批/);
-  assert.match(text, /暂无可核验的实盘平仓/);
-  assert.match(text, /不是完整历史账本/);
+  assert.match(text, /这个策略没有实盘成交/);
+  assert.match(text, /来自完整交易日志/);
   assert.doesNotMatch(text, /0\.00 U/);
   view.fixture.trace.status = "ERROR";
   view.run("renderDossier()");
   assert.match(view.get("dossierContent").textContent, /报告读取失败/);
   assert.doesNotMatch(view.get("dossierContent").textContent, /0 笔/);
+});
+
+test("live results come from the full ledger and show the strategy's open position", () => {
+  const view = page();
+  const sell = (realizedPnlUsdt, orderId, timestamp) => ({ timestamp, event: "pending_order", status: "finished", details: { side: "SELL", strategyId: DEFAULT_STRATEGY_ID, orderId, realizedPnlUsdt } });
+  const position = { symbol: "QQQ", strategyId: DEFAULT_STRATEGY_ID, openedAt: "2026-09-21T13:32:31Z", costBasisUsdt: 50, lastQuoteProceedsUsdt: 51.57, lastQuoteAt: "2026-10-08T15:59:04Z", peakReturnPct: 4.53, worstReturnPct: -0.18 };
+  view.fixture.trace = { status: "AVAILABLE", period: { from: "2026-07-26T12:31:20Z", to: "2026-10-08T16:03:27Z" }, scope: "FULL_TRADE_LEDGER" };
+  view.fixture.strategies = buildStrategyComparison(DEFAULT_STRATEGY_ID, [], { scope: "FULL_TRADE_LEDGER", positions: [position, { ...position, strategyId: "adaptive-momentum" }] });
+  view.run("renderDossier()");
+  let text = view.get("dossierContent").textContent;
+  assert.match(text, /全部实盘记录：2026-07-26 — 2026-10-08/);
+  assert.match(text, /当前持仓 1 笔/);
+  assert.match(text, /QQQ 2026-09-21 50\.00 U 51\.57 U \+1\.57 U（\+3\.14%） 4\.53% \/ -0\.18%/);
+  assert.match(text, /还没有已完成的平仓，只有持仓中的浮动盈亏/);
+
+  view.fixture.strategies = buildStrategyComparison(DEFAULT_STRATEGY_ID, [sell(-1.5, "a", "2026-08-01T10:00:00Z"), sell(0.5, "b", "2026-08-02T10:00:00Z")], { scope: "FULL_TRADE_LEDGER" });
+  view.run("renderDossier()");
+  text = view.get("dossierContent").textContent;
+  assert.match(text, /-1\.00 U/);
+  assert.match(text, /2 笔已完成的真实平仓/);
+  assert.match(text, /全部交易日志/);
+  assert.equal(view.fixture.strategies.find(({ id }) => id === DEFAULT_STRATEGY_ID).performance.scope, "FULL_TRADE_LEDGER");
 });
 
 test("historical rows keep distinct periods, fixed-notional basis, and missing-strategy state", () => {

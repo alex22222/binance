@@ -1,8 +1,16 @@
-import { readFile, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { buildStrategyComparison, DEFAULT_STRATEGY_ID, strategyById } from "./strategy-lab.mjs";
-import { DASHBOARD_TRACE_TAIL_BYTES, readJsonLinesTail } from "./dashboard.mjs";
 import { contentHash, loadApprovalMode, loadStrategyGate, readEvidence, runtimeCodeHash } from "./strategy-governance.mjs";
+import { refreshTradeLedger } from "./trade-ledger.mjs";
+
+// The ledger lives beside the trace (state/trade-ledger.json in production);
+// TRADE_LEDGER_FILE overrides it, e.g. for a local preview.
+export function tradeLedgerPath(projectRoot, config) {
+  return process.env.TRADE_LEDGER_FILE
+    ? resolve(process.env.TRADE_LEDGER_FILE)
+    : resolve(dirname(resolve(projectRoot, config.traceFile)), "trade-ledger.json");
+}
 
 const PAPER_REPORTS = {
   "daily-turtle-55-20": "state/turtle-paper/latest.json",
@@ -53,17 +61,12 @@ export async function loadStrategyResearch({ projectRoot, configPath, nowMs = Da
     }),
     (async () => {
       try {
-        const path = resolve(projectRoot, config.traceFile);
-        const info = await stat(path);
-        const records = await readJsonLinesTail(path);
-        const times = records.map((record) => Date.parse(record.timestamp)).filter(Number.isFinite);
-        return {
-          status: "AVAILABLE", records, truncated: info.size > DASHBOARD_TRACE_TAIL_BYTES,
-          period: {
-            from: times.length ? new Date(times.reduce((a, b) => Math.min(a, b))).toISOString() : null,
-            to: times.length ? new Date(times.reduce((a, b) => Math.max(a, b))).toISOString() : null
-          }
-        };
+        const ledger = await refreshTradeLedger({
+          tracePath: resolve(projectRoot, config.traceFile),
+          ledgerPath: tradeLedgerPath(projectRoot, config),
+          nowMs
+        });
+        return { status: "AVAILABLE", records: ledger.records, period: { from: ledger.firstAt, to: ledger.lastAt } };
       } catch (error) {
         return { status: error.code === "ENOENT" ? "MISSING" : "ERROR", records: [], period: null };
       }
@@ -92,7 +95,10 @@ export async function loadStrategyResearch({ projectRoot, configPath, nowMs = Da
     archive = { status: "AVAILABLE", records: (await readEvidence(resolve(projectRoot, "state/strategy-evidence")))
       .map(({ id, record }) => ({ id, ...pick(record, ["strategyId", "kind", "evidenceLevel", "generatedAt", "dataCutoff", "identity", "sourceHash", "costModel", "bindingStatus"]) })) };
   } catch { archive = { status: "ERROR", records: [] }; }
-  const strategies = await Promise.all(buildStrategyComparison(activeStrategyId, records).map(async (strategy) => {
+  const positions = await (async () => {
+    try { return JSON.parse(await readFile(resolve(projectRoot, config.stateFile), "utf8")).positions || []; } catch { return []; }
+  })();
+  const strategies = await Promise.all(buildStrategyComparison(activeStrategyId, records, { scope: "FULL_TRADE_LEDGER", positions }).map(async (strategy) => {
     const governance = await loadStrategyGate({ projectRoot, config, strategyId: strategy.id, nowMs, codeHash });
     return { ...strategy, runtimeSupported: strategy.switchable,
       switchable: strategy.switchable && (config.mode !== "live" || governance.allowed),
@@ -102,7 +108,7 @@ export async function loadStrategyResearch({ projectRoot, configPath, nowMs = Da
     generatedAt: new Date(nowMs).toISOString(), mode: config.mode,
     activeStrategyId, control,
     strategies, approval, archive,
-    trace: { ...traceStatus, scope: "TRACE_WINDOW_NOT_FULL_HISTORY" },
+    trace: { ...traceStatus, scope: "FULL_TRADE_LEDGER" },
     validation, shadow, paper: Object.fromEntries(paperEntries)
   };
 }

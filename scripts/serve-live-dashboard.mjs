@@ -14,8 +14,10 @@ import { createAvailableUsdtLoader } from "../src/wallet-balance.mjs";
 import { liveDashboardHtml } from "../src/live-dashboard-html.mjs";
 import { dashboardLoginHtml } from "../src/dashboard-login-html.mjs";
 import { strategyLabHtml } from "../src/strategy-lab-html.mjs";
-import { loadStrategyResearch } from "../src/strategy-research.mjs";
+import { loadStrategyResearch, tradeLedgerPath } from "../src/strategy-research.mjs";
 import { tradeReviewHtml } from "../src/trade-review-html.mjs";
+import { buildReviewOverview } from "../src/trade-review-overview.mjs";
+import { emptyTradeLedger, refreshTradeLedger } from "../src/trade-ledger.mjs";
 import { btcRadarHtml } from "../src/btc-radar-html.mjs";
 import { loadBtcRadarView, saveBtcRadarSettings } from "../src/btc-radar.mjs";
 import { loadManagerPage } from "../src/fund-manager-html.mjs";
@@ -145,7 +147,7 @@ function requireAllowedOrigin(request) {
 
 function requireAuthentication(request, response) {
   if (dashboardRequestAuthorized(request, authConfig)) return true;
-  if (request.method === "GET" && (["/", "/strategies", "/reviews", "/btc-radar"].includes(request.url) || ["/fund-manager", "/weekly-strategy"].includes(new URL(request.url, "http://localhost").pathname))) {
+  if (request.method === "GET" && (["/", "/strategies", "/btc-radar"].includes(request.url) || ["/reviews", "/fund-manager", "/weekly-strategy"].includes(new URL(request.url, "http://localhost").pathname))) {
     response.writeHead(303, {
       "Location": "/login",
       "Cache-Control": "no-store",
@@ -248,13 +250,39 @@ const server = createServer(async (request, response) => {
       response.end(strategyLabHtml());
       return;
     }
-    if (request.method === "GET" && request.url === "/reviews") {
+    if (request.method === "GET" && new URL(request.url, `http://${host}:${port}`).pathname === "/reviews") {
+      const nonce = randomBytes(16).toString("base64");
       response.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-store",
+        "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
         "X-Content-Type-Options": "nosniff"
       });
-      response.end(tradeReviewHtml());
+      response.end(tradeReviewHtml({ nonce }));
+      return;
+    }
+    if (request.method === "GET" && new URL(request.url, `http://${host}:${port}`).pathname === "/api/review") {
+      const config = await loadConfig();
+      const statePath = resolve(projectRoot, config.stateFile);
+      const saved = (path, fallback) => readFile(path, "utf8").then(JSON.parse)
+        .catch((error) => (error.code === "ENOENT" ? fallback : Promise.reject(error)));
+      const [ledger, botState, walletHistory, premarket] = await Promise.all([
+        refreshTradeLedger({ tracePath: resolve(projectRoot, config.traceFile), ledgerPath: tradeLedgerPath(projectRoot, config) })
+          .catch((error) => (error.code === "ENOENT" ? emptyTradeLedger() : Promise.reject(error))),
+        saved(statePath, {}),
+        saved(resolve(dirname(statePath), "wallet-balance-history.json"), []),
+        saved(resolve(tradeReviewDirectory, "premarket-latest.json"), null)
+      ]);
+      response.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.end(JSON.stringify(buildReviewOverview({
+        ledger, botState, walletHistory, premarket,
+        disasterStopLossPct: config.disasterStopLossPct ?? null,
+        period: new URL(request.url, `http://${host}:${port}`).searchParams.get("period") || "30d"
+      })));
       return;
     }
     if (request.method === "GET" && request.url === "/btc-radar") {

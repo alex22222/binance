@@ -1,522 +1,258 @@
 import { SITE_CSS, siteHeader } from "./site-shell.mjs";
 
-export function tradeReviewHtml() {
+// Review page: what the account did over a period, why the active strategy
+// holds what it holds, every completed live trade, and what went wrong in
+// execution. Data comes from /api/review (src/trade-review-overview.mjs).
+export function tradeReviewHtml({ nonce = "" } = {}) {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <title>策略体检 · Agentic Wallet</title>
-  <style>
-    ${SITE_CSS}
-    :root { --site-width: 1420px; }
-    * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
-    button, select, a { font: inherit; }
-    button, select { color: inherit; }
-    button:focus-visible, select:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
-    .shell { width: min(1420px, calc(100% - 40px)); margin: 0 auto; }
-    select, .button { min-height: 40px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-raised); }
-    .button.secondary:hover { border-color: #465467; background: #18222d; }
-    select { min-width: 190px; padding: 8px 12px; font-size: 13px; }
-    main { padding: 22px 0 48px; }
-    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 22px; align-items: start; }
-    .primary, .rail { min-width: 0; }
-    section + section, .rail > * + * { margin-top: 18px; }
-    .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 16px; }
-    .eyebrow { color: #cbd2db; font-size: 13px; }
-    h1 { margin: 0; font-size: clamp(30px, 3.4vw, 44px); line-height: 1.05; letter-spacing: -.045em; }
-    h2 { margin: 0; font-size: 19px; letter-spacing: -.015em; }
-    h3 { margin: 0; }
-    p { margin: 0; }
-    .freshness { margin-top: 10px; color: #d7dce3; font-size: 14px; }
-    .freshness strong { color: var(--red); font-weight: 720; }
-    .intro { margin-top: 8px; color: var(--muted); font-size: 13px; line-height: 1.55; }
-    .page-head-side { display: flex; flex-direction: column; align-items: flex-end; gap: 15px; }
-    .actions { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
-    .button { min-height: 43px; padding: 0 18px; cursor: pointer; font-weight: 720; font-size: 13px; }
-    .button.primary { border-color: #f4c65d; color: #15110a; background: var(--gold); box-shadow: 0 8px 24px rgba(246,200,93,.13); }
-    .button.primary:hover { background: #ffdb78; }
-    .button.secondary { background: var(--panel-raised); }
-    .panel { border: 1px solid var(--line); border-radius: 10px; background: linear-gradient(135deg, rgba(255,255,255,.018), transparent 48%), var(--panel); }
-    .health { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 26px; min-height: 136px; padding: 27px 30px; align-items: center; }
-    .health-title { display: flex; align-items: baseline; gap: 12px; font-size: 22px; font-weight: 680; }
-    .health-title strong { color: var(--gold); font-size: 34px; letter-spacing: -.035em; }
-    .health-title strong.green { color: var(--green); }
-    .health-title strong.red { color: var(--red); }
-    .health-evidence { margin-top: 13px; color: #d9dee5; font-size: 14px; line-height: 1.65; }
-    .health-evidence .green { color: var(--green); } .health-evidence .red { color: var(--red); }
-    .health-verdict { padding-left: 28px; border-left: 1px solid #3a4654; color: var(--muted); font-size: 13px; line-height: 1.65; }
-    .section-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
-    .section-head p { margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.5; }
-    .scope-note { color: var(--muted); font-size: 11px; white-space: nowrap; }
-    .mobile-table-note { display: none; }
-    .table-wrap { overflow: auto; }
-    table { width: 100%; min-width: 760px; border-collapse: collapse; }
-    th, td { height: 39px; padding: 9px 16px; border-bottom: 1px solid var(--line-soft); text-align: left; font-size: 12px; }
-    th { color: #dbe0e6; background: rgba(255,255,255,.025); font-weight: 650; }
-    th small { margin-left: 4px; color: var(--muted); font-weight: 450; }
-    tbody tr:last-child td { border-bottom: 0; }
-    td:first-child { color: #e8ebef; font-weight: 620; }
-    td.value { font: 680 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .green { color: var(--green); } .red { color: var(--red); } .gold { color: var(--gold); }
-    .judgement { color: #c4ccd6; }
-    .diagnosis-list { display: grid; gap: 8px; }
-    .diagnosis { display: grid; grid-template-columns: 40px 148px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 72px; padding: 13px 16px; }
-    .rank { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; color: #1a1408; background: var(--gold); font: 800 14px ui-monospace, SFMono-Regular, monospace; }
-    .diagnosis-name { font-size: 15px; }
-    .severity { display: inline-flex; margin-left: 7px; padding: 4px 7px; border: 1px solid rgba(255,105,120,.42); border-radius: 999px; color: var(--red); background: var(--red-soft); font-size: 10px; vertical-align: 1px; }
-    .severity.watch { border-color: rgba(246,200,93,.42); color: var(--gold); background: var(--gold-soft); }
-    .diagnosis ul { margin: 0; padding-left: 17px; color: #cbd2da; font-size: 12px; line-height: 1.55; }
-    .evidence-badge { padding: 6px 9px; border-radius: 999px; font-size: 10px; font-weight: 650; white-space: nowrap; }
-    .evidence-badge.real { color: var(--green); background: var(--green-soft); border: 1px solid rgba(85,215,160,.24); }
-    .evidence-badge.shadow { color: var(--blue); background: var(--blue-soft); border: 1px solid rgba(120,175,255,.22); }
-    .evidence-badge.descriptive { color: #b7c1ce; background: rgba(183,193,206,.08); border: 1px solid rgba(183,193,206,.15); }
-    .rail-card { padding: 17px; }
-    .rail-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
-    .rail-title h2 { font-size: 17px; }
-    .scope-item { padding: 12px 0 12px 13px; border-left: 3px solid #617083; }
-    .scope-item + .scope-item { border-top: 1px solid var(--line-soft); }
-    .scope-item.real { border-left-color: var(--green); }
-    .scope-item.shadow { border-left-color: var(--blue); }
-    .scope-item strong { display: block; margin-bottom: 4px; font-size: 14px; }
-    .scope-item p { color: var(--muted); font-size: 11px; line-height: 1.55; }
-    .scope-foot { margin-top: 10px; padding: 12px; border: 1px solid var(--line-soft); border-radius: 7px; color: #b9c3ce; background: rgba(255,255,255,.018); font-size: 11px; line-height: 1.55; }
-    .trade-card { padding: 15px; border: 1px solid var(--line-soft); border-radius: 8px; background: rgba(255,255,255,.015); }
-    .trade-card + .trade-card { margin-top: 9px; }
-    .trade-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-    .trade-top strong { font-size: 18px; letter-spacing: .02em; }
-    .trade-pnl { font: 760 16px ui-monospace, SFMono-Regular, monospace; }
-    .trade-sub { margin-top: 5px; color: #c8d0d9; font-size: 11px; }
-    .trade-metrics { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--line-soft); }
-    .trade-metrics span, .evidence-grid span { color: var(--muted); font-size: 10px; }
-    .trade-metrics strong, .evidence-grid strong { display: block; margin-top: 4px; font: 680 12px ui-monospace, SFMono-Regular, monospace; }
-    .trade-result { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line-soft); color: #dce1e7; font-size: 11px; line-height: 1.5; }
-    details { border-top: 1px solid var(--line-soft); }
-    details:first-child { border-top: 0; }
-    summary { padding: 13px 0; color: #d6dce3; cursor: pointer; font-size: 12px; font-weight: 650; }
-    details[open] summary { color: var(--gold); }
-    .evidence-detail { padding: 0 0 14px; }
-    .evidence-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-    .raw-list { max-height: 260px; overflow: auto; margin: 0; padding: 0; list-style: none; }
-    .raw-list li { padding: 9px 0; border-top: 1px solid var(--line-soft); color: #aeb8c4; font: 10px/1.5 ui-monospace, SFMono-Regular, monospace; overflow-wrap: anywhere; }
-    .incident { padding: 13px 0; }
-    .incident + .incident { border-top: 1px solid var(--line-soft); }
-    .incident-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-    .incident-head strong { font-size: 13px; }
-    .incident-count { color: var(--red); font: 760 15px ui-monospace, SFMono-Regular, monospace; }
-    .incident dl { display: grid; grid-template-columns: 72px 1fr; gap: 7px; margin: 10px 0 0; font-size: 11px; }
-    .incident dt { color: var(--muted); }
-    .incident dd { margin: 0; color: #c7cfd8; overflow-wrap: anywhere; }
-    .empty { padding: 18px 4px; color: var(--muted); text-align: center; font-size: 12px; }
-    .context-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-    .context-cell { padding: 12px; border: 1px solid var(--line-soft); border-radius: 7px; }
-    .context-cell span { color: var(--muted); font-size: 10px; }
-    .context-cell strong { display: block; margin-top: 5px; font: 680 12px ui-monospace, SFMono-Regular, monospace; }
-    .context-note { margin: 0 0 11px; color: #b9c3ce; font-size: 11px; line-height: 1.55; }
-    .context-grid + .context-note { margin: 11px 0 0; }
-    .loading-error { color: var(--red); }
-    @media (max-width: 1080px) {
-      .layout { grid-template-columns: 1fr; }
-      .rail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
-      .rail > * + * { margin-top: 0; }
-      .rail > .wide { grid-column: 1 / -1; }
-    }
-    @media (max-width: 760px) {
-      .shell { width: min(100% - 24px, 1420px); }
-      select { min-width: 0; width: 156px; }
-      .page-head { align-items: flex-start; flex-direction: column; }
-      .page-head-side { width: 100%; align-items: flex-start; }
-      .actions { width: 100%; }
-      .button { flex: 1; padding-inline: 10px; }
-      .health { grid-template-columns: 1fr; padding: 22px; }
-      .health-verdict { padding: 15px 0 0; border-left: 0; border-top: 1px solid #3a4654; }
-      .diagnosis { grid-template-columns: 40px minmax(0, 1fr); }
-      .diagnosis ul, .diagnosis .evidence-badge { grid-column: 2; }
-      .diagnosis .evidence-badge { justify-self: start; }
-      .rail { grid-template-columns: 1fr; }
-      .rail > .wide { grid-column: auto; }
-      .context-grid { grid-template-columns: repeat(2, 1fr); }
-      .mobile-table-note { display: block; padding: 10px 16px 0; color: var(--gold); font-size: 11px; }
-    }
-    @media (max-width: 480px) {
-      .health-title { align-items: flex-start; flex-direction: column; gap: 5px; }
-      .health-title strong { font-size: 30px; }
-      .scope-note { display: none; }
-    }
-    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<title>交易复盘 · Agentic Wallet</title>
+<style>
+${SITE_CSS}
+:root{--site-width:1180px}
+*{box-sizing:border-box}
+body{font-size:14px;line-height:1.6;padding-bottom:env(safe-area-inset-bottom,0px)}
+.wrap{max-width:1180px;margin:0 auto;padding:20px 16px 48px;display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px}
+.top-left{display:grid;gap:2px}
+h1{font-size:22px;font-weight:900;margin:0}
+h2{font-size:13px;font-weight:700;margin:0;color:var(--muted);letter-spacing:.08em}
+h3{font-size:14px;margin:16px 0 8px}
+.stamp,.note{color:var(--muted);font-size:12px}
+.note{margin:8px 0 0}
+.tabs{display:inline-flex;gap:4px;padding:4px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.tabs button{border:0;background:none;color:var(--muted);padding:6px 14px;border-radius:7px;font:inherit;font-weight:650;cursor:pointer}
+.tabs button[aria-pressed="true"]{background:var(--brand-soft);color:var(--brand)}
+.tabs button:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);min-width:0;display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-content:start}
+.panel-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px}
+.findings{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.findings li{display:grid;grid-template-columns:10px minmax(0,1fr);gap:10px;font-size:15px}
+.dot{width:8px;height:8px;border-radius:50%;margin-top:9px;background:var(--muted)}
+.dot.good{background:var(--green)} .dot.bad{background:var(--red)}
+.two{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px}
+@media (max-width:860px){.two{grid-template-columns:minmax(0,1fr)}}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:10px}
+.kpi{border-top:1px solid var(--line);padding-top:8px;min-width:0}
+.kpi span{display:block;font-size:12px;color:var(--muted)}
+.kpi strong{display:block;font-family:var(--font-num);font-size:17px;font-weight:600}
+.kpi small{display:block;color:var(--muted);font-size:12px}
+.up{color:var(--green)} .down{color:var(--red)}
+.chart svg{width:100%;height:auto;display:block}
+.chart text{fill:var(--muted);font-family:var(--font-num);font-size:11px}
+.position{border:1px solid var(--line);border-radius:10px;padding:12px;display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
+.position-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.position-head b{font-size:18px}
+.badge{display:inline-flex;align-items:center;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:700;background:var(--surface-2);color:var(--muted)}
+.badge.good{background:var(--green-soft);color:var(--green)} .badge.bad{background:var(--red-soft);color:var(--red)} .badge.brand{background:var(--brand-soft);color:var(--brand)}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{color:var(--muted);font-weight:600;font-size:12px}
+td.num,th.num{text-align:right;font-family:var(--font-num)}
+tr.picked td{background:var(--brand-soft)}
+.empty{color:var(--muted);padding:6px 0}
+.incidents{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.incidents li{display:grid;grid-template-columns:90px minmax(0,1fr);gap:10px;font-size:13px}
+.incidents .when{color:var(--muted);font-family:var(--font-num)}
+.incidents .what{min-width:0;overflow-wrap:anywhere}
+.history{display:flex;flex-wrap:wrap;gap:6px}
+</style>
 </head>
 <body>
-  ${siteHeader("/reviews", '<select id="reviewDate" aria-label="选择交易日"></select>')}
-  <main class="shell">
-    <div class="layout">
-      <div class="primary">
-        <div class="page-head">
-          <div>
-            <h1>策略体检</h1>
-            <div class="freshness" id="generatedAt" aria-live="polite">读取中…</div>
-            <p class="intro">对比今日、近 5 日、近 20 日的交易证据，判断交易过程是否在改善。</p>
-          </div>
-          <div class="page-head-side"><div class="eyebrow" id="reviewPhase">复盘阶段：读取中</div><div class="actions"><button class="button primary" id="diagnosisButton" type="button">查看需改进项</button><button class="button secondary" id="evidenceButton" type="button">展开完整证据</button></div></div>
-        </div>
-
-        <section class="panel health" id="healthSummary" aria-live="polite">
-          <div><div class="health-title">策略健康度：<strong id="healthStatus">读取中</strong></div><div class="health-evidence" id="dailyMetrics"></div></div>
-          <p class="health-verdict" id="healthVerdict">基于历史数据的客观诊断，不构成未来表现保证。</p>
-        </section>
-
-        <section>
-          <div class="section-head"><div><h2>关键指标对比</h2><p>从结果、执行、风险等维度，对比三个观察窗口。</p></div><span class="scope-note">Shadow 不计入真实成交</span></div>
-          <div class="panel table-wrap"><p class="mobile-table-note">左右滑动查看近 20 日与判断</p><table id="comparisonTable"><thead><tr><th>指标</th><th>今日 <small id="todayDate"></small></th><th>近 5 日 <small id="fiveDates"></small></th><th>近 20 日 <small id="twentyDates"></small></th><th>判断</th></tr></thead><tbody id="periodComparison"></tbody></table></div>
-        </section>
-
-        <section id="diagnosisSection">
-          <div class="section-head"><div><h2>问题诊断（按影响程度排序）</h2><p>每项结论标注证据类型，避免把模拟结果或低样本归因当成真实收益。</p></div></div>
-          <div class="diagnosis-list" id="diagnosisList"></div>
-        </section>
-
-        <section id="completeEvidence">
-          <div class="section-head"><div><h2>补充证据</h2><p>默认收起，按需查看盘前环境、市场归因、系统生成结论与开放风险。</p></div></div>
-          <div class="panel rail-card">
-            <details class="evidence-detail"><summary>盘前市场环境</summary><div id="premarketBrief"></div></details>
-            <details class="evidence-detail"><summary>外部市场归因</summary><div id="externalMarket"></div></details>
-            <details class="evidence-detail"><summary>系统生成结论</summary><ul class="raw-list" id="findings"></ul></details>
-            <details class="evidence-detail"><summary>收盘开放风险</summary><div id="openRisk"></div></details>
-          </div>
-        </section>
-      </div>
-
-      <aside class="rail" aria-label="交易证据">
-        <section class="panel rail-card" id="evidenceScope">
-          <div class="rail-title"><h2>证据范围说明</h2></div>
-          <div class="scope-item real"><strong>真实成交</strong><p>来自交易所的已成交记录，用于衡量实际表现。</p></div>
-          <div class="scope-item shadow"><strong>Shadow 研究</strong><p>相同路径、相同市场条件下的非执行对照，用于评估机会成本。</p></div>
-          <div class="scope-item"><strong>描述性归因 / 低样本</strong><p>仅用于现象描述，不代表稳定规律或因果关系。</p></div>
-          <p class="scope-foot">当前报告为历史数据分析，不包含预测或自动交易建议。</p>
-        </section>
-
-        <section class="panel rail-card">
-          <div class="rail-title"><h2 id="tradeHeading">本次完成交易</h2><span class="evidence-badge real">真实成交</span></div>
-          <div id="tradeRows"></div>
-        </section>
-
-        <section class="panel rail-card wide">
-          <div class="rail-title"><h2>重复事件（已聚合）</h2><span class="evidence-badge descriptive">运行记录</span></div>
-          <div id="systemFailures"></div>
-        </section>
-      </aside>
+${siteHeader("/reviews")}
+<main class="wrap">
+  <header class="top">
+    <div class="top-left">
+      <h1>交易复盘</h1>
+      <div class="stamp" id="stamp" role="status">正在读取…</div>
     </div>
-  </main>
-  <script>
-    const money = (value) => value == null ? "—" : (Number(value) >= 0 ? "+" : "") + Number(value).toFixed(3) + " U";
-    const pct = (value) => value == null ? "—" : Number(value).toFixed(1) + "%";
-    const number = (value, digits = 2) => value == null ? "—" : Number(value).toFixed(digits);
-    const el = (tag, className, text) => { const node = document.createElement(tag); if (className) node.className = className; if (text != null) node.textContent = text; return node; };
-    const tone = (value) => value == null || !Number.isFinite(Number(value)) || Number(value) === 0 ? "" : Number(value) > 0 ? "green" : "red";
-    const period = (report, sessions) => (report.periods || []).find((item) => item.sessions === sessions) || null;
-    const shortDate = (value) => value ? value.slice(5) : "—";
-    const dateRange = (item) => item ? "(" + shortDate(item.startDate) + "～" + shortDate(item.endDate) + ")" : "";
-    const ageDays = (date) => {
-      const timestamp = Date.parse(date + "T00:00:00Z");
-      return Number.isFinite(timestamp) ? Math.max(0, Math.floor((Date.now() - timestamp) / 86400000)) : null;
-    };
-    const humanDuration = (minutes) => {
-      if (minutes == null) return "—";
-      const rounded = Math.round(Number(minutes));
-      const days = Math.floor(rounded / 1440);
-      const hours = Math.floor((rounded % 1440) / 60);
-      const mins = rounded % 60;
-      if (days) return days + " 天 " + hours + " 小时";
-      if (hours) return hours + " 小时 " + mins + " 分";
-      return mins + " 分钟";
-    };
-    const strategyName = (id) => ({ "adaptive-momentum": "自适应动量" }[id] || id || "未知策略");
-    const exitName = (reason) => ({ TRAILING_STOP: "移动止盈", INITIAL_STOP: "初始止损", TAKE_PROFIT_2R: "2R 止盈", TIME_EXIT: "时间退出", DISASTER_STOP: "灾难止损" }[reason] || reason || "未知退出");
-    const shadowDecisionName = (decision) => ({ WOULD_SKIP: "会跳过", WOULD_BLOCK: "会阻止", WOULD_ALLOW: "会放行", INSUFFICIENT_DATA: "数据不足" }[decision] || decision || "无对照");
-    const failureName = (failure) => {
-      const source = failure.error || failure.operation || "未知错误";
-      if (/no available liquidity|opening hours/i.test(source)) return "美股非开盘时段暂无代币流动性";
-      return source;
-    };
-    let history = [];
+    <div class="tabs" role="group" aria-label="复盘周期">
+      <button type="button" data-period="7d" aria-pressed="false">近 7 天</button>
+      <button type="button" data-period="30d" aria-pressed="true">近 30 天</button>
+      <button type="button" data-period="all" aria-pressed="false">全部</button>
+    </div>
+  </header>
 
-    function appendContextMetric(root, label, value, valueTone = "") {
-      const cell = el("div", "context-cell");
-      cell.append(el("span", "", label), el("strong", valueTone, value));
-      root.append(cell);
-    }
+  <section class="panel" aria-labelledby="findingsTitle">
+    <h2 id="findingsTitle">本期结论</h2>
+    <ul class="findings" id="findings"></ul>
+  </section>
 
-    function healthFor(report) {
-      const long = period(report, 20);
-      if (!long || long.trades < 10) return { label: "证据不足", tone: "gold" };
-      if (long.realizedPnlUsdt < 0 || long.profitFactor == null || long.profitFactor < 1 || long.payoffRatio == null || long.payoffRatio < 1) return { label: "需改进", tone: "gold" };
-      return { label: "状态良好", tone: "green" };
-    }
+  <section class="two">
+    <div class="panel" aria-labelledby="accountTitle">
+      <div class="panel-head"><h2 id="accountTitle">账户净值</h2><span class="stamp" id="accountStamp"></span></div>
+      <div class="kpis" id="accountKpis"></div>
+      <div class="chart" id="equityChart"></div>
+    </div>
+    <div class="panel" aria-labelledby="positionsTitle">
+      <h2 id="positionsTitle">当前持仓</h2>
+      <div id="positions"></div>
+    </div>
+  </section>
 
-    function renderHealth(report) {
-      const daily = report.daily || {};
-      const five = period(report, 5);
-      const twenty = period(report, 20);
-      const health = healthFor(report);
-      const status = document.getElementById("healthStatus");
-      status.className = health.tone;
-      status.textContent = health.label;
-      const evidence = document.getElementById("dailyMetrics");
-      evidence.replaceChildren();
-      [["今日", daily.realizedPnlUsdt], ["近 5 日", five?.realizedPnlUsdt], ["近 20 日", twenty?.realizedPnlUsdt]].forEach(([label, value], index) => {
-        if (index) evidence.append(document.createTextNode("，"));
-        evidence.append(document.createTextNode(label + " "));
-        evidence.append(el("span", tone(value), money(value)));
-      });
-      if (twenty) {
-        evidence.append(document.createTextNode("；20 日 PF "));
-        evidence.append(el("span", twenty.profitFactor != null && twenty.profitFactor < 1 ? "red" : "", number(twenty.profitFactor)));
-        evidence.append(document.createTextNode("，盈亏比 "));
-        evidence.append(el("span", twenty.payoffRatio != null && twenty.payoffRatio < 1 ? "red" : "", number(twenty.payoffRatio)));
-        evidence.append(document.createTextNode("。"));
-      }
-      let verdict = "数据只描述已经发生的交易，不构成未来表现保证。";
-      if (daily.realizedPnlUsdt > 0 && twenty?.realizedPnlUsdt < 0) verdict = "单日盈利不能改变近 20 日仍为负的判断，交易过程尚未证实改善。";
-      else if (twenty?.realizedPnlUsdt < 0) verdict = "近 20 日结果仍为负，优先处理长期表现与执行稳定性。";
-      document.getElementById("healthVerdict").textContent = verdict;
-    }
+  <section class="panel" aria-labelledby="decisionTitle">
+    <div class="panel-head"><h2 id="decisionTitle">策略决策</h2><span class="stamp" id="decisionStamp"></span></div>
+    <div id="decision"></div>
+  </section>
 
-    function renderComparison(report) {
-      const daily = report.daily || {};
-      const five = period(report, 5);
-      const twenty = period(report, 20);
-      document.getElementById("todayDate").textContent = "(" + report.tradingDate + ")";
-      document.getElementById("fiveDates").textContent = dateRange(five);
-      document.getElementById("twentyDates").textContent = dateRange(twenty);
-      const judgements = {
-        pnl: twenty?.realizedPnlUsdt < 0 ? "整体仍为负" : "整体保持盈利",
-        trades: daily.trades <= 1 ? "单日样本不可独立判断" : "结合更长窗口判断",
-        winRate: twenty?.winRatePct < 50 ? "长期胜率不足" : "长期胜率过半",
-        pf: twenty?.profitFactor == null ? "样本不足" : twenty.profitFactor < 1 ? "低于 1，尚未盈利" : "高于 1",
-        payoff: twenty?.payoffRatio == null ? "样本不足" : twenty.payoffRatio < 1 ? "低于 1，盈利空间不足" : "高于 1",
-        drawdown: twenty?.maxDrawdownUsdt > 0 ? "关注回撤存续" : "暂无已实现回撤"
-      };
-      const rows = [
-        ["净收益 (U)", money(daily.realizedPnlUsdt), money(five?.realizedPnlUsdt), money(twenty?.realizedPnlUsdt), judgements.pnl, true],
-        ["交易次数", String(daily.trades ?? 0), String(five?.trades ?? "—"), String(twenty?.trades ?? "—"), judgements.trades, false],
-        ["胜率", pct(daily.winRatePct), pct(five?.winRatePct), pct(twenty?.winRatePct), judgements.winRate, false],
-        ["Profit Factor", number(daily.profitFactor), number(five?.profitFactor), number(twenty?.profitFactor), judgements.pf, false],
-        ["盈亏比", number(daily.payoffRatio), number(five?.payoffRatio), number(twenty?.payoffRatio), judgements.payoff, false],
-        ["最大回撤", money(daily.maxDrawdownUsdt == null ? null : -daily.maxDrawdownUsdt), money(five?.maxDrawdownUsdt == null ? null : -five.maxDrawdownUsdt), money(twenty?.maxDrawdownUsdt == null ? null : -twenty.maxDrawdownUsdt), judgements.drawdown, true]
-      ];
-      const root = document.getElementById("periodComparison");
-      root.replaceChildren();
-      rows.forEach(([label, today, fiveValue, twentyValue, judgement, signed]) => {
-        const row = document.createElement("tr");
-        row.append(el("td", "", label));
-        [today, fiveValue, twentyValue].forEach((value) => row.append(el("td", "value " + (signed ? tone(Number.parseFloat(value)) : ""), value)));
-        row.append(el("td", "judgement", judgement));
-        root.append(row);
-      });
-    }
+  <section class="panel" aria-labelledby="tradesTitle">
+    <h2 id="tradesTitle">交易记录</h2>
+    <div id="strategySummary"></div>
+    <div id="trades"></div>
+  </section>
 
-    function renderDiagnosis(report) {
-      const twenty = period(report, 20);
-      const shadow = report.shadowCounterfactuals?.regimeRelativePullbackMomentum;
-      const failures = report.systemFailures?.events || [];
-      const external = report.externalMarket;
-      const root = document.getElementById("diagnosisList");
-      root.replaceChildren();
-      const diagnoses = [
-        { name: "策略信号", severity: "主要问题", evidence: "证据：Shadow 研究", evidenceClass: "shadow", points: [
-          shadow?.vetoedTrades ? "Shadow 过滤器会否决 " + shadow.vetoedTrades + " 笔真实入场，回看错过盈利 " + money(shadow.missedProfitUsdt) + "。" : "Shadow 样本不足，暂不能判断过滤器的机会成本。",
-          twenty ? "近 20 日净收益 " + money(twenty.realizedPnlUsdt) + "，PF " + number(twenty.profitFactor) + "，盈亏比 " + number(twenty.payoffRatio) + "。" : "缺少近 20 日证据。"
-        ] },
-        { name: "执行与成本", severity: "重要问题", evidence: "证据：真实成交", evidenceClass: "real", points: [
-          "当日交易手续费（Gas）为 " + money(-(report.daily?.gasCostUsdt || 0)) + "，直接减少实际净收益。",
-          failures.length ? failures.length + " 条运行事件已聚合为 " + groupFailures(failures).length + " 个根因，避免重复记录淹没判断。" : "当日没有记录到执行失败事件。"
-        ] },
-        { name: "系统与数据", severity: "需关注", severityClass: "watch", evidence: "证据：描述性归因 / 低样本", evidenceClass: "descriptive", points: [
-          external?.status === "AVAILABLE" ? "市场归因样本 " + external.observedTrades + " / " + external.totalTrades + " 笔，结论置信度有限。" : "可对齐分钟数据不足，无法估算外部市场关联。",
-          "建议持续检查数据完整性与运行状态；本页不会改变交易、风控或审批规则。"
-        ] }
-      ];
-      diagnoses.forEach((item, index) => {
-        const card = el("article", "panel diagnosis");
-        card.append(el("span", "rank", String(index + 1)));
-        const name = el("div", "diagnosis-name");
-        name.append(el("strong", "", item.name), el("span", "severity " + (item.severityClass || ""), item.severity));
-        const list = el("ul", "");
-        item.points.forEach((point) => list.append(el("li", "", point)));
-        card.append(name, list, el("span", "evidence-badge " + item.evidenceClass, item.evidence));
-        root.append(card);
-      });
-    }
+  <section class="two">
+    <div class="panel" aria-labelledby="executionTitle">
+      <h2 id="executionTitle">执行与运行</h2>
+      <div id="execution"></div>
+    </div>
+    <div class="panel" aria-labelledby="premarketTitle">
+      <h2 id="premarketTitle">盘前环境（最近一次）</h2>
+      <div id="premarket"></div>
+    </div>
+  </section>
 
-    function renderTrades(report) {
-      const trades = report.trades || [];
-      document.getElementById("tradeHeading").textContent = "本次完成交易（" + trades.length + " 笔）";
-      const root = document.getElementById("tradeRows");
-      root.replaceChildren();
-      if (!trades.length) {
-        root.append(el("div", "empty", "该交易日没有完成的真实卖出成交。"));
-        return;
-      }
-      trades.forEach((trade) => {
-        const card = el("article", "trade-card");
-        const top = el("div", "trade-top");
-        top.append(el("strong", "", trade.symbol), el("span", "trade-pnl " + tone(trade.realizedPnlUsdt), money(trade.realizedPnlUsdt)));
-        const metrics = el("div", "trade-metrics");
-        [["MAE", pct(trade.maePct), "red"], ["MFE", pct(trade.mfePct), "green"]].forEach(([label, value, valueTone]) => {
-          const cell = el("div", "");
-          cell.append(el("span", "", label), el("strong", valueTone, value));
-          metrics.append(cell);
-        });
-        const shadowDecision = trade.entryShadow?.regimeRelativePullback?.decision || trade.entryShadow?.pullback?.decision;
-        const result = trade.realizedPnlUsdt > 0 && ["WOULD_SKIP", "WOULD_BLOCK"].includes(shadowDecision)
-          ? "结果盈利，但 Shadow 过滤器当时" + shadowDecisionName(shadowDecision) + "。"
-          : "真实成交结果与 Shadow 对照分开记录。";
-        const details = el("details", "evidence-detail");
-        details.append(el("summary", "", "查看完整成交证据"));
-        const grid = el("div", "evidence-grid");
-        [["真实净收益", money(trade.realizedPnlUsdt)], ["Gas", money(-trade.gasCostUsdt)], ["投入金额", money(trade.amountUsdt)], ["持仓时长", humanDuration(trade.holdingMinutes)], ["退出原因", exitName(trade.exitReason)], ["Shadow 判断", shadowDecisionName(shadowDecision)], ["止损触发", (trade.stopTriggerCount || 0) + " 次"], ["复核取消", (trade.stopRevalidationCancelledCount || 0) + " 次"]].forEach(([label, value]) => appendContextMetric(grid, label, value));
-        details.append(grid);
-        card.append(top, el("p", "trade-sub", strategyName(trade.strategyId) + " · 持仓 " + humanDuration(trade.holdingMinutes) + " · " + exitName(trade.exitReason)), metrics, el("p", "trade-result", result), details);
-        root.append(card);
-      });
-    }
+  <p class="note" id="sourceNote">数据来自完整交易日志、钱包每日余额与机器人状态。浮动盈亏按最新卖出报价估算，未扣卖出 gas。复盘不构成投资建议。</p>
+</main>
+<script nonce="${nonce}">
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const isNum = v => v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v));
+const num = (v, d = 2) => isNum(v) ? Number(v).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }) : "—";
+const signed = (v, d = 2) => isNum(v) ? (Number(v) > 0 ? "+" : "") + num(v, d) : "—";
+const tone = v => isNum(v) ? (Number(v) > 0 ? "up" : Number(v) < 0 ? "down" : "") : "";
+const day = iso => iso ? String(iso).slice(0, 10) : "—";
+const when = iso => iso ? new Date(iso).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+const held = h => !isNum(h) ? "—" : h < 24 ? Math.max(1, Math.round(h)) + " 小时" : (h / 24).toFixed(1) + " 天";
+const kpi = (label, value, cls = "", hint = "") => '<div class="kpi"><span>' + esc(label) + '</span><strong class="' + cls + '">' + value + '</strong>' + (hint ? '<small>' + esc(hint) + '</small>' : "") + "</div>";
+const table = (head, rows, numeric = []) => '<div class="table-wrap"><table><thead><tr>' + head.map((h, i) => '<th class="' + (numeric.includes(i) ? "num" : "") + '">' + esc(h) + "</th>").join("") + "</tr></thead><tbody>"
+  + rows.map(r => '<tr class="' + (r.picked ? "picked" : "") + '">' + r.cells.map((c, i) => '<td class="' + (numeric.includes(i) ? "num " : "") + (c.cls || "") + '">' + (c.html ?? esc(c)) + "</td>").join("") + "</tr>").join("") + "</tbody></table></div>";
+let period = new URLSearchParams(location.search).get("period");
+if (!["7d", "30d", "all"].includes(period)) period = "30d";
 
-    function groupFailures(events) {
-      const groups = new Map();
-      events.forEach((failure) => {
-        const label = failureName(failure);
-        if (!groups.has(label)) groups.set(label, { label, count: 0, first: failure.timestamp, last: failure.timestamp, symbols: new Set(), events: new Set(), raw: [] });
-        const group = groups.get(label);
-        group.count += 1;
-        group.first = group.first < failure.timestamp ? group.first : failure.timestamp;
-        group.last = group.last > failure.timestamp ? group.last : failure.timestamp;
-        if (failure.symbol) group.symbols.add(failure.symbol);
-        if (failure.event) group.events.add(failure.event);
-        group.raw.push(failure);
-      });
-      return [...groups.values()].sort((a, b) => b.count - a.count);
-    }
+function renderFindings(items) {
+  $("findings").innerHTML = (items || []).map(f => '<li><span class="dot ' + esc(f.tone) + '"></span><span>' + esc(f.text) + "</span></li>").join("") || '<li class="empty">暂无结论。</li>';
+}
 
-    function renderFailures(report) {
-      const events = report.systemFailures?.events || [];
-      const root = document.getElementById("systemFailures");
-      root.replaceChildren();
-      if (!events.length) {
-        root.append(el("div", "empty", "该交易日没有记录到失败事件。"));
-        return;
-      }
-      groupFailures(events).forEach((group) => {
-        const incident = el("article", "incident");
-        const head = el("div", "incident-head");
-        head.append(el("strong", "", group.label), el("span", "incident-count", group.count + " 次"));
-        const facts = document.createElement("dl");
-        [["影响资产", group.symbols.size ? [...group.symbols].join("、") : "未标记"], ["涉及环节", [...group.events].join("、") || "未知"], ["首次发生", new Date(group.first).toLocaleString("zh-CN")], ["最后发生", new Date(group.last).toLocaleString("zh-CN")]].forEach(([label, value]) => facts.append(el("dt", "", label), el("dd", "", value)));
-        const details = el("details", "evidence-detail");
-        details.append(el("summary", "", "展开查看 " + group.count + " 条原始事件"));
-        const raw = el("ul", "raw-list");
-        group.raw.forEach((failure) => raw.append(el("li", "", new Date(failure.timestamp).toLocaleString("zh-CN") + " · " + (failure.event || "未知事件") + (failure.symbol ? " · " + failure.symbol : "") + " · " + (failure.error || failure.operation || "未知错误"))));
-        details.append(raw);
-        incident.append(head, facts, details);
-        root.append(incident);
-      });
-    }
+function chart(series, marks) {
+  if (!series || series.length < 2) return '<div class="empty">至少需要两天的余额记录才能画出走势。</div>';
+  const W = 720, H = 220, L = 12, R = 60, T = 14, B = 26, n = series.length;
+  const values = series.map(p => p.totalUsd), min = Math.min(...values), max = Math.max(...values), pad = Math.max((max - min) * 0.12, 0.5);
+  const lo = min - pad, hi = max + pad;
+  const x = i => L + (W - L - R) * i / (n - 1), y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+  // A trade on a day without a balance point sits on the latest earlier point.
+  const pointFor = date => { let found = -1; for (let i = 0; i < n && series[i].date <= date; i += 1) found = i; return found; };
+  let s = '<polyline points="' + series.map((p, i) => x(i).toFixed(1) + "," + y(p.totalUsd).toFixed(1)).join(" ") + '" fill="none" stroke="var(--brand)" stroke-width="2.2"/>';
+  for (const v of [hi - pad, (hi + lo) / 2, lo + pad]) s += '<text x="' + (W - R + 6) + '" y="' + (y(v) + 4).toFixed(1) + '">' + num(v, 1) + "</text>";
+  for (const m of marks) {
+    const i = pointFor(m.date);
+    if (i < 0) continue;
+    s += '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(series[i].totalUsd).toFixed(1) + '" r="4.5" fill="' + m.color + '" stroke="var(--surface)" stroke-width="1.5"><title>' + esc(m.title) + "</title></circle>";
+  }
+  s += '<text x="' + L + '" y="' + (H - 6) + '">' + esc(series[0].date) + '</text><text x="' + (W - R) + '" y="' + (H - 6) + '" text-anchor="end">' + esc(series[n - 1].date) + "</text>";
+  return '<svg viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="账户净值走势">' + s + '</svg><p class="note">金色线是每日钱包总值；绿点是买入，红点和绿点分别是亏损和盈利的卖出。</p>';
+}
 
-    function renderPremarket(brief) {
-      const root = document.getElementById("premarketBrief");
-      root.replaceChildren();
-      if (!brief || brief.status !== "AVAILABLE") {
-        root.append(el("div", "empty", "该交易日尚无可用盘前简报；交易执行不受影响。"));
-        return;
-      }
-      const grid = el("div", "context-grid");
-      appendContextMetric(grid, "大盘平均", pct(brief.market?.benchmarkAveragePct), tone(brief.market?.benchmarkAveragePct));
-      appendContextMetric(grid, "标的上涨广度", pct(brief.market?.breadthPositivePct));
-      appendContextMetric(grid, "VIX 变化", pct(brief.market?.vixChangePct), tone(-(brief.market?.vixChangePct || 0)));
-      appendContextMetric(grid, "风险新闻", (brief.news?.riskHeadlineCount || 0) + " / " + (brief.news?.headlineCount || 0));
-      root.append(el("p", "context-note", brief.advice?.summary || "无文字建议"), grid, el("p", "context-note", "仅用于环境提示；不会自动放宽或收紧策略门槛，也不会触发下单。"));
-    }
+function renderAccount(a, d) {
+  if (!a) { $("accountKpis").innerHTML = '<div class="empty">还没有钱包余额记录。</div>'; $("equityChart").innerHTML = ""; return; }
+  $("accountStamp").textContent = "钱包检查 " + when(a.checkedAt);
+  $("accountKpis").innerHTML = kpi("当前净值", num(a.end.totalUsd) + " U")
+    + kpi(d.period.days ? d.period.label + "变化" : "累计变化", signed(a.changeUsd) + " U", tone(a.changeUsd), signed(a.changePct) + "%")
+    + kpi("期间最大回撤", num(a.maxDrawdownPct) + "%", a.maxDrawdownPct > 0 ? "down" : "")
+    + kpi("可用 USDT", num(a.availableUsdt) + " U", "", "其余在持仓中");
+  const marks = [
+    ...(d.entries || []).map(e => ({ date: day(e.timestamp), color: "var(--green)", title: day(e.timestamp) + " 买入 " + e.symbol })),
+    ...(d.trades || []).map(t => ({ date: day(t.exitAt), color: t.realizedPnlUsdt > 0 ? "var(--green)" : "var(--red)", title: day(t.exitAt) + " 卖出 " + t.symbol + " " + signed(t.realizedPnlUsdt) + " U" }))
+  ];
+  $("equityChart").innerHTML = chart(a.series, marks);
+}
 
-    function renderExternalMarket(market) {
-      const root = document.getElementById("externalMarket");
-      root.replaceChildren();
-      if (!market || market.status !== "AVAILABLE") {
-        root.append(el("div", "empty", "可对齐的分钟数据不足，无法估算市场关联。"));
-        return;
-      }
-      const grid = el("div", "context-grid");
-      appendContextMetric(grid, "可观测交易", market.observedTrades + " / " + market.totalTrades + " 笔");
-      appendContextMetric(grid, "平均相关系数", number(market.averageCorrelation, 3));
-      appendContextMetric(grid, "亏损同向率", pct(market.lossDirectionAlignmentPct));
-      appendContextMetric(grid, "数据错误", String((market.errors || []).length));
-      root.append(grid, el("p", "context-note", "基于持仓期间标的与 SPY/QQQ 对齐的一分钟收益；这是描述性统计，不代表市场造成了交易结果。"));
-    }
+function renderPositions(list) {
+  if (!list || !list.length) { $("positions").innerHTML = '<div class="empty">目前没有持仓。</div>'; return; }
+  $("positions").innerHTML = list.map(p => '<div class="position"><div class="position-head"><b>' + esc(p.symbol) + '</b><span class="badge brand">' + esc(p.strategyName) + '</span><span class="badge ' + (p.unrealizedPnlUsdt >= 0 ? "good" : "bad") + '">' + signed(p.returnPct) + "%</span></div>"
+    + '<div class="kpis">' + kpi("开仓", esc(day(p.openedAt)), "", isNum(p.daysHeld) ? "已持有 " + p.daysHeld + " 天" : "")
+    + kpi("成本 → 估值", num(p.costBasisUsdt) + " → " + num(p.valueUsdt))
+    + kpi("浮动盈亏", signed(p.unrealizedPnlUsdt) + " U", tone(p.unrealizedPnlUsdt))
+    + kpi("持有期间最高 / 最低", signed(p.peakReturnPct) + "% / " + signed(p.worstReturnPct) + "%") + "</div>"
+    + '<p class="note">退出规则：' + esc(p.exitRule) + "</p>"
+    + '<p class="note">估值：' + esc(when(p.markedAt)) + " 的卖出报价</p></div>").join("");
+}
 
-    function renderSupplement(report) {
-      renderPremarket(report.premarketBrief);
-      renderExternalMarket(report.externalMarket);
-      const findings = document.getElementById("findings");
-      const reportFindings = report.findings || [];
-      findings.replaceChildren(...(reportFindings.length ? reportFindings : ["该交易日没有额外系统结论。"]).map((finding) => el("li", "", finding)));
-      const open = document.getElementById("openRisk");
-      open.replaceChildren();
-      const positions = report.openPositions || [];
-      if (!positions.length) {
-        open.append(el("div", "empty", "收盘复盘时没有开放仓位。"));
-        return;
-      }
-      const grid = el("div", "context-grid");
-      positions.forEach((position) => appendContextMetric(grid, position.symbol, "未实现 " + money(position.grossUnrealizedPnlUsdt), position.grossUnrealizedPnlUsdt < 0 ? "red" : "green"));
-      open.append(grid);
-    }
+function renderDecision(d) {
+  const box = $("decision");
+  if (!d || !d.latest) { box.innerHTML = '<div class="empty">没有周度策略的决策记录。</div>'; $("decisionStamp").textContent = ""; return; }
+  const l = d.latest;
+  $("decisionTitle").textContent = "策略决策 · " + l.strategyName;
+  $("decisionStamp").textContent = "评估于 " + when(l.evaluatedAt);
+  const rows = l.assets.map(a => ({ picked: a.ticker === l.target, cells: [a.ticker, { html: '<span class="' + tone(a.momentumPct) + '">' + signed(a.momentumPct) + "%</span>" }, num(a.rsi, 1), a.eligible ? "合格" : "不合格", a.ticker === l.target ? "本周目标" : ""] }));
+  if (l.defensive) rows.push({ picked: l.target === l.defensive.ticker, cells: [l.defensive.ticker + "（防守）", { html: '<span class="' + tone(l.defensive.momentumPct) + '">' + signed(l.defensive.momentumPct) + "%</span>" }, "—", l.defensive.eligible ? "可用" : "不可用", l.target === l.defensive.ticker ? "本周目标" : ""] });
+  box.innerHTML = '<p>' + esc(l.week) + " 这周（信号日 " + esc(l.signalDate) + "）的目标是 <b>" + esc(l.target === "CASH" ? "现金" : l.target) + "</b>。</p>"
+    + table(["ETF", "20 日涨幅", "RSI(14)", "资格", ""], rows, [1, 2])
+    + '<p class="note">规则：每只风险 ETF 看 20 日涨幅和 RSI(14)，RSI 不低于 40 且 20 日涨幅为正才合格，在合格的里选涨幅最高的；都不合格时，防守资产 20 日为正就转入防守资产，否则转为现金。每周第一个交易日开盘后评估一次，下次约在 ' + esc(d.nextEvaluation) + "。</p>"
+    + (d.history && d.history.length ? '<h3>近几周的选择</h3><div class="history">' + d.history.map(h => '<span class="badge">' + esc(h.week) + " · " + esc(h.target === "CASH" ? "现金" : h.target) + "</span>").join("") + "</div>" : "");
+}
 
-    function render(report) {
-      const phase = report.reviewPhase === "FINAL" ? "终版" : "收盘预览";
-      document.getElementById("reviewPhase").textContent = "复盘阶段：历史数据分析 · " + phase;
-      const staleDays = ageDays(report.tradingDate);
-      const freshness = document.getElementById("generatedAt");
-      freshness.replaceChildren(document.createTextNode("历史复盘 · 数据截至 " + report.tradingDate));
-      if (staleDays > 0) freshness.append(document.createTextNode(" · "), el("strong", "", staleDays + " 天未更新"));
-      renderHealth(report);
-      renderComparison(report);
-      renderDiagnosis(report);
-      renderTrades(report);
-      renderFailures(report);
-      renderSupplement(report);
-    }
+function renderTrades(d) {
+  const all = d.strategies.all || [];
+  $("strategySummary").innerHTML = all.length
+    ? '<h3>按策略汇总（全部记录）</h3>' + table(["策略", "期间", "笔数", "胜率", "已实现", "盈利因子", "平均赚 / 亏", "主要退出原因"], all.map(s => ({ cells: [s.name, day(s.from) + " ~ " + day(s.to), String(s.trades), num(s.winRatePct, 1) + "%", { html: '<span class="' + tone(s.realizedPnlUsdt) + '">' + signed(s.realizedPnlUsdt) + " U</span>" }, num(s.profitFactor), signed(s.averageWinUsdt) + " / " + signed(s.averageLossUsdt), Object.entries(s.exitReasons).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + " " + v).join("、")] })), [2, 3, 4, 5])
+    : '<div class="empty">还没有完成的实盘交易。</div>';
+  const trades = d.trades || [];
+  $("trades").innerHTML = '<h3>' + esc(d.period.label) + "完成的交易（" + trades.length + " 笔）</h3>" + (trades.length
+    ? table(["卖出时间", "标的", "策略", "持有", "成本", "已实现", "收益率", "退出原因"], trades.map(t => ({ cells: [when(t.exitAt), t.symbol, t.strategyName, held(t.holdingHours), num(t.costUsdt), { html: '<span class="' + tone(t.realizedPnlUsdt) + '">' + signed(t.realizedPnlUsdt) + "</span>" }, { html: '<span class="' + tone(t.returnPct) + '">' + signed(t.returnPct) + "%</span>" }, t.exitReasonLabel] })), [4, 5, 6])
+    : '<div class="empty">这段时间没有平仓。周度策略通常数周才换一次仓。</div>');
+}
 
-    async function load(date = "") {
-      const suffix = date ? "?date=" + encodeURIComponent(date) : "";
-      const response = await fetch("/api/trade-reviews" + suffix, { cache: "no-store" });
-      const payload = await response.json();
-      if (!response.ok || !payload.available) throw new Error(payload.error || "复盘尚未生成");
-      history = payload.history || history;
-      const select = document.getElementById("reviewDate");
-      if (!select.options.length) {
-        history.forEach((item) => {
-          const option = el("option", "", item.tradingDate + " · " + money(item.realizedPnlUsdt));
-          option.value = item.tradingDate;
-          select.append(option);
-        });
-        select.addEventListener("change", () => load(select.value));
-      }
-      select.value = payload.report.tradingDate;
-      render(payload.report);
-    }
+function renderExecution(e, p) {
+  const changes = (e.autoApprovalChanges || []).map(c => when(c.at) + (c.enabled ? " 开启" : " 关闭") + "自动审批");
+  $("execution").innerHTML = '<div class="kpis">' + kpi("成交", e.fills + " 笔") + kpi("Gas", num(e.gasUsdt, 3) + " U") + kpi("自动审批", e.autoApproved + " 次", "", e.approved > e.autoApproved ? "人工 " + (e.approved - e.autoApproved) + " 次" : "")
+    + kpi("休市报价失败", e.closedMarketQuotes + " 次", "", e.closedMarketDays + " 天，属正常") + "</div>"
+    + (e.incidents.length
+      ? '<h3>需要注意（' + e.incidents.length + "）</h3><ul class=\\"incidents\\">" + e.incidents.map(i => '<li><span class="when">' + esc(when(i.at)) + '</span><span class="what"><b>' + esc(i.kind) + "</b>" + (i.symbol ? " · " + esc(i.symbol) : "") + "<br>" + esc(i.detail) + "</span></li>").join("") + "</ul>"
+      : '<p class="empty">' + esc(p.label) + "没有执行故障。</p>")
+    + (changes.length ? '<p class="note">' + esc(changes.join("；")) + "</p>" : "");
+}
 
-    document.getElementById("diagnosisButton").addEventListener("click", () => document.getElementById("diagnosisSection").scrollIntoView({ behavior: "smooth", block: "start" }));
-    document.getElementById("evidenceButton").addEventListener("click", () => {
-      document.querySelectorAll("#completeEvidence details").forEach((detail) => { detail.open = true; });
-      document.getElementById("completeEvidence").scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-    load().catch((error) => {
-      const generatedAt = document.getElementById("generatedAt");
-      generatedAt.className = "freshness loading-error";
-      generatedAt.textContent = "读取失败：" + error.message;
-    });
-  </script>
+function renderPremarket(m) {
+  if (!m) { $("premarket").innerHTML = '<div class="empty">暂无盘前简报。</div>'; return; }
+  const level = { DEFENSIVE: ["防守", "bad"], SELECTIVE_LONG: ["选择性做多", "brand"], RISK_ON: ["积极", "good"] }[m.level] || [m.level || "未知", ""];
+  $("premarket").innerHTML = '<div class="position-head"><span class="badge ' + level[1] + '">' + esc(level[0]) + '</span><span class="stamp">' + esc(m.tradingDate) + " 美股盘前</span></div>"
+    + "<p>" + esc(m.summary) + "</p>"
+    + '<div class="kpis">' + kpi("基准平均", signed(m.benchmarkAveragePct) + "%", tone(m.benchmarkAveragePct)) + kpi("上涨家数占比", num(m.breadthPositivePct, 1) + "%") + kpi("VIX 变化", signed(m.vixChangePct) + "%", tone(-m.vixChangePct)) + "</div>"
+    + (m.errors ? '<p class="note">有 ' + m.errors + " 个数据源读取失败，简报可能不完整。</p>" : "")
+    + '<p class="note">盘前简报只作参考，不改变策略的执行。</p>';
+}
+
+function render(d) {
+  $("stamp").textContent = d.period.label + " · 交易日志 " + day(d.ledger.from) + " 起，更新到 " + when(d.ledger.to);
+  renderFindings(d.findings); renderAccount(d.account, d); renderPositions(d.positions); renderDecision(d.decision);
+  renderTrades(d); renderExecution(d.execution, d.period); renderPremarket(d.premarket);
+}
+
+async function load() {
+  for (const b of document.querySelectorAll(".tabs button")) b.setAttribute("aria-pressed", String(b.dataset.period === period));
+  try {
+    const response = await fetch("/api/review?period=" + period, { cache: "no-store", signal: AbortSignal.timeout(30000) });
+    if (response.status === 401) { location.assign("/login"); return; }
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    render(await response.json());
+  } catch (error) {
+    $("stamp").textContent = "复盘数据读取失败（" + error.message + "），稍后刷新再试";
+  }
+}
+for (const b of document.querySelectorAll(".tabs button")) b.addEventListener("click", () => {
+  period = b.dataset.period;
+  history.replaceState(null, "", "/reviews?period=" + period);
+  load();
+});
+load();
+</script>
 </body>
 </html>`;
 }

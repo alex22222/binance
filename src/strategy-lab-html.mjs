@@ -195,12 +195,17 @@ export function strategyLabHtml() {
     function empty(parent, title, text) { const node = el("div", "empty"); node.append(el("strong", "", title), el("span", "", text)); parent.append(node); }
     function insights(parent, result, boundary) { const grid = el("div", "insights"); for (const [title, text] of [["结果解读", result], ["证据边界", boundary]]) { const item = el("section", "insight"); item.append(el("h3", "", title), el("p", "", text)); grid.append(item); } parent.append(grid); }
     function renderLive(parent, strategy) {
-      const value = strategy.performance;
-      parent.append(el("p", "source-meta", "日志窗口：" + period(data.trace.period) + " · 不是完整历史账本"));
-      metrics(parent, [["已实现收益", value.realizedPnlUsdt == null ? "—" : number(value.realizedPnlUsdt) + " U", "仅已完成的真实卖出", value.realizedPnlUsdt < 0 ? "negative" : ""], ["已实现收益回撤", value.maxDrawdownUsdt == null ? "—" : number(value.maxDrawdownUsdt) + " U", "不含持仓浮动损益"], ["有效平仓", data.trace.status === "AVAILABLE" ? number(value.trades, 0) + " 笔" : "—", "按订单去重"], ["匹配基准", "尚未提供", "不计算超额收益"]]);
-      if (data.trace.status !== "AVAILABLE" || !value.trades) empty(parent, data.trace.status === "AVAILABLE" ? "此窗口暂无可核验的实盘平仓" : reportFailure(data.trace), "这不代表历史零收益，也不能据此判断策略无风险。");
-      else table(parent, ["成交期间", "胜率", "盈利因子", "数据范围"], [[period(value.period), pct(value.winRatePct), number(value.profitFactor), "有限日志窗口"]]);
-      insights(parent, value.trades ? "本窗口有 " + value.trades + " 笔可核验平仓。收益只反映已有成交，不构成长期表现或升级依据。" : "尚不能形成实盘业绩判断。继续积累已完成成交和完整资金曲线。", "读取交易日志中的已实现收益；成本按原记账口径，未重新审计。无完整账户净值，因此不提供年化收益、Sharpe 或组合最大回撤。");
+      const value = strategy.performance, open = strategy.openPositions || [];
+      parent.append(el("p", "source-meta", "全部实盘记录：" + period(data.trace.period) + " · 来自完整交易日志"));
+      metrics(parent, [["已实现收益", value.realizedPnlUsdt == null ? "—" : number(value.realizedPnlUsdt) + " U", "仅已完成的真实卖出", value.realizedPnlUsdt < 0 ? "negative" : ""], ["已实现收益回撤", value.maxDrawdownUsdt == null ? "—" : number(value.maxDrawdownUsdt) + " U", "不含持仓浮动损益"], ["有效平仓", data.trace.status === "AVAILABLE" ? number(value.trades, 0) + " 笔" : "—", "按订单去重"], ["当前持仓", open.length ? open.length + " 笔" : "无", open.length ? "浮动盈亏见下表" : "没有未平仓的实盘仓位"]]);
+      if (data.trace.status !== "AVAILABLE") empty(parent, reportFailure(data.trace), "这不代表历史零收益，也不能据此判断策略无风险。");
+      else if (!value.trades && !open.length) empty(parent, "这个策略没有实盘成交", "从 " + date(data.trace.period?.from) + " 起的全部交易日志里，没有这个策略的真实买卖。");
+      else if (value.trades) table(parent, ["成交期间", "胜率", "盈利因子", "数据范围"], [[period(value.period), pct(value.winRatePct), number(value.profitFactor), "全部交易日志"]]);
+      if (open.length) {
+        parent.append(el("h3", "", "未平仓"));
+        table(parent, ["标的", "开仓日", "成本", "按卖出报价估值", "浮动盈亏", "期间最高 / 最低"], open.map((position) => [position.symbol, date(position.openedAt), number(position.costBasisUsdt) + " U", number(position.valueUsdt) + " U", (position.unrealizedPnlUsdt >= 0 ? "+" : "") + number(position.unrealizedPnlUsdt) + " U（" + (position.returnPct >= 0 ? "+" : "") + pct(position.returnPct) + "）", pct(position.peakReturnPct) + " / " + pct(position.worstReturnPct)]));
+      }
+      insights(parent, value.trades ? value.trades + " 笔已完成的真实平仓。收益只反映已有成交，不构成长期表现或升级依据。" : open.length ? "还没有已完成的平仓，只有持仓中的浮动盈亏，不能当作已实现业绩。" : "尚不能形成实盘业绩判断。继续积累已完成成交和完整资金曲线。", "已实现收益来自全部交易日志里的真实卖出，按订单去重；浮动盈亏按最新卖出报价估算，未扣卖出时的 gas。无完整账户净值，因此不提供年化收益、Sharpe 或组合最大回撤。");
       if (value.duplicateRecords || value.excludedRecords || value.conflictingOrders) parent.append(el("p", "note", "数据质量：合并 " + value.duplicateRecords + " 条重复记录；排除 " + value.excludedRecords + " 条无效记录及 " + value.conflictingOrders + " 个收益冲突订单。统计可能不完整。"));
     }
     function renderHistory(parent, strategy) {

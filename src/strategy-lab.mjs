@@ -462,7 +462,7 @@ export function entryExecutionDecision({ entriesPaused = false, side }) {
   };
 }
 
-function performanceFor(strategyId, traceRecords, evidence = "live") {
+function performanceFor(strategyId, traceRecords, evidence = "live", scope = "TRACE_WINDOW_NOT_FULL_HISTORY") {
   const orders = new Map();
   const conflicts = new Set();
   let excludedRecords = 0;
@@ -509,7 +509,7 @@ function performanceFor(strategyId, traceRecords, evidence = "live") {
   const dated = trades.length > 0 && trades.every(({ timestamp }) => Number.isFinite(timestamp));
   return {
     evidence,
-    scope: "TRACE_WINDOW_NOT_FULL_HISTORY",
+    scope,
     trades: trades.length,
     wins,
     winRatePct: trades.length ? (wins / trades.length) * 100 : null,
@@ -532,7 +532,10 @@ function classificationItem(dimension, id) {
   return { id, label };
 }
 
-export function buildStrategyComparison(activeStrategyId, traceRecords) {
+// `traceRecords` is either the trace tail or the full trade ledger
+// (src/trade-ledger.mjs); `scope` says which. `positions` are the bot's open
+// positions, shown beside closed-trade results.
+export function buildStrategyComparison(activeStrategyId, traceRecords, { scope = "TRACE_WINDOW_NOT_FULL_HISTORY", positions = [] } = {}) {
   return STRATEGIES.map((strategy) => ({
     ...strategy,
     active: strategy.id === activeStrategyId,
@@ -543,9 +546,27 @@ export function buildStrategyComparison(activeStrategyId, traceRecords) {
       stage: classificationItem("stage", strategy.status),
       riskCluster: classificationItem("riskCluster", strategy.riskCluster)
     },
-    performance: performanceFor(strategy.id, traceRecords),
+    performance: performanceFor(strategy.id, traceRecords, "live", scope),
     performanceByEvidence: {
-      simulated: performanceFor(strategy.id, traceRecords, "simulated")
-    }
+      simulated: performanceFor(strategy.id, traceRecords, "simulated", scope)
+    },
+    openPositions: positions.filter((position) => position.strategyId === strategy.id).map(openPositionSummary)
   }));
+}
+
+function openPositionSummary(position) {
+  const cost = Number(position.costBasisUsdt);
+  const value = Number(position.lastQuoteProceedsUsdt);
+  const valued = Number.isFinite(cost) && cost > 0 && Number.isFinite(value);
+  return {
+    symbol: position.symbol,
+    openedAt: position.openedAt || null,
+    costBasisUsdt: Number.isFinite(cost) ? cost : null,
+    valueUsdt: valued ? value : null,
+    unrealizedPnlUsdt: valued ? value - cost : null,
+    returnPct: valued ? (value / cost - 1) * 100 : null,
+    markedAt: position.lastQuoteAt || null,
+    peakReturnPct: Number.isFinite(Number(position.peakReturnPct)) ? Number(position.peakReturnPct) : null,
+    worstReturnPct: Number.isFinite(Number(position.worstReturnPct)) ? Number(position.worstReturnPct) : null
+  };
 }
