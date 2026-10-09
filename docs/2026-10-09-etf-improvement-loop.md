@@ -1,6 +1,6 @@
 # ETF 标的池、频率与成本改进闭环
 
-状态：代码与独立复核通过，待完成生产验收；本次部署请求来自用户“制定以上建议目标，实施并部署”。
+状态：实施、独立复核及生产验收完成；本次部署请求来自用户“制定以上建议目标，实施并部署”。这只代表工程交付完成，不代表策略达到收益目标或获得实盘资格。
 
 ## 冻结目标与完成条件
 
@@ -34,7 +34,7 @@
 - 新完整矩阵：`artifacts/etf-frequency-2026-10-09-hdMWam/report.json`，4个固定区间×27账户=108单元，逐笔代理交易与日净值另存；源/代码/规则哈希在 manifest/specification 中。
 - 同一历史引擎，上一完成日信号、下一期开盘代理、收盘触发止损后次日开盘；净值额外投影为假设立即平仓口径。不把日线止损当成 Live 分钟执行证据。
 - 测试先暴露旧池/缺卖出成本问题再修复。独立 checker 的采集结束时效/收市、规则选择键身份、基线不补仓三个负例均已关闭，11/11复核通过。
-- 限定部署快照（HEAD加本次精确路径，不含其他任务BTC改动）全量476/476通过；Linux生产预检 success，只有现有Live模式提醒。生产验收结果部署后补录。
+- 限定部署快照（HEAD加本次精确路径，不含其他任务BTC改动）全量476/476通过；服务器定向回归34/34通过。Linux生产预检 success，只有现有Live模式提醒。
 
 ### 同口径完整历史矩阵示例
 
@@ -61,3 +61,18 @@
 3. 在保留 QQQ 持仓和现有配置的前提下短暂重启 Bot/Dashboard；只启用新的 Paper timer。
 4. 验证27账本初始化、冻结身份、正确下一周期日期、零虚构成交、timer有效。
 5. 验证服务 active、认证健康、公网登录保护、QQQ数量与成本未变、无待处理订单、审批与钱包状态未变、授权未改写。
+
+## 生产验收回执
+
+- 代码提交并推送：`5e0f74a`，分支 `codex/linux-server-deployment`；仅部署本次ETF路径，未带入其他任务的BTC雷达改动。
+- 最终API验收时间：2026-10-09 23:36:52 北京时间。26份部署文件SHA256与提交内容匹配；补齐两份原已提交的离线依赖后，短暂重启Bot/Dashboard以对齐系统代码指纹，未重置Paper规则或账本。
+- Bot、Dashboard与新Paper timer均为active；Paper oneshot为`Result=success / ExecMainStatus=0`（执行完显示inactive属正常）。Dashboard健康为`ok / RUNNING`，日志确认QQQ持仓监控恢复，无本次新增服务错误。
+- 公网 `/strategies` 未认证返回`303 → /login`；已认证API及HTML均提供新Paper对照。查看入口：当前周频防守策略 → 表现分析 → Paper。
+- 当前风险候选QQQ/SPY、防守SGOV/CASH；VTI/VTV仅阻止新增买入，完整扫描池和旧四ETF Paper对照保留。
+- 钱包`CONNECTED`、自动审批仍开启；QQQ原始数量`0.068565020872654946`、成本50U不变，无待处理订单或审批。生产env、策略控制、审批控制、授权文件及既有风险参数未改写。
+- 27账户初始化为现金，零模拟持仓/成交，状态`WAITING_FOR_NEXT_PERIOD`。周频最早2026-10-12，月频最早2026-11-02；需当日数据通过时效/完整性校验才会产生代理决策，不保证必定买入。
+- 新增买入门禁仍关闭：`EXPERIMENT_SCOPE_MISMATCH / EXPERIMENT_EXPIRED_OR_INVALID`；保护性卖出允许。旧授权2026-10-05已到期，且与新池/代码不匹配；未自动续签，也不把本次研究部署视为重新授权。
+- 主部署备份与回执：`/var/backups/binance-agentic-stock-bot/etf-20261009-WS4mHQ/verification.json`。
+- 依赖补齐及最终API回执：`/var/backups/binance-agentic-stock-bot/etf-dependencies-20261009-UVS23f/verification.json`、同目录`api-verification.json`。回滚仅恢复对应代码/配置备份，不覆盖持仓或钱包状态。
+
+下一阶段是自然积累前向数据并定期检查覆盖、失败、成本和同档SPY基准；没有经过至少12个月观察、可执行证据与独立复核，不将任何月频变体切换到Live。
