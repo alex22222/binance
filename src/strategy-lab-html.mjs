@@ -227,7 +227,8 @@ export function strategyLabHtml() {
       if (report?.status !== "AVAILABLE") { empty(parent, reportFailure(report), "Paper 账本与实盘、历史模拟独立；未建立账本时不展示虚构净值。"); return; }
       parent.append(el("p", "source-meta", period({ from: report.startedAt, to: report.updatedAt }) + " · 更新：" + age(report.updatedAt)));
       metrics(parent, [["Paper 账本净值", report.equityUsdt == null ? "—" : number(report.equityUsdt) + " U", "包含代理价格估值"], ["已实现收益", number(report.realizedPnlUsdt) + " U", "独立模拟账本", report.realizedPnlUsdt < 0 ? "negative" : ""], ["已平仓", number(report.closedTrades, 0) + " 笔", "Paper 成交"], ["账本收益率", pct(report.totalReturnPct), "相对初始资金"]]);
-      table(parent, ["初始资金", "模型成本", "持仓浮动损益", "持仓估值日"], [[number(report.initialCapitalUsdt) + " U", number(report.totalCostUsdt) + " U", report.position ? number(report.position.unrealizedPnlUsdt) + " U" : "无持仓", report.position ? date(report.position.markedAt) : "—"]]);
+      table(parent, ["初始资金", "已记账模型成本", "假设立即卖出净盈亏", "持仓估值日"], [[number(report.initialCapitalUsdt) + " U", number(report.totalCostUsdt) + " U", report.position ? number(report.hypotheticalExitNetPnlUsdt) + " U" : "无持仓", report.position ? date(report.position.markedAt) : "—"]]);
+      table(parent, ["假设平仓净值", "假设平仓收益率", "预计卖出成本", "费用模型"], [[number(report.liquidationEquityUsdt) + " U", pct(report.liquidationReturnPct), number(report.estimatedExitCostUsdt) + " U", report.costModel || "无持仓 / 未知"]]);
       insights(parent, report.closedTrades ? "分别检查已实现损益与未平仓估值，避免把浮盈当作落袋收益。" : "尚无已完成的 Paper 交易。即便账本净值未变化，也不足以证明策略有效。", "PAPER_CANDLE_PROXY：信号与估值使用日线代理，模型成本不保证覆盖代币报价、滑点及实际成交约束。不是实盘业绩。");
     }
     function renderShadow(parent, strategy) {
@@ -245,9 +246,18 @@ export function strategyLabHtml() {
       const head = el("div", "analysis-head"), tabs = el("div", "evidence-tabs"); tabs.setAttribute("aria-label", "表现证据来源");
       for (const [id, label] of [["live", "实盘"], ["paper", "Paper"], ["history", "历史模拟"], ["shadow", "Shadow"]]) { const item = button(label, "", () => { evidence = id; renderDossier(); }); item.setAttribute("aria-pressed", String(id === evidence)); tabs.append(item); } head.append(tabs); parent.append(head);
       ({ live: renderLive, paper: renderPaper, history: renderHistory, shadow: renderShadow })[evidence](parent, strategy);
+      if (evidence === "paper" && strategy.id === "weekly-etf-dual-momentum-defense") renderFrequencyPaper(parent);
       const metadata = [...parent.children].find((node) => node.className === "source-meta");
       if (metadata) head.append(metadata);
       const actions = el("div", "actions"); actions.append(button("阅读研究依据", "primary", () => { section = "overview"; renderDossier(); }), button("交易规则与数据来源", "secondary", () => { section = "rules"; renderDossier(); })); parent.append(actions);
+    }
+    function renderFrequencyPaper(parent) {
+      const report = data.frequencyPaper;
+      parent.append(el("h3", "", "周 / 月 × 回看期 · 独立 Paper 对照"));
+      if (report?.status !== "AVAILABLE") { empty(parent, reportFailure(report), "未读取到实验账本；不会使用历史回测替代前向结果。"); return; }
+      parent.append(el("p", "source-meta", "更新：" + age(report.updatedAt) + " · 采集状态：" + report.collectionStatus + " · 固定规则 " + report.specificationHash.slice(0, 12)));
+      table(parent, ["实验 / 成本档", "最早决策日", "模拟持仓", "假设平仓净值", "净收益率", "回撤", "平仓笔数"], report.experiments.map(row => [row.id, row.eligibleFrom, row.position?.symbol || "现金", number(row.liquidationEquityUsdt, 4) + " U", pct(row.liquidationReturnPct), pct(row.maxDrawdownPct), number(row.closedTrades, 0)]));
+      insights(parent, "固定八组规则，各有三档成本及同档 SPY 买入持有基准，共 27 个独立账本。仅在下一周期开始，不补填过去持仓、不自动择优。", "50 U 初始资金；往返价差/缓冲 0.27% / 0.37% / 0.92%，另每边 0.02 U Gas（初始本金上约合全包 0.35% / 0.45% / 1%）。代币分钟收盘价代理、15分钟观察止损，不是可执行成交。至少观察12个月，再独立复核；不签发实盘资格。");
     }
     function renderOverview(parent, strategy) {
       facts(parent, [["研究假设", strategy.thesis], ["适用周期与风险暴露", strategy.classification.family.label + " · " + strategy.classification.horizon.label + "；主要风险：" + strategy.classification.riskCluster.label], ["已有研究依据", strategy.evidence], ["可能失效的情形", strategy.risk]]);

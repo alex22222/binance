@@ -155,3 +155,16 @@ test("failed refresh retains prior evidence and clearly reports it as cached", a
   assert.match(view.get("readStatus").textContent, /保留上次成功读取/);
   assert.equal(view.get("refreshButton").disabled, false);
 });
+
+test("Paper comparison labels immediate-exit net values and never appears in Live", () => {
+  const view = page();
+  view.fixture.frequencyPaper = { status: "AVAILABLE", updatedAt: "2026-10-09", specificationHash: "a".repeat(64), collectionStatus: "WAITING", experiments: [
+    { id: "M-252-base", eligibleFrom: "2026-11-02", liquidationEquityUsdt: 50, liquidationReturnPct: 0, maxDrawdownPct: 0, closedTrades: 0 }
+  ] };
+  view.run('evidence = "paper"; renderDossier()');
+  assert.match(view.get("dossierContent").textContent, /M-252-base/);
+  assert.match(view.get("dossierContent").textContent, /2026-11-02/);
+  assert.match(view.get("dossierContent").textContent, /不签发实盘资格/);
+  view.run('evidence = "live"; renderDossier()');
+  assert.doesNotMatch(view.get("dossierContent").textContent, /M-252-base/);
+});

@@ -277,13 +277,16 @@ test("exposes the weekly ETF decision for the active weekly strategy", () => {
     nowMs: Date.parse("2026-09-21T13:32:00.000Z")
   });
 
-  assert.deepEqual(snapshot.weeklyEtfDecision, weeklyEtfLive);
+  assert.equal(snapshot.weeklyEtfDecision.decision.target, weeklyEtfLive.decision.target);
+  assert.deepEqual(snapshot.weeklyEtfDecision.decision.allRiskAssets.map(asset => asset.ticker), ["QQQ", "SPY"]);
+  assert.deepEqual(snapshot.weeklyEtfDecision.decision.candidates, []);
+  assert.equal(weeklyEtfLive.decision.allRiskAssets[1].ticker, "VTI");
   assert.equal(snapshot.strategy.activeStrategyId, "weekly-etf-dual-momentum-defense");
   assert.deepEqual(snapshot.strategy.weeklyEtf, {
     momentumDays: 20,
     rsiPeriod: 14,
     rsiThreshold: 40,
-    riskTickers: ["QQQ", "VTI", "VTV", "SPY"],
+    riskTickers: ["QQQ", "SPY"],
     defensiveTicker: "SGOV"
   });
 });

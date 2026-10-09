@@ -37,7 +37,8 @@ export function weeklyEtfLiveDecisionWindow(nowMs = Date.now(), liveState = null
   const plan = nyseSessionPlan(nowMs);
   const week = weeklyPaperWeek(plan.date);
   const firstTradingDate = firstNyseTradingDateOfWeek(plan.date);
-  const cached = liveState?.week === week && liveState?.decision?.target
+  const validTargets = [...WEEKLY_ETF_ROTATION_UNIVERSE.riskTickers, WEEKLY_ETF_ROTATION_UNIVERSE.defensiveTicker, "CASH"];
+  const cached = liveState?.week === week && validTargets.includes(liveState?.decision?.target)
     ? liveState.decision
     : null;
   return {
@@ -83,7 +84,7 @@ export async function loadWeeklyEtfDefensiveSignal(sessionDate, { fetchImpl = fe
     ticker,
     await fetchYahooAdjustedDaily(ticker, sessionDate, fetchImpl)
   ])));
-  const signal = weeklyEtfDefensiveSignal(seriesByTicker);
+  const signal = weeklyEtfDefensiveSignal(seriesByTicker, {}, WEEKLY_ETF_ROTATION_UNIVERSE);
   const expectedSignalDate = previousNyseTradingDate(sessionDate);
   if (signal.signalDate !== expectedSignalDate) throw new Error("Stale weekly ETF signal date");
   return { signal, seriesByTicker };

@@ -58,6 +58,9 @@ test("charges costs only on actual weekly transactions", () => {
   assert.equal(opened.state.position.symbol, "QQQ");
   assert.equal(opened.state.position.quantity, 0.4975);
   assert.equal(opened.state.totalCostUsdt, 0.25);
+  assert.ok(Math.abs(opened.state.liquidationEquityUsdt - 49.50125) < 1e-9);
+  assert.ok(Math.abs(opened.state.position.hypotheticalExitNetPnlUsdt + 0.49875) < 1e-9);
+  assert.equal(opened.state.position.valuationBasis, "HYPOTHETICAL_EXIT_AFTER_MODEL_COSTS");
 
   const repeated = advanceWeeklyEtfRotationPaper(opened.state, {
     at: "2026-09-14T14:01:00.000Z",

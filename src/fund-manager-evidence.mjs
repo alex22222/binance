@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { paperExitValuation } from "./paper-valuation.mjs";
 
 export function beijingDate(now = Date.now()) {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(now));
@@ -23,6 +24,7 @@ export function paperSummary(state, tradingDate, newYorkDate) {
   const coversDay = state.lastObservation?.sessionDate >= tradingDate && state.startedAt
     && newYorkDate(Date.parse(state.startedAt)) <= tradingDate;
   const position = state.position;
+  const valuation = paperExitValuation(state);
   return {
     status: coversDay ? "AVAILABLE" : "STALE_OR_PARTIAL",
     mode: state.mode,
@@ -48,7 +50,11 @@ export function paperSummary(state, tradingDate, newYorkDate) {
     position: position ? {
       symbol: position.symbol, openedAt: position.openedAt,
       notionalUsdt: number(position.notionalUsdt ?? position.entryCapitalUsdt),
-      unrealizedPnlUsdt: number(position.unrealizedPnlUsdt),
+      unrealizedPnlUsdt: valuation.hypotheticalExitNetPnlUsdt,
+      ledgerUnrealizedPnlUsdt: number(position.unrealizedPnlUsdt),
+      valuationBasis: valuation.valuationBasis,
+      costModel: valuation.costModel,
+      estimatedExitCostUsdt: valuation.estimatedExitCostUsdt,
       markedAt: position.markedAt,
       markTradingDate: position.markedAt ? newYorkDate(Date.parse(position.markedAt)) : null,
       markPrice: number(position.markPrice),

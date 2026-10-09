@@ -302,6 +302,14 @@ export function buildDashboardSnapshot({
     : null;
 
   const activeStrategyId = strategyControl?.strategyId || config.defaultStrategyId || DEFAULT_STRATEGY_ID;
+  const weeklyEtfDecision = state.weeklyEtfLive ? structuredClone(state.weeklyEtfLive) : null;
+  if (weeklyEtfDecision?.decision) {
+    const decision = weeklyEtfDecision.decision;
+    // Display the current pool, without rewriting the saved historical decision.
+    decision.allRiskAssets = WEEKLY_ETF_ROTATION_UNIVERSE.riskTickers.map(ticker =>
+      decision.allRiskAssets?.find(asset => asset.ticker === ticker) || { ticker, eligible: false, momentumPct: null, rsi: null });
+    decision.candidates = (decision.candidates || []).filter(asset => WEEKLY_ETF_ROTATION_UNIVERSE.riskTickers.includes(asset.ticker));
+  }
   return {
     generatedAt: new Date(nowMs).toISOString(),
     mode: config.mode,
@@ -403,7 +411,7 @@ export function buildDashboardSnapshot({
     },
     strategies: buildStrategyComparison(activeStrategyId, traceRecords),
     weeklyEtfDecision: activeStrategyId === WEEKLY_ETF_DEFENSIVE_STRATEGY_ID
-      ? state.weeklyEtfLive || null
+      ? weeklyEtfDecision
       : null,
     positions,
     position,

@@ -2,9 +2,28 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  loadWeeklyEtfDefensiveSignal,
   weeklyEtfLiveDecisionWindow,
   weeklyEtfLiveExitDecision
 } from "../src/weekly-etf-live.mjs";
+
+test("removed risk assets cannot be reused from an old cached Live decision", () => {
+  const now = Date.parse("2026-10-12T14:00:00Z");
+  assert.equal(weeklyEtfLiveDecisionWindow(now, { week: "2026-10-12", decision: { target: "VTI" } }).decisionUsable, false);
+});
+
+test("Live data collection and ranking require only QQQ, SPY and SGOV", async () => {
+  const fetched = [];
+  const dates = Array.from({ length: 30 }, (_, i) => Date.parse("2026-08-01") / 1000 + i * 86400);
+  dates[29] = Date.parse("2026-09-18") / 1000;
+  const { signal } = await loadWeeklyEtfDefensiveSignal("2026-09-21", { fetchImpl: async (url) => {
+    fetched.push(new URL(url).pathname.split("/").at(-1));
+    return { ok: true, json: async () => ({ chart: { result: [{ timestamp: dates,
+      indicators: { adjclose: [{ adjclose: dates.map((_, i) => 100 + i) }] } }] } }) };
+  } });
+  assert.deepEqual(fetched.sort(), ["QQQ", "SGOV", "SPY"]);
+  assert.deepEqual(signal.allRiskAssets.map(a => a.ticker), ["QQQ", "SPY"]);
+});
 
 test("creates a weekly decision only during the first NYSE session but can finish a cached rotation later", () => {
   const monday = Date.parse("2026-09-21T14:00:00.000Z");

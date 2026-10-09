@@ -30,7 +30,9 @@ test("separates daily Paper closed PnL from cumulative and open marks", () => {
   }, "2026-09-11", newYorkDate);
   assert.equal(summary.daily.realizedPnlUsdt, -1);
   assert.equal(summary.cumulative.realizedPnlUsdt, 4);
-  assert.equal(summary.position.unrealizedPnlUsdt, -0.5);
+  assert.equal(summary.position.unrealizedPnlUsdt, null);
+  assert.equal(summary.position.ledgerUnrealizedPnlUsdt, -0.5);
+  assert.equal(summary.position.valuationBasis, "HYPOTHETICAL_EXIT_AFTER_MODEL_COSTS");
 });
 
 test("rejects incomplete reports and HTTP-200 Feishu business errors", async () => {

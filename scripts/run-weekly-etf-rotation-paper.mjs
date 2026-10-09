@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { nyseSessionPlan } from "../src/strategy.mjs";
 import { newYorkSessionBounds } from "../src/strategy-data.mjs";
 import {
-  WEEKLY_ETF_ROTATION_UNIVERSE,
+  LEGACY_WEEKLY_ETF_ROTATION_UNIVERSE as WEEKLY_ETF_ROTATION_UNIVERSE,
   WEEKLY_ETF_ROTATION_STRATEGY_ID,
   WEEKLY_ETF_DEFENSIVE_STRATEGY_ID,
   weeklyEtfDefensiveSignal,

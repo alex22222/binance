@@ -3,6 +3,8 @@ import { dirname, resolve } from "node:path";
 import { buildStrategyComparison, DEFAULT_STRATEGY_ID, strategyById } from "./strategy-lab.mjs";
 import { contentHash, loadApprovalMode, loadStrategyGate, readEvidence, runtimeCodeHash } from "./strategy-governance.mjs";
 import { refreshTradeLedger } from "./trade-ledger.mjs";
+import { paperExitValuation } from "./paper-valuation.mjs";
+import { FREQUENCY_PAPER_HASH } from "./etf-frequency-paper.mjs";
 
 // The ledger lives beside the trace (state/trade-ledger.json in production);
 // TRADE_LEDGER_FILE overrides it, e.g. for a local preview.
@@ -47,6 +49,7 @@ function paperReport(value, strategyId) {
   return {
     ...pick(value, ["strategyId", "evidenceLevel", "startedAt", "updatedAt", "initialCapitalUsdt", "equityUsdt", "totalReturnPct", "realizedPnlUsdt", "totalCostUsdt"]),
     closedTrades: value.trades.length,
+    ...paperExitValuation(value),
     position: value.position ? pick(value.position, ["symbol", "markedAt", "unrealizedPnlUsdt"]) : null
   };
 }
@@ -109,6 +112,12 @@ export async function loadStrategyResearch({ projectRoot, configPath, nowMs = Da
     activeStrategyId, control,
     strategies, approval, archive,
     trace: { ...traceStatus, scope: "FULL_TRADE_LEDGER" },
-    validation, shadow, paper: Object.fromEntries(paperEntries)
+    validation, shadow, paper: Object.fromEntries(paperEntries),
+    frequencyPaper: await readReport(resolve(projectRoot, "state/etf-frequency-paper/latest.json"), (value) => {
+      if (value.mode !== "paper" || value.specificationHash !== FREQUENCY_PAPER_HASH || value.automaticTradingEligible !== false || !Array.isArray(value.experiments)) throw new Error("Frequency Paper identity mismatch");
+      return { ...pick(value, ["startedAt", "updatedAt", "evidenceLevel", "specificationHash", "specification", "collectionStatus", "lastObservation", "automaticTradingEligible"]),
+        experiments: value.experiments.map(ledger => ({ ...pick(ledger, ["id", "frequency", "momentumDays", "cost", "eligibleFrom", "liquidationEquityUsdt", "liquidationReturnPct", "realizedPnlUsdt", "totalCostUsdt", "maxDrawdownPct", "closedTrades", "observations"]),
+          position: ledger.position ? pick(ledger.position, ["symbol", "markedAt", "hypotheticalExitNetPnlUsdt"]) : null })) };
+    })
   };
 }

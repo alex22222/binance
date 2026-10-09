@@ -3,8 +3,14 @@ const DAY_MS = 86_400_000;
 export const WEEKLY_ETF_ROTATION_STRATEGY_ID = "weekly-etf-momentum-rsi-rotation";
 export const WEEKLY_ETF_DEFENSIVE_STRATEGY_ID = "weekly-etf-dual-momentum-defense";
 
-export const WEEKLY_ETF_ROTATION_UNIVERSE = Object.freeze({
+// The original Paper controls retain their original pool and ledger identity.
+export const LEGACY_WEEKLY_ETF_ROTATION_UNIVERSE = Object.freeze({
   riskTickers: Object.freeze(["QQQ", "VTI", "VTV", "SPY"]),
+  defensiveTicker: "SGOV"
+});
+
+export const WEEKLY_ETF_ROTATION_UNIVERSE = Object.freeze({
+  riskTickers: Object.freeze(["QQQ", "SPY"]),
   defensiveTicker: "SGOV"
 });
 
@@ -44,14 +50,14 @@ function normalizedDailySeries(values) {
     .sort((left, right) => left.date.localeCompare(right.date));
 }
 
-export function weeklyEtfRotationSignal(seriesByTicker, overrides = {}) {
+export function weeklyEtfRotationSignal(seriesByTicker, overrides = {}, universe = LEGACY_WEEKLY_ETF_ROTATION_UNIVERSE) {
   const config = { ...WEEKLY_ETF_ROTATION_CONFIG, ...overrides };
   const requiredRows = Math.max(config.momentumDays, config.rsiPeriod) + 1;
   if (!Number.isInteger(config.momentumDays) || config.momentumDays < 1
     || !Number.isInteger(config.rsiPeriod) || config.rsiPeriod < 1
     || !Number.isFinite(config.rsiThreshold)) throw new Error("Invalid weekly ETF signal configuration");
 
-  const allRiskAssets = WEEKLY_ETF_ROTATION_UNIVERSE.riskTickers.map((ticker) => {
+  const allRiskAssets = universe.riskTickers.map((ticker) => {
     const series = normalizedDailySeries(seriesByTicker?.[ticker]);
     if (series.length < requiredRows) throw new Error(`Insufficient daily history: ${ticker}`);
     const closes = series.map(({ close }) => close);
@@ -73,23 +79,23 @@ export function weeklyEtfRotationSignal(seriesByTicker, overrides = {}) {
   return {
     config,
     signalDate: allRiskAssets[0].signalDate,
-    target: candidates[0]?.ticker || WEEKLY_ETF_ROTATION_UNIVERSE.defensiveTicker,
+    target: candidates[0]?.ticker || universe.defensiveTicker,
     candidates,
     allRiskAssets
   };
 }
 
-export function weeklyEtfDefensiveSignal(seriesByTicker) {
-  const baseline = weeklyEtfRotationSignal(seriesByTicker);
-  const defensiveTicker = WEEKLY_ETF_ROTATION_UNIVERSE.defensiveTicker;
+export function weeklyEtfDefensiveSignal(seriesByTicker, overrides = {}, universe = LEGACY_WEEKLY_ETF_ROTATION_UNIVERSE) {
+  const baseline = weeklyEtfRotationSignal(seriesByTicker, overrides, universe);
+  const defensiveTicker = universe.defensiveTicker;
   const defensive = normalizedDailySeries(seriesByTicker?.[defensiveTicker]);
-  if (defensive.length < WEEKLY_ETF_ROTATION_CONFIG.momentumDays + 1) {
+  if (defensive.length < baseline.config.momentumDays + 1) {
     throw new Error(`Insufficient daily history: ${defensiveTicker}`);
   }
   if (defensive.at(-1).date !== baseline.signalDate) {
     throw new Error(`${defensiveTicker} signal date does not align`);
   }
-  const momentumPct = (defensive.at(-1).close / defensive.at(-21).close - 1) * 100;
+  const momentumPct = (defensive.at(-1).close / defensive.at(-(baseline.config.momentumDays + 1)).close - 1) * 100;
   const allRiskAssets = baseline.allRiskAssets.map((asset) => ({
     ...asset,
     eligible: asset.eligible && asset.momentumPct > 0
@@ -113,8 +119,8 @@ function weeklyEtfAsset(items, ticker) {
   return matches[0];
 }
 
-export function weeklyEtfRotationAssets(items) {
-  return [...WEEKLY_ETF_ROTATION_UNIVERSE.riskTickers, WEEKLY_ETF_ROTATION_UNIVERSE.defensiveTicker]
+export function weeklyEtfRotationAssets(items, universe = LEGACY_WEEKLY_ETF_ROTATION_UNIVERSE) {
+  return [...universe.riskTickers, universe.defensiveTicker]
     .map((ticker) => weeklyEtfAsset(items, ticker));
 }
 
@@ -164,6 +170,8 @@ function markPosition(state, snapshot) {
   if (!state.position) {
     state.equityUsdt = state.cashUsdt;
     state.totalReturnPct = (state.equityUsdt / state.initialCapitalUsdt - 1) * 100;
+    state.liquidationEquityUsdt = state.equityUsdt;
+    state.liquidationReturnPct = state.totalReturnPct;
     return;
   }
   const price = finitePositive(snapshot.prices?.[state.position.symbol]);
@@ -173,6 +181,11 @@ function markPosition(state, snapshot) {
   state.position.unrealizedPnlUsdt = state.position.quantity * price - state.position.entryCapitalUsdt;
   state.equityUsdt = state.position.quantity * price;
   state.totalReturnPct = (state.equityUsdt / state.initialCapitalUsdt - 1) * 100;
+  state.position.estimatedExitCostUsdt = state.equityUsdt * state.roundTripCostPct / 200;
+  state.position.hypotheticalExitNetPnlUsdt = state.position.unrealizedPnlUsdt - state.position.estimatedExitCostUsdt;
+  state.position.valuationBasis = "HYPOTHETICAL_EXIT_AFTER_MODEL_COSTS";
+  state.liquidationEquityUsdt = state.equityUsdt - state.position.estimatedExitCostUsdt;
+  state.liquidationReturnPct = (state.liquidationEquityUsdt / state.initialCapitalUsdt - 1) * 100;
 }
 
 export function advanceWeeklyEtfRotationPaper(inputState, snapshot, options = {}) {
@@ -180,6 +193,7 @@ export function advanceWeeklyEtfRotationPaper(inputState, snapshot, options = {}
   if (!(roundTripCostPct >= 0 && roundTripCostPct < 100)) throw new Error("Invalid Paper cost settings");
   const sideCostRate = roundTripCostPct / 200;
   const state = structuredClone(inputState);
+  state.roundTripCostPct = roundTripCostPct;
   const events = [];
   state.updatedAt = snapshot.at;
   state.lastObservation = {
@@ -211,8 +225,8 @@ export function advanceWeeklyEtfRotationPaper(inputState, snapshot, options = {}
   }
 
   const allowedTargets = new Set([
-    ...WEEKLY_ETF_ROTATION_UNIVERSE.riskTickers,
-    WEEKLY_ETF_ROTATION_UNIVERSE.defensiveTicker
+    ...LEGACY_WEEKLY_ETF_ROTATION_UNIVERSE.riskTickers,
+    LEGACY_WEEKLY_ETF_ROTATION_UNIVERSE.defensiveTicker
   ]);
   if (state.strategyId === WEEKLY_ETF_DEFENSIVE_STRATEGY_ID) allowedTargets.add("CASH");
   const target = snapshot.decision.target;
@@ -293,6 +307,7 @@ export function advanceWeeklyEtfRotationPaper(inputState, snapshot, options = {}
   };
   state.equityUsdt = investedUsdt;
   state.totalReturnPct = (state.equityUsdt / state.initialCapitalUsdt - 1) * 100;
+  markPosition(state, snapshot);
   events.push({
     type: "PAPER_BUY_FILLED",
     at: snapshot.at,

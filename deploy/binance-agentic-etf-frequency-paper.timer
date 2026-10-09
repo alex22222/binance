@@ -1,0 +1,11 @@
+[Unit]
+Description=Observe ETF Paper comparisons every 15 minutes during possible NYSE hours
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 13..21:02/15:00 UTC
+AccuracySec=10s
+Persistent=true
+Unit=binance-agentic-etf-frequency-paper.service
+
+[Install]
+WantedBy=timers.target
