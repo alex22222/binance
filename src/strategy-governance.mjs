@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { strategyById } from "./strategy-lab.mjs";
+import { allocationConfigErrors } from "./weekly-etf-allocation.mjs";
 
 const codeRoot = resolve(import.meta.dirname, "..");
 const HASH = /^[a-f0-9]{64}$/;
@@ -13,7 +14,7 @@ const CONFIG_FIELDS = [
   "signalReviewMinR", "minDirectionalMinutes", "maxRoundTripCostPct", "slippagePct",
   "executionBufferPct", "estimatedRoundTripGasUsdt", "minNetEdgePct", "regularOnlyEntries",
   "entryCutoffMinutes", "fomcEntryBlackoutDates", "quoteMaxAgeSeconds", "maxQuoteDriftPct",
-  "allowUnsupportedAuditForOfficialRwa", "basisExitPct"
+  "allowUnsupportedAuditForOfficialRwa", "basisExitPct", "weeklyEtfAllocation"
 ];
 
 function canonical(value) {
@@ -97,7 +98,16 @@ function evaluateExperimentalAuthorization({ identity, authorization, config, no
       authorization.review != null || (authorization.evidenceIds != null && (!Array.isArray(authorization.evidenceIds) || authorization.evidenceIds.length))) {
     reasons.push("EXPLICIT_EXPERIMENT_AUTHORIZATION_REQUIRED");
   }
-  const ceilings = { maxTradeUsdt: 50, maxOpenPositions: 1, dailyLossLimitUsdt: 2 };
+  const dynamic = config?.weeklyEtfAllocation != null;
+  if (dynamic && (allocationConfigErrors(config).length ||
+      evidenceHash(authorization.limits?.weeklyEtfAllocation ?? null) !== evidenceHash(config.weeklyEtfAllocation))) {
+    reasons.push("EXPERIMENT_ALLOCATION_INVALID");
+  }
+  if (!dynamic && (authorization.limits?.weeklyEtfAllocation || authorization.topUpRequest)) reasons.push("EXPERIMENT_ALLOCATION_INVALID");
+  if (authorization.topUpRequest && (!dynamic ||
+      !/^[a-zA-Z0-9_-]{1,64}$/.test(authorization.topUpRequest.requestId || "") ||
+      !HASH.test(authorization.topUpRequest.positionHash || ""))) reasons.push("EXPERIMENT_TOP_UP_INVALID");
+  const ceilings = { maxTradeUsdt: dynamic ? 250 : 50, maxOpenPositions: 1, dailyLossLimitUsdt: 2 };
   for (const [key, ceiling] of Object.entries(ceilings)) {
     const limit = authorization.limits?.[key], value = config?.[key];
     if (!Number.isFinite(limit) || limit <= 0 || limit > ceiling ||
@@ -112,6 +122,7 @@ function evaluateExperimentalAuthorization({ identity, authorization, config, no
     authorizationId: evidenceHash(authorization), evidenceIds: [], reviewedBy: null,
     approvedBy: authorization.approvedBy || null, approvedAt: authorization.approvedAt,
     expiresAt: authorization.expiresAt, limits: authorization.limits || null,
+    topUpRequest: authorization.topUpRequest || null,
     limitations: ["RESEARCH_GATES_NOT_PASSED", "USER_ACCEPTED_EXPERIMENTAL_RISK"],
     evaluatedAt: new Date(nowMs).toISOString(), protectiveExitAllowed: true
   };

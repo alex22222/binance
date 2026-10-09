@@ -16,6 +16,7 @@ export function createOrderExecution({
   trace,
   readEmergencyStop,
   authorizeEntry = async () => ({ allowed: false, reasons: ["GATE_NOT_CONFIGURED"] }),
+  revalidateAllocation = async () => false,
   isShutdownRequested = () => false,
   now = () => Date.now(),
   chainId = "56"
@@ -81,11 +82,16 @@ export function createOrderExecution({
       if (details.side === "SELL") return;
       if (details.side !== "BUY") throw new Error("Invalid order side");
       let gate = await authorizeEntry(config, details);
+      const dynamic = Boolean(config.weeklyEtfAllocation);
+      const allocationAllowed = dynamic && await revalidateAllocation(config, state, details, gate);
+      if ((dynamic || details.allocation) && !allocationAllowed) {
+        gate = { ...gate, allowed: false, reasons: [...(gate.reasons || []), "ALLOCATION_EXECUTION_LIMIT"] };
+      }
       if (gate.authorizationType === "EXPERIMENTAL_EXCEPTION") {
         const amount = Number(details.fromTokenQty), limits = gate.limits;
         if (!limits || !Number.isFinite(amount) || amount <= 0 || amount > limits.maxTradeUsdt ||
             String(details.fromToken).toLowerCase() !== "0x55d398326f99059ff775485246999027b3197955" ||
-            openPositions(state).length >= limits.maxOpenPositions ||
+            (openPositions(state).length >= limits.maxOpenPositions && !(allocationAllowed && details.entryType === "TOP_UP")) ||
             !Number.isFinite(state.realizedPnlUsdt) || state.realizedPnlUsdt <= -limits.dailyLossLimitUsdt) {
           gate = { ...gate, allowed: false, reasons: [...(gate.reasons || []), "EXPERIMENT_EXECUTION_LIMIT"] };
         }

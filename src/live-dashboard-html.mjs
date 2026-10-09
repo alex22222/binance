@@ -976,10 +976,12 @@ export function liveDashboardHtml() {
           ? null
           : position.initialRiskPct * data.risk.profitProtectionR;
         const weeklyPosition = position.strategyId === WEEKLY_ETF_STRATEGY_ID;
-        const weeklyDisasterRiskUsdt = position.costBasisUsdt * data.risk.disasterStopLossPct / 100;
+        const allocationPosition = weeklyPosition && data.risk.weeklyEtfAllocation && position.shadow !== true;
+        const weeklyDisasterRiskUsdt = allocationPosition ? position.riskUsdt : position.costBasisUsdt * data.risk.disasterStopLossPct / 100;
         const riskText = weeklyPosition
           ? "周度持仓 · 下周目标改变时换仓或转为现金 · 收益跌至 -" + data.risk.disasterStopLossPct.toFixed(2) +
-            "% 触发灾难退出（约 " + money(weeklyDisasterRiskUsdt) + " USDT，未计退出成本） · " +
+            "% 触发灾难退出（约 " + money(weeklyDisasterRiskUsdt) + " USDT，" +
+            (allocationPosition ? "已计入场及估算退出 Gas；非保证亏损封顶" : "未计退出成本") + "） · " +
             "不执行 ATR 初始止损、1R 移动保护或 2R 止盈"
           : position.initialRiskPct == null
             ? "等待风险参数"
@@ -1409,6 +1411,17 @@ export function liveDashboardHtml() {
         " · 净边 ≥ " + pct(data.strategy.minNetEdgePct);
       const weeklyStrategy = data.strategy.activeStrategyId === WEEKLY_ETF_STRATEGY_ID;
       const weekly = data.strategy.weeklyEtf;
+      const allocation = weeklyStrategy ? data.risk.weeklyEtfAllocation : null;
+      const plan = allocation?.plan;
+      const planText = !plan
+        ? "等待新鲜余额与可执行卖价；尚无资金计划，不代表下单"
+        : plan.allowed === false
+          ? "本次资金计划未通过：" + (plan.reason || "等待复核")
+          : (plan.topUp ? "计划补仓 " : "计划新开 ") + money(plan.amountUsdt) + " USDT · 目标总值 " +
+            money(plan.targetValueUsdt) + " USDT · 现金预留 " + money(plan.cashReserveUsdt) +
+            " USDT · 估算风险 " + money(plan.estimatedLossUsdt) + " USDT · 最近计算 " + time(plan.checkedAt) + "，执行前再次复核";
+      const topUps = Object.values(allocation?.topUpRequests || {});
+      const topUpStatus = { REQUESTED: "待复核", SUBMITTED: "已提交，等待成交", FINISHED: "已完成", FAILED: "失败" };
       const items = weeklyStrategy
         ? [
             ["入场", "每周首个美股交易日 · 使用前一交易日收盘 · " + weekly.momentumDays + "日动量 > 0 · RSI(" + weekly.rsiPeriod + ") ≥ " + weekly.rsiThreshold],
@@ -1417,8 +1430,19 @@ export function liveDashboardHtml() {
             ["执行成本", costText],
             ["正常退出", "下周目标改变时换仓或转为现金"],
             ["灾难保护", "可执行收益 ≤ -" + data.risk.disasterStopLossPct.toFixed(2) + "% 时立即退出，不等待周度换仓"],
-            ["新开仓限制", "单笔 " + money(data.risk.maxTradeUsdt) + " USDT · 已实现日亏达到 " + money(data.risk.dailyLossLimitUsdt) + " USDT 后禁止新开仓 · 当前 " + data.risk.maxOpenPositions + " 仓"],
-            ["开放灾难风险", money(data.risk.disasterRiskUsdt) + " USDT · 按持仓成本×" + data.risk.disasterStopLossPct.toFixed(2) + "% 估算，未计退出 Gas/滑点"],
+            ...(allocation ? [
+              ["动态仓位", "目标持仓 ≤ " + allocation.allocationPct + "% · 现金预留 ≥ " + allocation.cashReservePct + "% · 以可用 USDT＋持仓可卖总值计算，不包含原生 Gas 资产"],
+              ["风险预算", "单次估算风险预算 " + money(allocation.maxSingleLossUsdt) + " USDT · 包含全部持仓成本、报价缓冲和 Gas；非保证亏损封顶，跳空或无流动性仍可超预算"],
+              ["最新资金计划", planText],
+              ["一次性补仓", topUps.length
+                ? topUps.map(request => (topUpStatus[request.status] || request.status || "状态未知") + (request.orderId ? " · 订单 " + request.orderId : "")).join("；")
+                : "尚无补仓执行记录；只处理与当前持仓绑定的一次性授权，不自动反复补满"]
+            ] : []),
+            ["新开仓限制", (allocation
+              ? "持仓成本绝对上限 " + money(allocation.absoluteCostCapUsdt) + " USDT，不是固定下单金额"
+              : "单笔 " + money(data.risk.maxTradeUsdt) + " USDT") + " · 已实现日亏达到 " + money(data.risk.dailyLossLimitUsdt) + " USDT 后禁止新开仓 · 当前 " + data.risk.maxOpenPositions + " 仓"],
+            ["开放灾难风险", money(data.risk.disasterRiskUsdt) + " USDT · 按持仓成本×" + data.risk.disasterStopLossPct.toFixed(2) +
+              (allocation ? "%＋已计入场及估算退出 Gas；不包含跳空/流动性尾部风险" : "% 估算，未计退出 Gas/滑点")],
             ["日亏额度使用", money(data.risk.dailyLossUsedUsdt) + " / " + money(data.risk.dailyLossLimitUsdt) + " USDT · " + pct(data.risk.dailyLossUsedPct)],
             ["Shadow 风控", "趋势质量 · 集中度 · ATR 仓位建议 · 仅观测，不改变下单"]
           ]
@@ -1555,7 +1579,11 @@ export function liveDashboardHtml() {
         realizedPnl.title = "毛盈亏 " + money(data.risk.realizedGrossPnlUsdt) +
           " USDT · Gas -" + money(data.risk.gasCostUsdt) + " USDT · 当前显示净盈亏";
         document.getElementById("dailyLossRemaining").textContent = money(data.risk.dailyLossRemainingUsdt) + " USDT";
-        document.getElementById("maxTrade").textContent = money(data.risk.maxTradeUsdt) + " USDT";
+        const maxTrade = document.getElementById("maxTrade");
+        maxTrade.textContent = money(data.risk.maxTradeUsdt) + " USDT";
+        maxTrade.title = data.risk.weeklyEtfAllocation
+          ? "绝对上限，不是固定下单金额；动态目标≤50%，现金预留≥50%，另受20 USDT估算风险预算限制"
+          : "单笔下单金额上限";
         renderMarketIndex(data.marketIndex);
         renderAssetTrend(data.assetTrend);
         renderApproval(data);

@@ -3,6 +3,7 @@ export {
   calculateAtrPct
 } from "./strategy-signals.mjs";
 export { dynamicExitDecision } from "./strategy-exit.mjs";
+import { allocationConfigErrors } from "./weekly-etf-allocation.mjs";
 
 export function uniqueSymbols(symbols) {
   return [...new Set(symbols.map((symbol) => symbol.trim().toUpperCase()))];
@@ -293,7 +294,9 @@ export function validateConfig(config) {
   }
   if (!["shadow", "live"].includes(config.mode)) errors.push("mode must be shadow or live");
   if (!Array.isArray(config.symbols) || config.symbols.length === 0) errors.push("symbols must not be empty");
-  if (!(config.maxTradeUsdt > 0 && config.maxTradeUsdt <= 50)) errors.push("maxTradeUsdt must be between 0 and 50");
+  errors.push(...allocationConfigErrors(config));
+  const tradeCeiling = config.weeklyEtfAllocation ? 250 : 50;
+  if (!(config.maxTradeUsdt > 0 && config.maxTradeUsdt <= tradeCeiling)) errors.push(`maxTradeUsdt must be between 0 and ${tradeCeiling}`);
   if (!(config.dailyLossLimitUsdt > 0 && config.dailyLossLimitUsdt <= 10)) errors.push("dailyLossLimitUsdt must be between 0 and 10");
   if (!(Number.isInteger(config.maxOpenPositions) && config.maxOpenPositions >= 1 && config.maxOpenPositions <= 3)) {
     errors.push("maxOpenPositions must be an integer between 1 and 3");

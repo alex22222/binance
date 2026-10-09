@@ -123,6 +123,8 @@ import { newYorkDate } from "./strategy-data.mjs";
 import { rolloverRiskDay } from "./risk-day.mjs";
 import { createOrderExecution } from "./order-execution.mjs";
 import { loadStrategyGate } from "./strategy-governance.mjs";
+import { mergeAllocationFill } from "./weekly-etf-allocation.mjs";
+import { createWeeklyEtfAllocationExecution } from "./weekly-etf-allocation-execution.mjs";
 
 const execFileAsync = promisify(execFile);
 const BSC_CHAIN_ID = "56";
@@ -159,8 +161,20 @@ const {
   trace: (stage, status, details) => traceAction(stage, status, details, currentCycleId),
   readEmergencyStop,
   authorizeEntry: checkEntryGovernance,
+  revalidateAllocation: (config, state, details, gate) => weeklyAllocation.revalidate(config, state, details, gate),
   isShutdownRequested: () => shutdownRequested,
   chainId: BSC_CHAIN_ID
+});
+
+const weeklyAllocation = createWeeklyEtfAllocationExecution({
+  loadDecision: weeklyEtfDecisionForNow,
+  loadGate: checkEntryGovernance,
+  loadSnapshot: loadAllocationSnapshot,
+  resolveAsset: async (symbol, config) => (await resolveAssets([symbol], config.symbols)).get(symbol),
+  assetStatus, buildCandidate, audit, quote,
+  walletSettings: () => baw(["wallet", "settings"]),
+  requestApproval: requestTradeApproval, submitOrder,
+  trace: (stage, status, details) => traceAction(stage, status, details, currentCycleId)
 });
 
 async function checkEntryGovernance(config, details) {
@@ -782,6 +796,22 @@ async function tokenBalance(address) {
   return exactTokenBalance(balances);
 }
 
+async function loadAllocationSnapshot(config, state, position, asset) {
+  const checkedAt = new Date().toISOString();
+  const balances = await baw(["wallet", "balance", "--binanceChainId", BSC_CHAIN_ID]);
+  const matching = (address) => balances.filter(balance => String(balance.binanceChainId) === BSC_CHAIN_ID &&
+    String(balance.address || "").toLowerCase() === address.toLowerCase());
+  const cash = matching(USDT_ADDRESS), token = matching(asset.contractAddress);
+  const native = matching("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE");
+  if (cash.length !== 1 || token.length > 1 || native.length !== 1) throw new Error("Allocation wallet assets missing or duplicated");
+  const tokenBefore = exactTokenBalance(token);
+  if (position && !sameTokenAmount(tokenBefore, position.quantity)) throw new Error("Allocation wallet quantity differs from managed holding");
+  const exit = position ? await quote(tokenBefore, asset.contractAddress, USDT_ADDRESS, config.slippagePct) : null;
+  return { cashUsdt: cash[0].balance, tokenBefore, nativeGasValueUsdt: Number(native[0].value),
+    positionValueUsdt: exit ? Number(exit.toCoinAmount) : 0, positionQuotedAt: exit?.quotedAt || null,
+    checkedAt, gasUsdt: currentGasEstimate(config, state).gasUsdt };
+}
+
 async function refreshWalletBalance(state, statePath) {
   const now = Date.now();
   const checkedAtMs = Date.parse(state.walletBalance?.checkedAt || "");
@@ -945,6 +975,10 @@ async function requestTradeApproval(config, state, statePath, details) {
       `[Agentic Stock Bot] ${request.side} ${approvalControl.enabled ? "AUTO APPROVAL QUEUED" : "APPROVAL REQUIRED"}`,
       `${request.symbol} ${request.address}`,
       valueLine,
+      ...(request.allocation ? [
+        `${request.entryType === "TOP_UP" ? "一次性补仓" : "动态仓位"}: 最多50%资金 · 至少50%现金预留`,
+        `合并成本: ${request.allocation.positionCostAfterUsdt.toFixed(2)} USDT · 预计总风险: ${request.allocation.estimatedLossUsdt.toFixed(2)} / 20 USDT（非保证封顶）`
+      ] : []),
       `来源合约: ${request.fromToken}`,
       `目标合约: ${request.toToken}`,
       `滑点: ${config.slippagePct}% · MEV保护: 开 · Gas: HIGH`,
@@ -988,6 +1022,10 @@ async function finalizePendingOrder(config, state, statePath) {
 
   if (action === "FAIL") {
     await traceAction("pending_order", "failed", { orderId: submitted.orderId, side: submitted.side }, currentCycleId);
+    if (submitted.entryType === "TOP_UP") {
+      state.allocationTopUps = { ...(state.allocationTopUps || {}),
+        [submitted.topUpRequestId]: { status: "FAILED", orderId: submitted.orderId, completedAt: new Date().toISOString() } };
+    }
     state.pendingOrder = null;
     await notify(
       state,
@@ -1003,7 +1041,12 @@ async function finalizePendingOrder(config, state, statePath) {
     const entryGas = await actualGasCostForOrder(order, roundTripGasUsdt / 2);
     const quantity = await tokenBalance(submitted.address);
     if (!isPositiveTokenAmount(quantity)) throw new Error(`Finished BUY has no token balance for ${submitted.symbol}`);
-    addOpenPosition(state, {
+    if (submitted.allocation && !sameTokenAmount(order.fromTokenQty, submitted.fromTokenQty)) {
+      throw new Error("Finished allocation BUY input does not match the frozen order; reconciliation required");
+    }
+    if (submitted.entryType === "TOP_UP") {
+      mergeAllocationFill(state, submitted, quantity, entryGas);
+    } else addOpenPosition(state, {
       symbol: submitted.symbol,
       strategyId: submitted.strategyId || ADAPTIVE_MOMENTUM_STRATEGY_ID,
       strategyGovernance: submitted.strategyGovernance || null,
@@ -1029,6 +1072,7 @@ async function finalizePendingOrder(config, state, statePath) {
       entryGasBnb: entryGas.gasBnb,
       entryGasUsdt: entryGas.gasUsdt,
       entryGasSource: entryGas.source,
+      ...(submitted.allocation ? { allocation: submitted.allocation } : {}),
       shadow: false
     }, config.maxOpenPositions);
     recordShadowEntry(state, submitted.symbol);
@@ -1041,6 +1085,10 @@ async function finalizePendingOrder(config, state, statePath) {
       strategyGovernance: submitted.strategyGovernance || null,
       approvalId: submitted.approvalId || null,
       quantity,
+      entryType: submitted.entryType || null,
+      parentOrderId: submitted.parentOrderId || null,
+      costBasisUsdt: submitted.costBasisUsdt,
+      positionCostBasisUsdt: findOpenPosition(state, submitted)?.costBasisUsdt,
       txHash: entryGas.txHash,
       gasBnb: entryGas.gasBnb,
       gasUsdt: entryGas.gasUsdt,
@@ -1049,7 +1097,7 @@ async function finalizePendingOrder(config, state, statePath) {
     await notify(
       state,
       [
-        "[Agentic Stock Bot] BUY FINISHED",
+        `[Agentic Stock Bot] BUY FINISHED${submitted.entryType === "TOP_UP" ? " TOP_UP" : ""}`,
         `${submitted.symbol} ${submitted.address}`,
         `实际持仓: ${quantity}`,
         `投入: ${submitted.costBasisUsdt} USDT`,
@@ -1117,6 +1165,7 @@ async function finalizePendingOrder(config, state, statePath) {
     side: submitted.side,
     symbol: submitted.symbol,
     strategyId: submitted.strategyId || ADAPTIVE_MOMENTUM_STRATEGY_ID,
+    costBasisUsdt: submitted.costBasisUsdt,
     proceedsUsdt,
     grossPnlUsdt: pnl.grossPnlUsdt,
     gasCostUsdt: pnl.gasCostUsdt,
@@ -1552,6 +1601,11 @@ async function evaluateEntry(
   approvedRequest = null,
   { scanOnly = false } = {}
 ) {
+  if (!scanOnly && config.weeklyEtfAllocation) {
+    if (config.activeStrategyId !== WEEKLY_ETF_DEFENSIVE_STRATEGY_ID) return;
+    await weeklyAllocation.run(config, state, statePath, emergencyStopPath, approvedRequest);
+    return;
+  }
   if (!scanOnly) {
     const capacity = entryCapacityDecision(state, config.maxOpenPositions);
     if (!capacity.allowed) {
@@ -2764,6 +2818,10 @@ async function processTradeApproval(config, state, statePath, emergencyStopPath)
 
   await ensureNotEmergencyStopped(emergencyStopPath, state);
   if (request.side === "BUY") {
+    if (config.weeklyEtfAllocation || request.allocation) {
+      await weeklyAllocation.run(config, state, statePath, emergencyStopPath, request);
+      return true;
+    }
     const capacity = entryCapacityDecision(state, config.maxOpenPositions);
     if (!capacity.allowed) {
       throw new Error(`Approved BUY blocked because ${capacity.openPositionCount} positions are already open`);
@@ -2872,7 +2930,8 @@ async function cycle(config, state, statePath, emergencyStopPath) {
           statePath,
           emergencyStopPath,
           null,
-          { scanOnly: !entryDecision.allowed || !capacity.allowed }
+          { scanOnly: !entryDecision.allowed || (!capacity.allowed &&
+            !(config.weeklyEtfAllocation && config.activeStrategyId === WEEKLY_ETF_DEFENSIVE_STRATEGY_ID)) }
         );
       }
     }

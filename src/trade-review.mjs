@@ -155,6 +155,7 @@ function newYorkMinutes(timestamp) {
 }
 
 function reconstructTrades(records) {
+  const topUpOrders = new Set();
   const shadowsByCycle = new Map();
   const marketRegimeByCycle = new Map();
   const submissions = new Map();
@@ -191,6 +192,8 @@ function reconstructTrades(records) {
         strategyId: details.strategyId,
         submittedAt: record.timestamp,
         amountUsdt: finiteNumber(details.amountUsdt),
+        entryType: details.entryType || null,
+        parentOrderId: details.parentOrderId || null,
         allInCostPct: finiteNumber(details.allInCostPct, null),
         netEdgeProxyPct: finiteNumber(details.netEdgeProxyPct, null),
         initialRiskPct: finiteNumber(details.initialRiskPct, null),
@@ -228,6 +231,17 @@ function reconstructTrades(records) {
         submittedAt: null,
         entryShadow: {}
       };
+      if ((details.entryType || submission.entryType) === "TOP_UP") {
+        if (!details.orderId || topUpOrders.has(details.orderId)) continue;
+        topUpOrders.add(details.orderId);
+        const parent = openBySymbol.get(details.symbol);
+        if (parent?.entryOrderId === (details.parentOrderId || submission.parentOrderId)) {
+          parent.amountUsdt += finiteNumber(details.costBasisUsdt ?? submission.amountUsdt);
+          const gas = finiteNumber(details.gasUsdt, null);
+          parent.entryGasUsdt = parent.entryGasUsdt == null || gas == null ? null : parent.entryGasUsdt + gas;
+        }
+        continue;
+      }
       const entry = {
         ...submission,
         openedAt: record.timestamp,
@@ -311,7 +325,7 @@ function reconstructTrades(records) {
         holdingMinutes: entry.openedAt
           ? (Date.parse(record.timestamp) - Date.parse(entry.openedAt)) / 60_000
           : null,
-        amountUsdt: entry.amountUsdt || null,
+        amountUsdt: finiteNumber(details.costBasisUsdt, null) ?? entry.amountUsdt ?? null,
         allInCostPct: entry.allInCostPct ?? null,
         netEdgeProxyPct: entry.netEdgeProxyPct ?? null,
         initialRiskPct: entry.initialRiskPct ?? null,
@@ -324,6 +338,7 @@ function reconstructTrades(records) {
         maeR: finiteNumber(details.maeR, null),
         mfeR: finiteNumber(details.mfeR, null),
         realizedR: finiteNumber(details.realizedR, null),
+        excursionPartial: details.excursionPartial === true,
         stopTriggerCount: stop.triggers,
         stopRevalidationCancelledCount: stop.cancelled,
         entryShadow: entry.entryShadow || {},

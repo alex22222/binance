@@ -5,6 +5,7 @@ import { buildStrategyComparison, DEFAULT_STRATEGY_ID } from "./strategy-lab.mjs
 import { buildAssetTrend } from "./wallet-balance.mjs";
 import { effectiveRoundTripGasEstimate } from "./execution-accounting.mjs";
 import { openPositions } from "./position-state.mjs";
+import { allocationConfigErrors } from "./weekly-etf-allocation.mjs";
 import {
   WEEKLY_ETF_DEFENSIVE_STRATEGY_ID,
   WEEKLY_ETF_ROTATION_CONFIG,
@@ -51,7 +52,7 @@ function finiteNumber(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
-function buildPositionSnapshot(position, gasEstimate) {
+function buildPositionSnapshot(position, gasEstimate, weeklyDisasterStopLossPct = null) {
   const costBasisUsdt = finiteNumber(position.costBasisUsdt);
   const quantity = finiteNumber(position.quantity);
   const lastQuoteProceedsUsdt = position.lastQuoteProceedsUsdt == null
@@ -62,7 +63,12 @@ function buildPositionSnapshot(position, gasEstimate) {
     ? null
     : finiteNumber(position.worstReturnPct, null);
   const peakReturnPct = finiteNumber(position.peakReturnPct, 0);
-  const riskUsdt = initialRiskPct > 0 ? costBasisUsdt * initialRiskPct / 100 : null;
+  const weeklyAllocationPosition = weeklyDisasterStopLossPct != null &&
+    position.strategyId === WEEKLY_ETF_DEFENSIVE_STRATEGY_ID && position.shadow !== true;
+  const riskUsdt = weeklyAllocationPosition
+    ? costBasisUsdt * weeklyDisasterStopLossPct / 100 +
+      finiteNumber(position.entryGasUsdt, gasEstimate.gasUsdt / 2) + gasEstimate.gasUsdt / 2
+    : initialRiskPct > 0 ? costBasisUsdt * initialRiskPct / 100 : null;
   return {
     ...position,
     quantity,
@@ -262,8 +268,20 @@ export function buildDashboardSnapshot({
     configuredGasUsdt: config.estimatedRoundTripGasUsdt,
     observations: state.roundTripGasHistoryUsdt || []
   });
+  const activeStrategyId = strategyControl?.strategyId || config.defaultStrategyId || DEFAULT_STRATEGY_ID;
+  const weeklyEtfAllocation = config.mode === "live" && activeStrategyId === WEEKLY_ETF_DEFENSIVE_STRATEGY_ID &&
+    config.weeklyEtfAllocation && !allocationConfigErrors(config).length
+    ? {
+        ...config.weeklyEtfAllocation,
+        absoluteCostCapUsdt: finiteNumber(config.maxTradeUsdt),
+        lossBudgetIsGuaranteed: false,
+        portfolioBasis: "AVAILABLE_USDT_PLUS_EXECUTABLE_POSITION_VALUE",
+        plan: state.weeklyEtfAllocation?.plan ? structuredClone(state.weeklyEtfAllocation.plan) : null,
+        topUpRequests: structuredClone(state.allocationTopUps || {})
+      }
+    : null;
   const positions = openPositions(state).map((position) => (
-    buildPositionSnapshot(position, gasEstimate)
+    buildPositionSnapshot(position, gasEstimate, weeklyEtfAllocation ? finiteNumber(config.disasterStopLossPct) : null)
   ));
   const openRiskUsdt = positions.reduce(
     (sum, current) => sum + (Number.isFinite(current.riskUsdt) ? current.riskUsdt : 0),
@@ -273,7 +291,9 @@ export function buildDashboardSnapshot({
   const disasterStopLossPct = finiteNumber(config.disasterStopLossPct);
   const dailyLossUsedUsdt = Math.max(0, -realizedPnlUsdt);
   const disasterRiskUsdt = positions.reduce(
-    (sum, current) => sum + current.costBasisUsdt * disasterStopLossPct / 100,
+    (sum, current) => sum + (weeklyEtfAllocation && current.strategyId === WEEKLY_ETF_DEFENSIVE_STRATEGY_ID && current.shadow !== true
+      ? current.riskUsdt
+      : current.costBasisUsdt * disasterStopLossPct / 100),
     0
   );
   const position = positions[0] || null;
@@ -301,7 +321,6 @@ export function buildDashboardSnapshot({
       }
     : null;
 
-  const activeStrategyId = strategyControl?.strategyId || config.defaultStrategyId || DEFAULT_STRATEGY_ID;
   const weeklyEtfDecision = state.weeklyEtfLive ? structuredClone(state.weeklyEtfLive) : null;
   if (weeklyEtfDecision?.decision) {
     const decision = weeklyEtfDecision.decision;
@@ -360,6 +379,7 @@ export function buildDashboardSnapshot({
     stockMarketChanges,
     risk: {
       maxTradeUsdt: finiteNumber(config.maxTradeUsdt),
+      weeklyEtfAllocation,
       dailyLossLimitUsdt,
       realizedPnlUsdt,
       realizedGrossPnlUsdt: finiteNumber(state.realizedGrossPnlUsdt),

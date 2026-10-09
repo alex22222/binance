@@ -146,7 +146,7 @@ export function ledgerTrades(records) {
     const submission = buy ? submissions.get(buy.orderId) : null;
     const proceeds = number(sell.proceedsUsdt);
     const gross = number(sell.grossPnlUsdt);
-    const cost = number(submission?.amountUsdt) ?? (proceeds !== null && gross !== null ? proceeds - gross : null);
+    const cost = number(sell.costBasisUsdt) ?? number(submission?.amountUsdt) ?? (proceeds !== null && gross !== null ? proceeds - gross : null);
     return {
       symbol: sell.symbol,
       strategyId: sell.strategyId || submission?.strategyId || null,
@@ -170,14 +170,26 @@ export function ledgerEntries(records) {
   const strategies = new Map(records
     .filter((record) => record.event === "buy_submission" && record.status === "submitted" && record.details.orderId)
     .map((record) => [record.details.orderId, record.details]));
-  return records
-    .filter((record) => record.event === "pending_order" && record.status === "finished" && record.details.side === "BUY")
-    .map((record) => ({
-      orderId: record.details.orderId,
-      symbol: record.details.symbol,
-      timestamp: record.timestamp,
-      strategyId: strategies.get(record.details.orderId)?.strategyId || null,
-      amountUsdt: number(strategies.get(record.details.orderId)?.amountUsdt),
-      gasUsdt: number(record.details.gasUsdt)
-    }));
+  const entries = new Map();
+  const topUpOrders = new Set();
+  for (const record of records) {
+    if (record.event !== "pending_order" || record.status !== "finished" || record.details.side !== "BUY") continue;
+    const fill = record.details, submission = strategies.get(fill.orderId);
+    if ((fill.entryType || submission?.entryType) === "TOP_UP") {
+      if (!fill.orderId || topUpOrders.has(fill.orderId)) continue;
+      topUpOrders.add(fill.orderId);
+      const parent = entries.get(fill.parentOrderId || submission?.parentOrderId);
+      if (parent) {
+        const amount = number(fill.costBasisUsdt) ?? number(submission?.amountUsdt);
+        parent.amountUsdt = parent.amountUsdt == null || amount == null ? null : parent.amountUsdt + amount;
+        const gas = number(fill.gasUsdt);
+        parent.gasUsdt = parent.gasUsdt == null || gas == null ? null : parent.gasUsdt + gas;
+      }
+      continue;
+    }
+    entries.set(fill.orderId, { orderId: fill.orderId, symbol: fill.symbol, timestamp: record.timestamp,
+      strategyId: submission?.strategyId || fill.strategyId || null,
+      amountUsdt: number(submission?.amountUsdt), gasUsdt: number(fill.gasUsdt) });
+  }
+  return [...entries.values()];
 }
