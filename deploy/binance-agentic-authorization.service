@@ -1,0 +1,39 @@
+[Unit]
+Description=Bounded current-strategy authorization renewal and notifications
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=binancebot
+WorkingDirectory=/opt/binance-agentic-authorization/current
+EnvironmentFile=/etc/binance-agentic-authorization.env
+Environment=HOME=/var/lib/binance-agentic-authorization
+Environment=AUTHORIZATION_WRITER_LOCKED=1
+UnsetEnvironment=HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy NODE_OPTIONS BOT_LIVE BINANCE_INSTANCE_ID FUND_MANAGER_SEND FUND_MANAGER_PUBLISH FEISHU_WEBHOOK_URL
+ExecStartPre=/usr/bin/node --max-old-space-size=96 /opt/binance-agentic-authorization/current/run.mjs verify
+ExecStart=/usr/bin/flock --no-fork --nonblock --conflict-exit-code=75 /var/lib/binance-agentic-authorization/writer.lock /usr/bin/node --max-old-space-size=96 /opt/binance-agentic-authorization/current/run.mjs tick
+SuccessExitStatus=75
+UMask=0077
+TimeoutStartSec=180
+CPUQuota=20%
+MemoryHigh=128M
+MemoryMax=192M
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/opt/binance-agentic-stock-bot /run
+ReadWritePaths=/opt/binance-agentic-stock-bot/strategy-governance /var/lib/binance-agentic-authorization
+InaccessiblePaths=/etc/binance-agentic-stock-bot.env /var/lib/binance-agentic-stock-bot /proc
+RestrictNamespaces=true
+SystemCallFilter=~ptrace process_vm_readv process_vm_writev pidfd_getfd kill tkill tgkill pidfd_send_signal rt_sigqueueinfo rt_tgsigqueueinfo
+SystemCallErrorNumber=EPERM
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_CHOWN

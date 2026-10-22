@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+if [ "$(id -u)" != "0" ]; then
+  echo 'Run as root' >&2
+  exit 1
+fi
+export AUTHORIZATION_WRITER_LOCKED=1
+exec /usr/bin/flock --exclusive /var/lib/binance-agentic-authorization/writer.lock /usr/bin/node /opt/binance-agentic-authorization/current/operator.mjs revoke
