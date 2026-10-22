@@ -94,6 +94,28 @@ function level(score) {
 
 const percent = (probability) => `${pyFixed(probability * 100, 0)}%`;
 
+export function evaluateRadarPosition(held, price, week) {
+  const referencePrice = held.last_price > 0 ? held.last_price : price;
+  const short = held.direction === "short";
+  const stopPrice = held.sl_price_type === "mark" ? held.mark_price : referencePrice;
+  const targetPrice = held.tp_price_type === "mark" ? held.mark_price : referencePrice;
+  const distance = (value, reference) => value > 0 && reference > 0 ? pyRound((value / reference - 1) * 100, 2) : null;
+  const toStop = (held.sl / stopPrice - 1) * 100;
+  const adverseDistance = short ? -toStop : toStop;
+  const [positionLevel, positionLevelName] = !(held.sl > 0 && stopPrice > 0)
+    ? ["yellow", "止损未确认"]
+    : adverseDistance > -3 ? ["red", "接近止损"]
+      : adverseDistance > -5 ? ["orange", "离止损不远"] : ["green", "安全距离"];
+  return {
+    ...held,
+    ...(held.source ? { reference_price: referencePrice } : {}),
+    d_sl: distance(held.sl, stopPrice), d_liq: distance(held.liq, held.mark_price > 0 ? held.mark_price : referencePrice), d_tp: distance(held.tp, targetPrice),
+    level: positionLevel, level_name: positionLevelName,
+    p_sl_week: held.sl > 0 ? pyRound(interp(short ? week.reaches : week.dips, held.sl), 3) : null,
+    p_tp_week: held.tp > 0 ? pyRound(interp(short ? week.dips : week.reaches, held.tp), 3) : null
+  };
+}
+
 // Same output as btc_alert.py. One extension: sentiment may be null when the
 // OKX news API is not configured; its term then contributes zero.
 export function evaluateBtcRadar(input) {
@@ -173,25 +195,7 @@ export function evaluateBtcRadar(input) {
   const total = factors.reduce((sum, factor) => sum + factor.score * factor.weight, 0) / 100;
   const [riskLevel, levelName] = level(total);
 
-  let position = null;
-  if (input.position) {
-    const held = input.position;
-    const distance = (value) => (value / price - 1) * 100;
-    const toStop = distance(held.sl);
-    const [positionLevel, positionLevelName] = toStop > -3
-      ? ["red", "接近止损"]
-      : toStop > -5 ? ["orange", "离止损不远"] : ["green", "安全距离"];
-    position = {
-      ...held,
-      d_sl: pyRound(toStop, 2),
-      d_liq: pyRound(distance(held.liq), 2),
-      d_tp: pyRound(distance(held.tp), 2),
-      level: positionLevel,
-      level_name: positionLevelName,
-      p_sl_week: pyRound(interp(week.dips, held.sl), 3),
-      p_tp_week: pyRound(interp(week.reaches, held.tp), 3)
-    };
-  }
+  const position = input.position ? evaluateRadarPosition(input.position, price, week) : null;
 
   const top = [...factors].sort((left, right) => (-left.score * left.weight) - (-right.score * right.weight)).slice(0, 2);
   return {

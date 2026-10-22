@@ -375,6 +375,7 @@ const round = (value, places) => Number(value.toFixed(places));
 // OKX's fillSafetyOrds also counts manual add orders, so automatic safety fills
 // and the remaining ladder come from the cycle's orders when they are available.
 export function dcaPosition(bot, details, orders = null) {
+  const direction = bot.direction === "short" ? "short" : "long";
   const stop = (bot.triggerParams || []).find((trigger) => trigger.triggerAction === "stop");
   const manual = Number(details.fillManualOrds) > 0 ? Number(details.fillManualOrds) : 0;
   const maximum = finite(bot.maxSafetyOrds, "Maximum safety orders");
@@ -384,7 +385,7 @@ export function dcaPosition(bot, details, orders = null) {
   const pending = (safety || [])
     .filter((order) => order.state === "live")
     .map((order) => [finite(order.px, "Safety order price"), finite(order.sz, "Safety order size")])
-    .sort((left, right) => right[0] - left[0]);
+    .sort((left, right) => direction === "short" ? left[0] - right[0] : right[0] - left[0]);
   const filled = safety
     ? safety.filter((order) => order.state === "filled").length
     : Math.max(0, finite(details.fillSafetyOrds, "Filled safety orders") - manual);
@@ -392,13 +393,14 @@ export function dcaPosition(bot, details, orders = null) {
   const multiplier = Number(bot.pxStepsMult) > 0 ? Number(bot.pxStepsMult) : 1;
   let deviation = 0;
   for (let order = 0; order <= filled; order += 1) deviation += step * multiplier ** order;
-  const formulaNext = filled >= maximum ? null : round(finite(details.initPx, "Initial price") * (1 - deviation), 1);
+  const formulaNext = filled >= maximum ? null : round(finite(details.initPx, "Initial price") * (1 + (direction === "short" ? deviation : -deviation)), 1);
   return {
+    id: `dca:${bot.algoId}`, source: "dca", direction,
     avg: round(finite(details.avgPx, "Average price"), 2),
     tp: finite(details.tpPx, "Take-profit price"),
     sl: Number(stop?.triggerPx) > 0 ? Number(stop.triggerPx) : 0,
     liq: round(finite(details.liqPx, "Liquidation price"), 1),
-    sz_btc: round(finite(details.sz, "Contracts") * contractValue, 4),
+    sz_btc: round(Math.abs(finite(details.sz, "Contracts")) * contractValue, 4),
     lever: finite(bot.lever, "Leverage"),
     total_pnl: round(finite(bot.totalPnl, "Total PnL"), 2),
     safety_filled: filled,
@@ -409,10 +411,12 @@ export function dcaPosition(bot, details, orders = null) {
   };
 }
 
-// The newest running BTC-USDT-SWAP long contract DCA bot, unless one is pinned.
-export async function loadDcaPosition(privateGet, { pinnedAlgoId = null, trackedAlgoId = null } = {}) {
-  const running = (await privateGet(`${DCA_BASE}/ongoing-list`, { algoOrdType: "contract_dca" }))
-    .filter((bot) => bot.instId === "BTC-USDT-SWAP" && bot.direction === "long" && (!bot.state || bot.state === "running"));
+// Keep the legacy primary selection, but optionally collect every long/short bot.
+export async function loadDcaPosition(privateGet, { pinnedAlgoId = null, trackedAlgoId = null, includeAll = false } = {}) {
+  const rows = await privateGet(`${DCA_BASE}/ongoing-list`, { algoOrdType: "contract_dca", limit: "100" });
+  if (rows.length >= 100) throw new Error("DCA list may be truncated");
+  const running = rows
+    .filter((bot) => bot.instId === "BTC-USDT-SWAP" && ["long", "short"].includes(bot.direction) && (!bot.state || bot.state === "running"));
   const bot = pinnedAlgoId
     ? running.find((candidate) => candidate.algoId === pinnedAlgoId)
     : [...running].sort((left, right) => Number(right.cTime) - Number(left.cTime))[0];
@@ -425,16 +429,83 @@ export async function loadDcaPosition(privateGet, { pinnedAlgoId = null, tracked
   if (bot && trackedAlgoId && bot.algoId !== trackedAlgoId) {
     events.push({ type: "STRATEGY_SWITCHED", algoId: bot.algoId, previousAlgoId: trackedAlgoId });
   }
-  if (!bot) return { position: null, algoId: null, events };
-  const [details] = await privateGet(`${DCA_BASE}/position-details`, { algoId: bot.algoId, algoOrdType: "contract_dca" });
-  if (!details) throw new Error(`DCA position details missing for ${bot.algoId}`);
-  let orders = null;
-  try {
-    orders = await privateGet(`${DCA_BASE}/orders`, {
-      algoId: bot.algoId, algoOrdType: "contract_dca", cycleId: details.curCycleId, limit: "100"
-    });
-  } catch {
-    // Without the cycle's orders the counts fall back to OKX's summary fields.
+  const positions = [];
+  for (const candidate of includeAll ? running : bot ? [bot] : []) {
+    const [details] = await privateGet(`${DCA_BASE}/position-details`, { algoId: candidate.algoId, algoOrdType: "contract_dca" });
+    if (!details) throw new Error(`DCA position details missing for ${candidate.algoId}`);
+    let orders = null;
+    try {
+      orders = await privateGet(`${DCA_BASE}/orders`, {
+        algoId: candidate.algoId, algoOrdType: "contract_dca", cycleId: details.curCycleId, limit: "100"
+      });
+      if (orders.length >= 100) orders = null;
+    } catch {
+      // Without the cycle's orders the counts fall back to OKX's summary fields.
+    }
+    positions.push(dcaPosition(candidate, details, orders));
   }
-  return { position: dcaPosition(bot, details, orders), algoId: bot.algoId, events };
+  return { position: positions.find((held) => held.id === `dca:${bot?.algoId}`) || null,
+    algoId: bot?.algoId || null, events, ...(includeAll ? { positions } : {}) };
+}
+
+const optionalNumber = (value) => value !== "" && value != null && Number.isFinite(Number(value)) ? Number(value) : null;
+
+async function btcContractValue(privateGet) {
+  const [instrument] = await privateGet("/api/v5/public/instruments", { instType: "SWAP", instId: "BTC-USDT-SWAP" });
+  if (instrument?.instId !== "BTC-USDT-SWAP" || instrument.ctValCcy !== "BTC" || instrument.ctType !== "linear"
+    || !(Number(instrument.ctVal) > 0) || !(Number(instrument.ctMult) > 0)) throw new Error("BTC contract identity/value unavailable");
+  return Number(instrument.ctVal) * Number(instrument.ctMult);
+}
+
+function perpetualPosition(row, contractValue) {
+  const contracts = finite(row.pos, "Position contracts");
+  if (!["long", "short", "net"].includes(row.posSide)) throw new Error("Unknown BTC position side");
+  return {
+    direction: row.posSide === "net" ? (contracts < 0 ? "short" : "long") : row.posSide,
+    avg: finite(row.avgPx, "Position average"), sz_btc: Math.abs(contracts) * contractValue,
+    liq: optionalNumber(row.liqPx), lever: optionalNumber(row.lever),
+    mark_price: optionalNumber(row.markPx), last_price: optionalNumber(row.last),
+    unrealized_pnl: optionalNumber(row.upl), margin_mode: row.mgnMode,
+    sl: null, tp: null
+  };
+}
+
+export async function loadAccountPositions(privateGet) {
+  const rows = (await privateGet("/api/v5/account/positions", { instId: "BTC-USDT-SWAP" }))
+    .filter((row) => row.instId === "BTC-USDT-SWAP" && finite(row.pos, "Position contracts") !== 0);
+  if (!rows.length) return [];
+  const contractValue = await btcContractValue(privateGet);
+  return rows.map((row) => {
+    const attached = row.closeOrderAlgo || [];
+    const trigger = (kind) => {
+      const orders = attached.filter((order) => Number(order[`${kind}TriggerPx`]) > 0);
+      if (orders.length !== 1) return {};
+      const type = orders[0][`${kind}TriggerPxType`] || "last";
+      if (!["last", "mark"].includes(type)) return {};
+      return { [kind]: Number(orders[0][`${kind}TriggerPx`]), [`${kind}_price_type`]: type };
+    };
+    return { ...perpetualPosition(row, contractValue), id: `account:${row.posId || `${row.mgnMode}:${row.posSide}`}`,
+      source: "account", ...trigger("sl"), ...trigger("tp"),
+      stop_note: "仅识别全仓平仓附带委托；分批或移动止损未确认" };
+  });
+}
+
+export async function loadGridPositions(privateGet) {
+  const rows = await privateGet("/api/v5/tradingBot/grid/orders-algo-pending", { algoOrdType: "contract_grid", limit: "100" });
+  if (rows.length >= 100) throw new Error("Grid list may be truncated");
+  const bots = rows.filter((bot) => bot.instId === "BTC-USDT-SWAP" && bot.state === "running");
+  if (!bots.length) return [];
+  const contractValue = await btcContractValue(privateGet);
+  const positions = [];
+  for (const bot of bots) {
+    const held = await privateGet("/api/v5/tradingBot/grid/positions", { algoId: bot.algoId, algoOrdType: "contract_grid" });
+    for (const row of held.filter((row) => row.instId === "BTC-USDT-SWAP" && finite(row.pos, "Grid contracts") !== 0)) {
+      positions.push({ ...perpetualPosition(row, contractValue), id: `grid:${bot.algoId}:${row.posSide}`, source: "grid",
+        total_pnl: optionalNumber(bot.totalPnl), grid_pnl: optionalNumber(bot.gridProfit),
+        sl: optionalNumber(bot.slTriggerPx), tp: optionalNumber(bot.tpTriggerPx),
+        stop_note: Number(bot.slRatio) > 0 ? "设置了比例止损，未换算为固定止损价" : "未读取到固定价格止损",
+        grid_range: [optionalNumber(bot.minPx), optionalNumber(bot.maxPx)] });
+    }
+  }
+  return positions;
 }

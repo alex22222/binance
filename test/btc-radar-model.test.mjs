@@ -53,3 +53,15 @@ test("grades the position by distance to the stop and fails closed on an empty l
     /Empty probability ladder/
   );
 });
+
+test("short risk and touch probabilities follow the upward stop and downward target", async () => {
+  const input = await fixture("model-input-a");
+  const held = { ...input.position, direction: "short", sl: input.price * 1.1, tp: input.price * 0.96, liq: input.price * 1.2 };
+  const result = evaluateBtcRadar({ ...input, position: held });
+  assert.equal(result.position.level, "green");
+  assert.equal(result.position.d_sl, 10);
+  const expected = evaluateBtcRadar({ ...input, position: { ...held, direction: "long", sl: held.tp, tp: held.sl } });
+  assert.equal(result.position.p_sl_week, expected.position.p_tp_week);
+  assert.equal(result.position.p_tp_week, expected.position.p_sl_week);
+  assert.equal(evaluateBtcRadar({ ...input, position: { ...held, sl: input.price * 1.02 } }).position.level, "red");
+});

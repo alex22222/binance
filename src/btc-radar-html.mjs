@@ -50,6 +50,7 @@ h2{font-size:13px;font-weight:700;margin:0;color:var(--muted);letter-spacing:.08
 .ruler{position:relative;height:88px;margin:4px 8px 0}
 .ruler .bar{position:absolute;left:0;right:0;top:40px;height:8px;border-radius:4px;
   background:linear-gradient(90deg,var(--crit) 0%,var(--alert) var(--slp,30%),var(--track) var(--slp,30%),var(--track) 100%)}
+.ruler .bar.short{background:linear-gradient(90deg,var(--track) 0%,var(--track) var(--slp,70%),var(--alert) var(--slp,70%),var(--crit) 100%)}
 .mk{position:absolute;top:0;transform:translateX(-50%);display:grid;justify-items:center;font-size:11px;white-space:nowrap;line-height:1.3}
 .mk .t{color:var(--muted)} .mk .v{font-family:var(--f-num);font-size:11px}
 .mk .tick{width:2px;height:18px;background:var(--muted);margin-top:2px}
@@ -128,11 +129,13 @@ ${siteHeader("/btc-radar")}
     </div>
     <div class="panel pos">
       <div class="pos-head">
-        <h2 id="poshead">合约马丁格尔 · BTCUSDT 永续 做多</h2>
+        <h2 id="poshead">OKX · BTCUSDT 永续持仓</h2>
         <span class="pill" id="pospill">—</span>
       </div>
+      <div id="positionList" class="stats"></div>
+      <label class="stamp" id="positionPicker" hidden>查看持仓 <select id="positionSelect" class="btn" aria-label="选择 BTC 持仓"></select></label>
       <div class="ruler" id="ruler"></div>
-      <div class="stamp">蓝色竖线是现价，红橙色段是止损以下的危险区。拖动「止损」「止盈」可以预览调整后的结果，不会修改 OKX。</div>
+      <div class="stamp" id="rulerHelp"></div>
       <div class="stats" id="posstats"></div>
       <div class="risk" id="risk" hidden></div>
     </div>
@@ -170,7 +173,7 @@ ${siteHeader("/btc-radar")}
       <span class="pill lv-green">0–39 偏多 / 低风险</span><span class="pill lv-yellow">40–54 中性</span>
       <span class="pill lv-orange">55–69 警戒</span><span class="pill lv-red">70–100 高风险</span>
     </div>
-    <p>分数越高，BTC 下跌的压力越大。六个因子各自打 0–100 分，按权重加总：预测市场 25%、美联储利率预期 20%、美债收益率 20%、BTC 技术面 15%、黄金 10%、衍生品与情绪 10%。</p>
+    <p>分数越高，BTC 下跌的压力越大，不等于空头风险越高，也不是做空信号；空头主要防范上涨，持仓风险另按方向计算。六个因子各自打 0–100 分，按权重加总：预测市场 25%、美联储利率预期 20%、美债收益率 20%、BTC 技术面 15%、黄金 10%、衍生品与情绪 10%。</p>
     <p>「参考」标记的指标只展示、不计入评分：RSI(14) 按 OKX BTC-USDT 的 UTC 日线以 Wilder 方法计算，分别给出已收盘和含当日盘中的读数；恐惧贪婪指数来自 alternative.me。</p>
     <p>持仓警报单独计算：现价离止损不到 5% 为橙色，不到 3% 为红色。服务器每 4 小时自动评估一次（北京时间每 4 小时的第 43 分），综合等级升高、持仓接近止损、自动补仓增加或策略状态变化时推送飞书；200 日均线趋势状态切换时另发一条。</p>
     <p id="sources">数据来源：Polymarket、美国财政部、OKX。</p>
@@ -183,14 +186,31 @@ const LV = {green:"var(--ok)",yellow:"var(--warn)",orange:"var(--alert)",red:"va
 const LEVELS = new Set(Object.keys(LV));
 const lvOf = s => s>=70?"red":s>=55?"orange":s>=40?"yellow":"green";
 const lvSafe = v => LEVELS.has(v) ? v : "yellow";
-const num = v => { const n = Number(v); return Number.isFinite(n) ? n : NaN; };
+const num = v => { const n = v == null || v === "" ? NaN : Number(v); return Number.isFinite(n) ? n : NaN; };
 const fmt = (n,d=0) => Number.isFinite(num(n)) ? num(n).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d}) : "—";
 const pct = n => Number.isFinite(num(n)) ? (num(n)>0?"+":"")+num(n).toFixed(2)+"%" : "—";
 const esc = s => String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const httpsUrl = u => { try { const url = new URL(String(u)); return url.protocol === "https:" ? url.href : null; } catch { return null; } };
 ${ladderProbability.toString()}
 ${dcaScenario.toString()}
-let radar = null, settings = {}, preview = {}, dragging = null, scale = null;
+let radar = null, settings = {}, preview = {}, dragging = null, scale = null, selectedId = null;
+const sourceName = p => p.source === "grid" ? "合约网格" : p.source === "account" ? "普通永续" : "合约马丁格尔";
+const activePosition = () => (radar && (radar.positions || []).find(p => p.id === selectedId)) || (radar && radar.position);
+function selectPosition(id){
+  selectedId = id; preview = {};
+  if(radar) renderPosition(activePosition(), radar.price, radar.data_status);
+}
+function renderPositions(d){
+  const positions = d.positions || (d.position ? [d.position] : []);
+  if(!positions.some(p => p.id === selectedId)){ selectedId = d.position && d.position.id; preview = {}; }
+  $("positionList").innerHTML = positions.length > 1 ? positions.map(p => '<div class="stat"><div class="k">'+esc(sourceName(p))+" · "+(p.direction === "short" ? "做空" : "做多")+'</div><div class="v">'+fmt(p.sz_btc,4)+' BTC<small>'+(p.stale ? "旧数据 · " : "")+"浮动盈亏 "+fmt(p.unrealized_pnl,2)+" USDT</small></div></div>").join("") : "";
+  $("positionPicker").hidden = positions.length < 2;
+  const select = $("positionSelect");
+  select.innerHTML = positions.map((p,i) => '<option value="'+esc(p.id)+'">'+(i+1)+" · "+esc(sourceName(p))+" · "+(p.direction === "short" ? "做空" : "做多")+" · "+fmt(p.sz_btc,4)+' BTC</option>').join("");
+  select.value = selectedId;
+  select.onchange = () => selectPosition(select.value);
+  renderPosition(activePosition(), d.price, d.data_status);
+}
 
 function gauge(score){
   const cx=120, cy=120, r=96;
@@ -217,16 +237,20 @@ function rulerScale(p, price){
 function renderPosition(p, price, status){
   const risk = $("risk");
   if(!p){
+    $("poshead").textContent="OKX · BTCUSDT 永续持仓"; $("rulerHelp").textContent="";
     $("pospill").textContent="未接入持仓";$("pospill").className="pill";$("ruler").innerHTML="";risk.hidden=true;
-    $("posstats").innerHTML='<div class="empty">'+(status&&status.okxConfigured?"没有正在运行的 BTC-USDT 永续合约马丁格尔。":"服务器尚未配置 OKX 只读 API Key，持仓与舆情暂未接入。")+'</div>';
+    $("posstats").innerHTML='<div class="empty">'+(status&&status.okxConfigured?"当前只读账户未读取到 BTC-USDT 永续持仓、合约网格或马丁格尔。请核对账户/子账户、实盘和合约品种；数据失败请看顶部来源提示。":"服务器尚未配置 OKX 只读 API Key，持仓与舆情暂未接入。")+'</div>';
     return;
   }
-  $("poshead").textContent="合约马丁格尔 · BTCUSDT 永续 "+(Number.isFinite(num(p.lever))?num(p.lever)+"x ":"")+"做多";
+  price = p.reference_price > 0 ? p.reference_price : price;
+  const short = p.direction === "short", dca = !p.source || p.source === "dca";
+  $("poshead").textContent=sourceName(p)+" · BTCUSDT 永续 "+(Number.isFinite(num(p.lever))?num(p.lever)+"x ":"")+(short ? "做空" : "做多")+(p.stale ? " · 旧数据" : "");
+  $("rulerHelp").textContent="蓝色竖线是现价，红橙色段是止损"+(short ? "以上" : "以下")+"的危险区。"+(p.sl > 0 ? "" : (p.stop_note || "未设置止损")+"。")+"拖动「止损」「止盈」仅预览，不会修改 OKX。";
   $("pospill").textContent=p.level_name; $("pospill").className="pill lv-"+lvSafe(p.level);
   scale = rulerScale(p, price);
   const x = v => (v - scale.lo) / (scale.hi - scale.lo) * 100;
   const stop = effective("sl", p), target = effective("tp", p);
-  let h = '<div class="bar" id="dangerBar" style="--slp:' + (stop > 0 ? x(stop) : 0).toFixed(1) + '%"></div>';
+  let h = '<div class="bar'+(short ? " short" : "")+'" id="dangerBar" style="--slp:' + (stop > 0 ? x(stop) : short ? 100 : 0).toFixed(1) + '%"></div>';
   ((p.ladder && p.ladder.pending) || []).forEach(([px]) => { const n = num(px); if(n > 0) h += '<div class="rung" style="left:' + x(n).toFixed(2) + '%"></div>'; });
   [["强平", p.liq, "low"], ["下次补仓", p.next_safety, "low"], ["均价", p.avg, ""]].forEach(([t, v, c]) => {
     const n = num(v);
@@ -240,9 +264,10 @@ function renderPosition(p, price, status){
   $("ruler").innerHTML = h;
   bindRuler(p, price);
   const pnl=num(p.total_pnl);
-  const st=[["现价",fmt(price,1),""],["距止损",num(p.sl)>0?pct(p.d_sl):"未设置止损",num(p.sl)>0&&num(p.d_sl)>-5?"neg":""],["距强平",pct(p.d_liq),""],["距止盈",pct(p.d_tp),""],
-    ["策略总收益",Number.isFinite(pnl)?(pnl>0?"+":"")+fmt(pnl,2)+" USDT":"—",pnl<0?"neg":"pos-c"],
-    ["自动补仓",fmt(p.safety_filled)+" / "+fmt(p.safety_max)+(num(p.manual_adds)>0?" · 手动 "+fmt(p.manual_adds):""),""],
+  const st=[["现价",fmt(price,1),""],["方向 / 仓位",(short ? "空头" : "多头")+" / "+fmt(p.sz_btc,4)+" BTC",""],["距止损"+(p.sl_price_type === "mark" ? "（标记价）" : ""),num(p.sl)>0?pct(p.d_sl):"价格止损未确认",num(p.sl)>0&&(short ? -num(p.d_sl) : num(p.d_sl))>-5?"neg":""],["距强平"+(p.mark_price > 0 ? "（标记价）" : ""),pct(p.d_liq),""],["距止盈",pct(p.d_tp),""],
+    ...(p.source === "account" ? [] : [["策略总收益",Number.isFinite(pnl)?(pnl>0?"+":"")+fmt(pnl,2)+" USDT":"—",pnl<0?"neg":"pos-c"]]),
+    ...(dca ? [["自动补仓",fmt(p.safety_filled)+" / "+fmt(p.safety_max)+(num(p.manual_adds)>0?" · 手动 "+fmt(p.manual_adds):""),""]] : [["浮动盈亏",fmt(p.unrealized_pnl,2)+" USDT",num(p.unrealized_pnl)<0?"neg":"pos-c"]]),
+    ...(p.source === "grid" ? [["网格收益",fmt(p.grid_pnl,2)+" USDT",num(p.grid_pnl)<0?"neg":"pos-c"],["网格区间",(p.grid_range || []).map(v=>fmt(v)).join(" — "),""]] : []),
     ["本周触及止损概率",p.p_sl_week!=null&&Number.isFinite(num(p.p_sl_week))?Math.round(num(p.p_sl_week)*100)+"%":"—",""],
     ["本周触及止盈概率",p.p_tp_week!=null&&Number.isFinite(num(p.p_tp_week))?Math.round(num(p.p_tp_week)*100)+"%":"—",""]];
   $("posstats").innerHTML=st.map(([k,v,c])=>'<div class="stat"><div class="k">'+k+'</div><div class="v '+c+'">'+esc(v)+'</div></div>').join("");
@@ -250,7 +275,7 @@ function renderPosition(p, price, status){
   risk.hidden = false;
   risk.innerHTML = '<div id="riskBody"></div>'
     + '<div class="capital"><label for="capitalInput">总资金</label><input id="capitalInput" inputmode="decimal" autocomplete="off" placeholder="例如 5000" value="' + esc(capital) + '"> USDT <button class="btn" id="saveCapital" type="button">保存</button><span id="capitalStatus" role="status"></span></div>'
-    + '<p class="foot">' + (p.ladder && p.ladder.complete ? "" : "补仓挂单数据暂缺，最坏亏损可能偏低。") + '按 0.05% 吃单手续费、0.4% 维持保证金率估算，未计滑点。总资金只用于计算占比，保存在服务器上。</p>';
+    + '<p class="foot">' + (dca ? (p.ladder && p.ladder.complete ? "" : "补仓挂单数据暂缺，最坏亏损可能偏低。")+"按 0.4% 维持保证金率估算强平价。" : "仅按当前持仓测算，不预测网格后续买卖或其他挂单，不是最大亏损；强平价直接读取 OKX。") + '按 0.05% 吃单手续费，未计滑点及未来资金费。总资金只用于计算占比，保存在服务器上。</p>';
   const save = $("saveCapital");
   if(save && save.addEventListener) save.addEventListener("click", saveCapital);
   renderRisk(p, price);
@@ -284,8 +309,9 @@ function bindRuler(p, price){
 
 // Moves one handle in place, so an active pointer capture survives the update.
 function setPreview(kind, value, p, price, handle){
-  const low = kind === "sl" ? scale.lo : num(price) * 1.001;
-  const high = kind === "sl" ? num(price) * 0.999 : scale.hi;
+  const below = p.direction === "short" ? kind === "tp" : kind === "sl";
+  const low = below ? scale.lo : num(price) * 1.001;
+  const high = below ? num(price) * 0.999 : scale.hi;
   preview[kind] = Math.round(Math.min(high, Math.max(low, value)) * 10) / 10;
   const q = (preview[kind] - scale.lo) / (scale.hi - scale.lo) * 100;
   if(handle){
@@ -303,24 +329,26 @@ function setPreview(kind, value, p, price, handle){
 
 function resetPreview(){
   preview = {};
-  if(radar) renderPosition(radar.position, radar.price, radar.data_status);
+  if(radar) renderPosition(activePosition(), radar.price, radar.data_status);
 }
 
 function renderRisk(p, price){
+  price = p.reference_price > 0 ? p.reference_price : price;
   const s = dcaScenario({ position: p, price: num(price), stop: effective("sl", p), takeProfit: effective("tp", p), capitalUsdt: num(settings.capitalUsdt) > 0 ? num(settings.capitalUsdt) : null });
   const week = (radar && radar.ladders && radar.ladders.week) || {};
-  const touchStop = s.stop ? ladderProbability(week.dips, s.stop) : null;
-  const touchTarget = s.takeProfit ? ladderProbability(week.reaches, s.takeProfit) : null;
+  const short = p.direction === "short", dca = !p.source || p.source === "dca";
+  const touchStop = s.stop ? ladderProbability(short ? week.reaches : week.dips, s.stop) : null;
+  const touchTarget = s.takeProfit ? ladderProbability(short ? week.dips : week.reaches, s.takeProfit) : null;
   const share = v => v == null ? "填写总资金后显示占比" : "约占总资金 " + (v * 100).toFixed(1) + "%";
   const chance = v => v == null ? "—" : Math.round(v * 100) + "%";
   const previewing = preview.sl != null || preview.tp != null;
   const items = [
-    ["止损触发时", s.lossAtStop == null ? "未设置止损" : "-" + fmt(s.lossAtStop, 1) + " USDT", s.lossAtStop == null ? "最坏情况是被强平" : share(s.lossShare),
-      "会先成交 " + s.fills + " 笔补仓，仓位 " + fmt(s.worstSize, 4) + " BTC，均价 " + fmt(s.worstAverage)],
+    ["止损触发时", s.lossAtStop == null ? "价格止损未确认" : (s.lossAtStop < 0 ? "+" : "") + fmt(-s.lossAtStop, 1) + " USDT", s.lossAtStop == null ? "无法测算止损亏损" : share(s.lossShare),
+      (dca ? "会先成交 " + s.fills + " 笔补仓，仓位 " : "固定当前仓位 ") + fmt(s.worstSize, 4) + " BTC，均价 " + fmt(s.worstAverage)],
     ["止盈触发时", s.profitAtTarget == null ? "—" : (s.profitAtTarget > 0 ? "+" : "") + fmt(s.profitAtTarget, 1) + " USDT", share(s.profitShare),
-      "均价上方 " + pct(s.targetFromAverage * 100) + " · 距现价 " + pct(s.targetDistance * 100)],
-    ["补仓全部成交后的强平价", s.worstLiquidation ? "约 " + fmt(s.worstLiquidation) : "—",
-      s.stopAboveLiquidation == null ? "" : s.stopAboveLiquidation > 0 ? "止损高于强平 " + (s.stopAboveLiquidation * 100).toFixed(1) + "%" : "止损低于估算强平价，会先被强平",
+      "相对均价 " + pct(s.targetFromAverage * 100) + " · 距现价 " + pct(s.targetDistance * 100)],
+    [dca ? "止损前补仓后的估算强平价" : "当前强平价（OKX）", s.worstLiquidation ? (dca ? "约 " : "") + fmt(s.worstLiquidation) : "—",
+      s.stopAboveLiquidation == null ? "" : s.stopAboveLiquidation > 0 ? "止损"+(short ? "低于" : "高于")+"强平 " + (s.stopAboveLiquidation * 100).toFixed(1) + "%" : "止损已越过强平价，可能先被强平",
       s.stop ? "止损距现价 " + pct(s.stopDistance * 100) : ""],
     ["打平所需止盈比例", s.breakevenWinRate == null ? "—" : (s.breakevenWinRate * 100).toFixed(1) + "%", "按一次止损对一次止盈计算", ""],
     ["本周触及概率", "止损 " + chance(touchStop) + " · 止盈 " + chance(touchTarget), "Polymarket 本周触价盘插值", ""]
@@ -347,7 +375,7 @@ async function saveCapital(){
     if(!response.ok) throw new Error(result.error || "保存失败");
     settings = result.settings || {};
     status.textContent = value === null ? "已清除" : "已保存";
-    if(radar && radar.position) renderRisk(radar.position, radar.price);
+    if(activePosition()) renderRisk(activePosition(), radar.price);
   }catch(error){
     status.textContent = error.message || "保存失败";
   }
@@ -421,8 +449,9 @@ function renderLatest(d){
   const t=new Date(d.ts), age=(Date.now()-t)/3.6e6;
   const stale=(d.data_status&&d.data_status.staleSources)||[];
   $("stamp").innerHTML=\`最近评估 <b class="num">\${esc(t.toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false}))}</b>\`+(age>5?\` · <span class="stale">已超过 \${Math.floor(age)} 小时未更新</span>\`:" · 每 4 小时更新")
-    +(stale.length?\` · <span class="stale">沿用旧数据：\${stale.map(s=>esc(s.label)).join("、")}</span>\`:"");
-  renderPosition(d.position,d.price,d.data_status); renderTrend(d.trend||null); renderObservation(d.observation||null); renderFactors(d.factors||[], d.indicators||{});
+    +(stale.some(s=>s.since!==null)?\` · <span class="stale">沿用旧数据：\${stale.filter(s=>s.since!==null).map(s=>esc(s.label)).join("、")}</span>\`:"")
+    +(stale.some(s=>s.since===null)?\` · <span class="stale">采集失败：\${stale.filter(s=>s.since===null).map(s=>esc(s.label)).join("、")}</span>\`:"");
+  renderPositions(d); renderTrend(d.trend||null); renderObservation(d.observation||null); renderFactors(d.factors||[], d.indicators||{});
   const sources=(d.sources||[]).map(([n,u])=>[n,httpsUrl(u)]).filter(([,u])=>u);
   if(sources.length) $("sources").innerHTML="数据来源："+sources.map(([n,u])=>\`<a href="\${esc(u)}" target="_blank" rel="noopener noreferrer">\${esc(n)}</a>\`).join("、")+"。";
 }

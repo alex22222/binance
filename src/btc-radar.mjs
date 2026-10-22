@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { BTC_RADAR_LEVELS, evaluateBtcRadar, pyFixed } from "./btc-radar-model.mjs";
+import { BTC_RADAR_LEVELS, evaluateBtcRadar, evaluateRadarPosition, pyFixed } from "./btc-radar-model.mjs";
 import {
   BTC_RADAR_SOURCES,
   createOkxReadOnlyClient,
@@ -9,6 +9,8 @@ import {
   loadBtcDailyRsi,
   loadBtcMarket,
   loadDcaPosition,
+  loadAccountPositions,
+  loadGridPositions,
   loadFearGreed,
   loadFearGreedHistory,
   loadFedExpectations,
@@ -77,12 +79,15 @@ export function beijingTimestamp(nowMs) {
 // A failed source reuses its last successful value and is reported as stale,
 // matching the routine's rule; a required source that never succeeded fails
 // the run, while an optional one is simply left out.
-async function collectSource([key, label, load], previousInputs, context, stale, inputs, { optional = false } = {}) {
+async function collectSource([key, label, load], previousInputs, context, stale, inputs, { optional = false, reportFailure = false } = {}) {
   try {
     inputs[key] = { value: await load(context), fetchedAt: new Date(context.nowMs).toISOString() };
   } catch (error) {
     const previous = previousInputs[key];
-    if (!previous && optional) return;
+    if (!previous && optional) {
+      if (reportFailure) stale.push({ key, label, since: null, error: error.message });
+      return;
+    }
     if (!previous) throw new Error(`${label}获取失败且没有可沿用的旧值：${error.message}`);
     inputs[key] = previous;
     stale.push({ key, label, since: previous.fetchedAt, error: error.message });
@@ -102,13 +107,16 @@ const levelRank = (level) => BTC_RADAR_LEVELS.indexOf(level);
 
 export function btcRadarAlertReasons(previous, current, events = []) {
   const reasons = [];
-  const before = previous?.position || null;
-  const now = current.position;
   if (previous && levelRank(current.level) > levelRank(previous.level)) reasons.push(`综合等级升至${current.level_name}`);
-  if (now?.level === "red") reasons.push("持仓距止损不到 3%");
-  else if (before?.level === "green" && now?.level === "orange") reasons.push("持仓离止损不到 5%");
-  if (before && now && now.safety_filled > before.safety_filled) reasons.push(`自动补仓增加到 ${now.safety_filled}/${now.safety_max}`);
-  if (now && !(now.sl > 0) && (!before || before.sl > 0)) reasons.push("持仓没有止损");
+  for (const now of current.positions || (current.position ? [current.position] : [])) {
+    if (now.stale) continue;
+    const before = now.id ? previous?.positions?.find((held) => held.id === now.id) : previous?.position || null;
+    const label = current.positions ? `${now.source === "grid" ? "合约网格" : now.source === "account" ? "普通永续" : "马丁格尔"}${now.direction === "short" ? "空头" : "多头"}：` : "";
+    if (now.level === "red") reasons.push(`${label}持仓距止损不到 3%`);
+    else if (before?.level === "green" && now.level === "orange") reasons.push(`${label}持仓离止损不到 5%`);
+    if (before && now.safety_filled > before.safety_filled) reasons.push(`${label}自动补仓增加到 ${now.safety_filled}/${now.safety_max}`);
+    if (!(now.sl > 0) && (!before || before.sl > 0)) reasons.push(`${label}${now.source && now.source !== "dca" ? "固定价格止损未确认" : "持仓没有止损"}`);
+  }
   for (const event of events) {
     reasons.push(event.type === "STRATEGY_ENDED"
       ? `合约马丁格尔 ${event.algoId} 已结束（${event.state}）`
@@ -123,7 +131,7 @@ export function btcRadarAlertReasons(previous, current, events = []) {
 export function btcRadarAlertText(snapshot, reasons, environment = process.env) {
   const top = [...snapshot.factors].sort((left, right) => right.score * right.weight - left.score * left.weight).slice(0, 2);
   const position = snapshot.position;
-  const distance = (value) => `${pyFixed(value, 2, { sign: true })}%`;
+  const distance = (value) => value == null ? "未确认" : `${pyFixed(value, 2, { sign: true })}%`;
   const lines = [
     `[BTC 风控雷达] ⚠️ 需要关注：${reasons.join("；")}`,
     `综合 ${pyFixed(snapshot.score, 0)} 分（${snapshot.level_name}），主要压力：${top.map(({ name }) => name).join("、")}`,
@@ -131,7 +139,15 @@ export function btcRadarAlertText(snapshot, reasons, environment = process.env) 
       ? `现价 ${pyFixed(snapshot.price, 0, { grouping: true })}；距止损 ${distance(position.d_sl)}，距强平 ${distance(position.d_liq)}，距止盈 ${distance(position.d_tp)}`
       : `现价 ${pyFixed(snapshot.price, 0, { grouping: true })}；未接入持仓`
   ];
-  if (position) lines.push(`策略总收益 ${position.total_pnl} USDT · 补仓 ${position.safety_filled}/${position.safety_max}`);
+  if (snapshot.positions?.length) {
+    lines.splice(2);
+    lines.push(`BTC 现价 ${pyFixed(snapshot.price, 0, { grouping: true })}`);
+    for (const held of snapshot.positions) {
+      lines.push(`${held.source === "grid" ? "合约网格" : held.source === "account" ? "普通永续" : "马丁格尔"} · ${held.direction === "short" ? "做空" : "做多"}${held.stale ? "（旧数据）" : ""} · ${held.sz_btc} BTC；距止损 ${distance(held.d_sl)}，距强平 ${distance(held.d_liq)}，距止盈 ${distance(held.d_tp)}`);
+    }
+  } else if (position) lines.push(position.source && position.source !== "dca"
+    ? `${position.source === "grid" ? "合约网格" : "普通永续"} · ${position.direction === "short" ? "做空" : "做多"} · 浮动盈亏 ${position.unrealized_pnl ?? "未确认"} USDT`
+    : `策略总收益 ${position.total_pnl} USDT · 补仓 ${position.safety_filled}/${position.safety_max}`);
   const link = radarLink(environment);
   if (link) lines.push(link);
   return lines.join("\n");
@@ -185,6 +201,13 @@ export async function runBtcRadar({
     readJson(paths.observations, null)
   ]);
   const context = { fetchImpl, nowMs };
+  if (!previousInputs.dcaPositions && previousInputs.position) {
+    const legacy = previousInputs.position.value;
+    const position = legacy ? { ...legacy, id: legacy.id || `dca:${state.trackedAlgoId || "legacy"}`,
+      source: "dca", direction: legacy.direction || "long" } : null;
+    previousInputs.dcaPositions = { fetchedAt: previousInputs.position.fetchedAt,
+      value: { position, positions: position ? [position] : [], algoId: state.trackedAlgoId || null } };
+  }
   const inputs = {};
   const stale = [];
   await Promise.all([
@@ -198,16 +221,29 @@ export async function runBtcRadar({
   if (credentials) {
     const privateGet = createOkxReadOnlyClient({ ...credentials, fetchImpl });
     await collectSource(["sentiment", "OKX 舆情", () => loadSentiment(privateGet)], previousInputs, context, stale, inputs);
-    await collectSource(["position", "OKX 合约马丁格尔", async () => {
+    await collectSource(["dcaPositions", "OKX 合约马丁格尔", async () => {
       const result = await loadDcaPosition(privateGet, {
         pinnedAlgoId: environment.BTC_RADAR_DCA_ALGO_ID || null,
-        trackedAlgoId: state.trackedAlgoId || null
+        trackedAlgoId: state.trackedAlgoId || null,
+        includeAll: true
       });
       events = result.events;
       algoId = result.algoId;
-      return result.position;
-    }], previousInputs, context, stale, inputs);
+      return result;
+    }], previousInputs, context, stale, inputs, { optional: true, reportFailure: true });
+    await Promise.all([
+      collectSource(["accountPositions", "OKX 普通永续", () => loadAccountPositions(privateGet)], previousInputs, context, stale, inputs, { optional: true, reportFailure: true }),
+      collectSource(["gridPositions", "OKX 合约网格", () => loadGridPositions(privateGet)], previousInputs, context, stale, inputs, { optional: true, reportFailure: true })
+    ]);
   }
+
+  const positions = [
+    ["dcaPositions", inputs.dcaPositions?.value.positions || []],
+    ["accountPositions", inputs.accountPositions?.value || []],
+    ["gridPositions", inputs.gridPositions?.value || []]
+  ].flatMap(([key, held]) => held.map((position) => ({ ...position,
+    fetchedAt: inputs[key].fetchedAt, stale: stale.some((source) => source.key === key) })));
+  const primary = positions.find((held) => held.id === inputs.dcaPositions?.value.position?.id) || positions[0] || null;
 
   const snapshot = evaluateBtcRadar({
     ts: beijingTimestamp(nowMs),
@@ -221,9 +257,10 @@ export async function runBtcRadar({
     poly_month: inputs.polyMonth.value,
     fed: inputs.fed.value,
     treasury: inputs.treasury.value,
-    position: inputs.position?.value ?? null,
+    position: primary,
     sources: BTC_RADAR_SOURCES
   });
+  snapshot.positions = positions.map((held) => evaluateRadarPosition(held, inputs.btcMarket.value.price, inputs.polyWeek.value));
   // The page interpolates dragged stop and take-profit levels on this ladder.
   snapshot.ladders = { week: inputs.polyWeek.value };
   snapshot.indicators = {
@@ -246,7 +283,8 @@ export async function runBtcRadar({
   snapshot.data_status = {
     okxConfigured: Boolean(credentials),
     algoId,
-    staleSources: stale.map(({ key, label, since }) => ({ key, label, since }))
+    staleSources: stale.map(({ key, label, since }) => ({ key, label, since })),
+    ...(stale.length ? { sourceErrors: stale.map(({ key, since, error }) => ({ key, since, error })) } : {})
   };
 
   const entry = {
@@ -254,7 +292,8 @@ export async function runBtcRadar({
     price: snapshot.price,
     score: snapshot.score,
     level: snapshot.level,
-    f: Object.fromEntries(snapshot.factors.map(({ key, score }) => [key, score]))
+    f: Object.fromEntries(snapshot.factors.map(({ key, score }) => [key, score])),
+    ...(snapshot.data_status.sourceErrors ? { sourceErrors: snapshot.data_status.sourceErrors } : {})
   };
   const nextHistory = [...history.filter(({ ts }) => ts !== entry.ts), entry]
     .filter(({ ts }) => nowMs - Date.parse(ts) <= HISTORY_RETENTION_MS)

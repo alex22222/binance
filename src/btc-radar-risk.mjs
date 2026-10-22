@@ -20,11 +20,12 @@ export function ladderProbability(ladder, target) {
   return null;
 }
 
-// What a long contract DCA position looks like if the stop or take-profit
-// triggers. Every pending safety order above the stop fills first, so the stop
+// What a long or short DCA position looks like if the stop or take-profit
+// triggers. Safety orders on the path to the stop fill first, so the stop
 // loss is taken on that larger position. The liquidation estimate assumes each
 // fill adds notional / leverage of isolated margin; slippage is not included.
 export function dcaScenario({ position, price, stop, takeProfit, capitalUsdt = null, takerFee = 0.0005, maintenanceMargin = 0.004 }) {
+  const direction = position.direction === "short" ? -1 : 1;
   const size = Number(position.sz_btc);
   const average = Number(position.avg);
   const contractValue = Number(position.ladder && position.ladder.ctVal) > 0 ? Number(position.ladder.ctVal) : 0.01;
@@ -32,7 +33,7 @@ export function dcaScenario({ position, price, stop, takeProfit, capitalUsdt = n
     .map(([orderPrice, contracts]) => [Number(orderPrice), Number(contracts)])
     .filter(([orderPrice, contracts]) => orderPrice > 0 && contracts > 0);
   const hasStop = stop > 0;
-  const filling = hasStop ? pending.filter(([orderPrice]) => orderPrice > stop) : pending;
+  const filling = hasStop ? pending.filter(([orderPrice]) => direction * (orderPrice - stop) > 0) : pending;
   const addedSize = filling.reduce((sum, [, contracts]) => sum + contracts * contractValue, 0);
   const addedCost = filling.reduce((sum, [orderPrice, contracts]) => sum + orderPrice * contracts * contractValue, 0);
   const worstSize = size + addedSize;
@@ -40,12 +41,14 @@ export function dcaScenario({ position, price, stop, takeProfit, capitalUsdt = n
   const lever = Number(position.lever);
   const liquidation = Number(position.liq);
   let worstLiquidation = null;
-  if (lever > 0 && liquidation > 0) {
-    const margin = average * size - liquidation * size * (1 - maintenanceMargin);
-    worstLiquidation = (worstAverage * worstSize - margin - addedCost / lever) / (worstSize * (1 - maintenanceMargin));
+  if (position.source === "account" || position.source === "grid") {
+    worstLiquidation = liquidation > 0 ? liquidation : null;
+  } else if (lever > 0 && liquidation > 0) {
+    const margin = direction * (average * size - liquidation * size * (1 - direction * maintenanceMargin));
+    worstLiquidation = (worstAverage * worstSize - direction * (margin + addedCost / lever)) / (worstSize * (1 - direction * maintenanceMargin));
   }
-  const lossAtStop = hasStop ? worstSize * (worstAverage - stop) + worstSize * stop * takerFee : null;
-  const profitAtTarget = takeProfit > 0 ? size * (takeProfit - average) - size * takeProfit * takerFee : null;
+  const lossAtStop = hasStop ? direction * worstSize * (worstAverage - stop) + worstSize * stop * takerFee : null;
+  const profitAtTarget = takeProfit > 0 ? direction * size * (takeProfit - average) - size * takeProfit * takerFee : null;
   const share = (value) => capitalUsdt > 0 && value !== null ? value / capitalUsdt : null;
   return {
     stop: hasStop ? stop : null,
@@ -57,7 +60,7 @@ export function dcaScenario({ position, price, stop, takeProfit, capitalUsdt = n
     worstSize,
     worstAverage,
     worstLiquidation,
-    stopAboveLiquidation: hasStop && worstLiquidation > 0 ? stop / worstLiquidation - 1 : null,
+    stopAboveLiquidation: hasStop && worstLiquidation > 0 ? direction * (stop / worstLiquidation - 1) : null,
     lossAtStop,
     profitAtTarget,
     lossShare: share(lossAtStop),

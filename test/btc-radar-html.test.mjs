@@ -215,3 +215,43 @@ test("saves the total capital through the authenticated settings endpoint", asyn
   assert.equal(view.get("capitalStatus").textContent, "请输入大于 0 的数字");
   assert.equal(requests.length, 1);
 });
+
+test("short previews keep the stop above and target below price, with upward danger and swapped probabilities", async () => {
+  const short = { ...ladderPosition, id: "dca:short", direction: "short", sl: 105, tp: 96, liq: 110,
+    ladder: { ctVal: 0.01, complete: true, pending: [[102, 50], [104, 50]] } };
+  const view = await render({ ...ladderPayload, latest: { ...ladderPayload.latest, price: 98, position: short,
+    ladders: { week: { dips: { 96: 0.2 }, reaches: { 105: 0.6 } } } } });
+  assert.match(view.get("poshead").textContent, /做空/);
+  assert.match(view.get("ruler").innerHTML, /class="bar short"/);
+  assert.match(view.get("rulerHelp").textContent, /止损以上/);
+  assert.match(view.get("riskBody").innerHTML, /-7\.1 USDT/);
+  assert.match(view.get("riskBody").innerHTML, /止损 60% · 止盈 20%/);
+  assert.match(view.get("riskBody").innerHTML, /止损低于强平/);
+  view.run('setPreview("sl", 103, radar.position, radar.price, null)');
+  assert.match(view.get("riskBody").innerHTML, /会先成交 1 笔补仓/);
+  view.run('setPreview("sl", 50, radar.position, radar.price, null)');
+  assert.ok(view.run("preview.sl") > 98);
+  view.run('setPreview("tp", 500, radar.position, radar.price, null)');
+  assert.ok(view.run("preview.tp") < 98);
+});
+
+test("shows grid and account shorts separately and switches the scenario without aggregating or changing OKX", async () => {
+  const grid = { id: "grid:g1:net", source: "grid", direction: "short", avg: 100, sz_btc: 1, liq: 120, lever: 10,
+    sl: null, tp: null, unrealized_pnl: -2, total_pnl: -1.8, grid_pnl: 0.2, grid_range: [90, 110], level: "yellow", level_name: "止损未确认" };
+  const account = { ...grid, id: "account:a1", source: "account", sl: 105, tp: 95, sz_btc: 2, stale: true };
+  const view = await render({ ...ladderPayload, latest: { ...ladderPayload.latest, position: grid, positions: [grid, account] } });
+  assert.equal(view.get("positionPicker").hidden, false);
+  assert.match(view.get("positionList").innerHTML, /合约网格 · 做空/);
+  assert.match(view.get("positionList").innerHTML, /普通永续 · 做空/);
+  assert.match(view.get("poshead").textContent, /合约网格.*做空/);
+  assert.match(view.get("posstats").innerHTML, /网格收益/);
+  assert.doesNotMatch(view.get("posstats").innerHTML, /自动补仓|0\.00%/);
+  assert.match(view.get("riskBody").innerHTML, /当前强平价（OKX）/);
+  assert.doesNotMatch(view.get("riskBody").innerHTML, /会先成交|补仓/);
+  assert.match(view.get("risk").innerHTML, /不是最大亏损/);
+  view.run('selectPosition("account:a1")');
+  assert.match(view.get("poshead").textContent, /普通永续.*做空 · 旧数据/);
+  assert.match(view.get("riskBody").innerHTML, /固定当前仓位 2\.0000 BTC/);
+  view.run('setPreview("sl",105, activePosition(),radar.price,null);resetPreview()');
+  assert.match(view.get("poshead").textContent, /普通永续/);
+});

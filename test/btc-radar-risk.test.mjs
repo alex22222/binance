@@ -41,6 +41,21 @@ test("reports an unbounded loss when there is no stop", () => {
   assert.equal(noStop.breakevenWinRate, null);
 });
 
+test("shorts lose on a rise, profit on a fall and fill ascending safety orders", () => {
+  const short = { ...position, direction: "short", liq: 110, ladder: { ctVal: 0.01, pending: [[102, 50], [104, 50]] } };
+  const all = dcaScenario({ position: short, price: 98, stop: 105, takeProfit: 96, takerFee: 0, maintenanceMargin: 0 });
+  assert.equal(all.fills, 2);
+  assert.equal(all.worstAverage, 101.5);
+  assert.equal(all.lossAtStop, 7);
+  assert.equal(all.profitAtTarget, 4);
+  close(all.worstLiquidation, 111.65);
+  close(all.stopAboveLiquidation, 1 - 105 / 111.65);
+  assert.equal(dcaScenario({ position: short, price: 98, stop: 103, takeProfit: 96 }).fills, 1);
+  const crossed = dcaScenario({ position: short, price: 108, stop: 115, takeProfit: 102 });
+  assert.ok(crossed.stopAboveLiquidation < 0);
+  assert.ok(crossed.profitAtTarget < 0);
+});
+
 test("interpolates and clamps Polymarket probability ladders", () => {
   const ladder = { 80000: 0.2, 76000: 0.05 };
   close(ladderProbability(ladder, 78000), 0.125);

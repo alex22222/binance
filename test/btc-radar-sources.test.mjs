@@ -7,6 +7,8 @@ import {
   fedExpectations,
   loadBtcDailyRsi,
   loadDcaPosition,
+  loadAccountPositions,
+  loadGridPositions,
   loadFearGreed,
   loadSentiment,
   parseTreasuryCsv,
@@ -129,6 +131,7 @@ const details = { avgPx: "81250.4567891", fillSafetyOrds: "6", initPx: "82000", 
 
 test("maps a contract DCA bot to the radar position", () => {
   assert.deepEqual(dcaPosition(bot(), details), {
+    id: "dca:1", source: "dca", direction: "long",
     avg: 81250.46, tp: 84500, sl: 77000, liq: 73100, sz_btc: 0.105, lever: 20,
     total_pnl: -12.35, safety_filled: 6, safety_max: 10, next_safety: 79704,
     manual_adds: 0, ladder: { pending: [], ctVal: 0.01, complete: false }
@@ -160,7 +163,7 @@ test("counts automatic safety fills apart from manual adds and keeps the live la
   assert.equal(summaryOnly.next_safety, Number((82000 * (1 - 0.004 * 3)).toFixed(1)));
 });
 
-test("follows the newest running BTC long bot and reports a stopped one", async () => {
+test("follows the newest running BTC bot of either direction and reports a stopped one", async () => {
   const requests = [];
   const privateGet = async (path, params) => {
     requests.push([path, params]);
@@ -177,16 +180,19 @@ test("follows the newest running BTC long bot and reports a stopped one", async 
     return [{ ...details, curCycleId: "7" }];
   };
   const followed = await loadDcaPosition(privateGet, { trackedAlgoId: "gone" });
-  assert.equal(followed.algoId, "new");
+  assert.equal(followed.algoId, "short");
   assert.deepEqual(followed.events, [
     { type: "STRATEGY_ENDED", algoId: "gone", state: "stopped" },
-    { type: "STRATEGY_SWITCHED", algoId: "new", previousAlgoId: "gone" }
+    { type: "STRATEGY_SWITCHED", algoId: "short", previousAlgoId: "gone" }
   ]);
   assert.deepEqual(requests.slice(-2), [
-    ["/api/v5/tradingBot/dca/position-details", { algoId: "new", algoOrdType: "contract_dca" }],
-    ["/api/v5/tradingBot/dca/orders", { algoId: "new", algoOrdType: "contract_dca", cycleId: "7", limit: "100" }]
+    ["/api/v5/tradingBot/dca/position-details", { algoId: "short", algoOrdType: "contract_dca" }],
+    ["/api/v5/tradingBot/dca/orders", { algoId: "short", algoOrdType: "contract_dca", cycleId: "7", limit: "100" }]
   ]);
   assert.deepEqual(followed.position.ladder.pending, [[81000, 1]]);
+  const all = await loadDcaPosition(privateGet, { includeAll: true, pinnedAlgoId: "old" });
+  assert.equal(all.position.id, "dca:old");
+  assert.equal(all.positions.length, 3);
   const withoutOrders = await loadDcaPosition(async (path, params) => {
     if (path.endsWith("/orders")) throw new Error("OKX /orders failed: 50001");
     return privateGet(path, params);
@@ -197,11 +203,60 @@ test("follows the newest running BTC long bot and reports a stopped one", async 
   assert.deepEqual(none, { position: null, algoId: null, events: [] });
 });
 
+const instrument = { instId: "BTC-USDT-SWAP", ctVal: "0.01", ctMult: "1", ctValCcy: "BTC", ctType: "linear" };
+const perpetual = { instId: "BTC-USDT-SWAP", posId: "p1", posSide: "net", pos: "-1.09", avgPx: "82633.637", liqPx: "99006.8", lever: "10", markPx: "83043.7", upl: "-4.58", mgnMode: "cross" };
+
+test("ordinary positions recognize negative net and explicit hedge shorts without inventing missing stops", async () => {
+  const get = async (path) => path.endsWith("instruments") ? [instrument] : [
+    perpetual, { ...perpetual, posId: "p2", posSide: "short", pos: "2", liqPx: "", closeOrderAlgo: [{ slTriggerPx: "90000", tpTriggerPx: "78000" }] },
+    { ...perpetual, pos: "0", avgPx: "" }, { ...perpetual, instId: "ETH-USDT-SWAP" }
+  ];
+  const rows = await loadAccountPositions(get);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].direction, "short");
+  assert.ok(Math.abs(rows[0].sz_btc - 0.0109) < 1e-12);
+  assert.equal(rows[0].sl, null);
+  assert.equal(rows[1].sl, 90000);
+  assert.equal(rows[1].liq, null);
+  assert.equal(rows[1].direction, "short");
+  await assert.rejects(loadAccountPositions(async (path) => path.endsWith("instruments") ? [{ ...instrument, ctValCcy: "USD" }] : [perpetual]), /identity\/value/);
+});
+
+test("grid shorts use their own positions endpoint, total and grid PnL, not a DCA ladder", async () => {
+  const paths = [];
+  const rows = await loadGridPositions(async (path) => {
+    paths.push(path);
+    if (path.endsWith("instruments")) return [instrument];
+    if (path.endsWith("positions")) return [perpetual];
+    return [{ algoId: "g1", instId: "BTC-USDT-SWAP", state: "running", direction: "short", totalPnl: "-6.57", gridProfit: "0.1967", minPx: "74000", maxPx: "90000", slTriggerPx: "", tpTriggerPx: "" }];
+  });
+  assert.equal(rows[0].source, "grid");
+  assert.equal(rows[0].direction, "short");
+  assert.equal(rows[0].total_pnl, -6.57);
+  assert.equal(rows[0].grid_pnl, 0.1967);
+  assert.equal(rows[0].sl, null);
+  assert.equal(rows[0].ladder, undefined);
+  assert.ok(paths.every((path) => !path.includes("/dca/")));
+});
+
 test("reads BTC news sentiment ratios and rejects malformed ones", async () => {
   const response = (sentiment) => async () => [{ details: [{ ccy: "BTC", sentiment }] }];
   assert.deepEqual(await loadSentiment(response({ bullishRatio: "0.53", bearishRatio: "0.11" })), { bull: 0.53, bear: 0.11 });
   await assert.rejects(loadSentiment(response({ bullishRatio: "", bearishRatio: "0.11" })), /bullish ratio/);
   await assert.rejects(loadSentiment(response({ bullishRatio: "1.2", bearishRatio: "0.11" })), /outside 0-1/);
+});
+
+test("a running BTC short bot is not discarded and its safety ladder rises", async () => {
+  const short = bot({ direction: "short" });
+  const result = await loadDcaPosition(async (path) => path.endsWith("ongoing-list") ? [short]
+    : path.endsWith("/orders") ? [
+      { ordType: "safety_order", state: "live", px: "85000", sz: "1" },
+      { ordType: "safety_order", state: "live", px: "84000", sz: "2" }
+    ] : [details]);
+  assert.equal(result.position?.direction, "short");
+  assert.equal(result.position.next_safety, 84000);
+  assert.deepEqual(result.position.ladder.pending, [[84000, 2], [85000, 1]]);
+  assert.equal(dcaPosition(short, details).next_safety, 84296);
 });
 
 test("computes Wilder's RSI from completed UTC daily candles and from the live candle", async () => {

@@ -50,6 +50,9 @@ function responses(overrides = {}) {
     }] }],
     ["dca/position-details", { code: "0", data: [{ avgPx: "83000", fillSafetyOrds: "2", initPx: "84000", liqPx: "75000", sz: "5", tpPx: "86000" }] }],
     ["dca/history-list", { code: "0", data: [{ algoId: "bot-1", state: "stopped" }] }],
+    ["account/positions", { code: "0", data: [] }],
+    ["grid/orders-algo-pending", { code: "0", data: [] }],
+    ["public/instruments", { code: "0", data: [{ instId: "BTC-USDT-SWAP", ctType: "linear", ctValCcy: "BTC", ctVal: "0.01", ctMult: "1" }] }],
     ["currency-sentiment-query", { code: "0", data: [{ details: [{ ccy: "BTC", sentiment: { bullishRatio: "0.5", bearishRatio: "0.2" } }] }] }]
   ];
   return async (url) => {
@@ -173,6 +176,53 @@ test("records an undeliverable alert without losing the evaluation", async () =>
   assert.equal(failed.alert.error, "Feishu rejected request: HTTP 500");
   assert.equal((await readJson(directory, "latest")).ts, failed.snapshot.ts);
   assert.equal((await readJson(directory, "state")).lastAlert.status, "FAILED");
+});
+
+test("collects all three position sources independently and preserves failed-source evidence", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "btc-radar-short-"));
+  const held = { instId: "BTC-USDT-SWAP", posId: "p1", pos: "-2", posSide: "net", avgPx: "83000", liqPx: "99000", lever: "10", mgnMode: "cross", upl: "-20", markPx: "84000" };
+  const overrides = {
+    "account/positions": { code: "0", data: [held] },
+    "grid/orders-algo-pending": { code: "0", data: [{ instId: "BTC-USDT-SWAP", algoId: "g1", state: "running", direction: "short", totalPnl: "-6.57", gridProfit: "0.19", minPx: "74000", maxPx: "90500" }] },
+    "grid/positions": { code: "0", data: [held] }
+  };
+  const first = await runBtcRadar({ directory, environment: OKX, fetchImpl: responses(overrides), nowMs: NOW });
+  assert.deepEqual(first.snapshot.positions.map(({ source, direction }) => [source, direction]), [["dca", "long"], ["account", "short"], ["grid", "short"]]);
+  assert.deepEqual(first.snapshot.data_status.staleSources, []);
+  assert.equal(first.snapshot.positions[1].d_sl, null);
+  const second = await runBtcRadar({ directory, environment: OKX, fetchImpl: responses({ ...overrides, "account/positions": "FAIL" }), nowMs: NOW + HOUR });
+  assert.equal(second.snapshot.positions.find(p => p.source === "account").stale, true);
+  assert.equal(second.snapshot.positions.find(p => p.source === "grid").stale, false);
+  assert.equal(second.snapshot.data_status.staleSources[0].key, "accountPositions");
+  assert.equal((await readJson(directory, "inputs")).accountPositions.fetchedAt, new Date(NOW).toISOString());
+  const gridOnly = await runBtcRadar({ directory: await mkdtemp(join(tmpdir(), "btc-radar-grid-")), environment: OKX,
+    fetchImpl: responses({ ...overrides, "dca/ongoing-list": { code: "0", data: [] }, "account/positions": "FAIL" }), nowMs: NOW });
+  assert.equal(gridOnly.snapshot.position.source, "grid");
+  assert.equal(gridOnly.snapshot.position.direction, "short");
+  assert.equal(gridOnly.snapshot.data_status.staleSources[0].since, null);
+});
+
+test("alerts match each position identity, never comparing fills across different bots or using stale positions", () => {
+  const previous = { level: "green", price: 100, positions: [{ id: "dca:old", source: "dca", safety_filled: 0, sl: 95, level: "green" }] };
+  const current = { level: "green", price: 100, positions: [
+    { id: "dca:new", source: "dca", direction: "short", safety_filled: 5, sl: 105, level: "green" },
+    { id: "grid:g1", source: "grid", direction: "short", sl: 102, level: "red" },
+    { id: "account:p1", source: "account", direction: "short", sl: 102, level: "red", stale: true }
+  ] };
+  assert.deepEqual(btcRadarAlertReasons(previous, current), ["合约网格空头：持仓距止损不到 3%"]);
+});
+
+test("upgrading the legacy DCA cache does not drop an old position when its first collection fails", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "btc-radar-upgrade-"));
+  await runBtcRadar({ directory, environment: OKX, fetchImpl: responses(), nowMs: NOW });
+  const inputs = await readJson(directory, "inputs");
+  inputs.position = { value: inputs.dcaPositions.value.position, fetchedAt: inputs.dcaPositions.fetchedAt };
+  delete inputs.dcaPositions;
+  await writeFile(join(directory, "inputs.json"), JSON.stringify(inputs));
+  const result = await runBtcRadar({ directory, environment: OKX, fetchImpl: responses({ "dca/ongoing-list": "FAIL" }), nowMs: NOW + HOUR });
+  assert.equal(result.snapshot.position.id, "dca:bot-1");
+  assert.equal(result.snapshot.position.stale, true);
+  assert.ok(result.snapshot.data_status.sourceErrors.some(({ key }) => key === "dcaPositions"));
 });
 
 test("adopts the first trend state silently and pushes each later switch once", async () => {
