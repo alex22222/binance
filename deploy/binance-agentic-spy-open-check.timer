@@ -1,0 +1,11 @@
+[Unit]
+Description=Check SPY automatic BUY once after the 2026-10-22 market open
+
+[Timer]
+OnCalendar=2026-10-22 13:45:00 UTC
+AccuracySec=1s
+Persistent=true
+Unit=binance-agentic-spy-open-check@scheduled.service
+
+[Install]
+WantedBy=timers.target
