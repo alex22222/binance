@@ -93,3 +93,68 @@ test("does not re-evaluate entries twice in one session", () => {
   assert.equal(result.state.position, null);
   assert.equal(result.events.at(-1).type, "PAPER_ENTRY_ALREADY_EVALUATED");
 });
+
+function openQqq() {
+  return advanceTurtlePaper(initialTurtlePaperState(), {
+    at: "2026-10-05T13:35:00.000Z", sessionDate: "2026-10-05", regularOpen: true,
+    candidates: [{ symbol: "QQQ", price: 100, breakoutStrengthPct: 1, initialRiskPct: 4 }]
+  }, { notionalUsdt: 50, roundTripCostPct: 1 });
+}
+
+test("keeps entry capital and costs when runtime sizing changes from 50 to 250 USDT", () => {
+  const opened = openQqq();
+  assert.equal(opened.state.position.roundTripCostPct, 1);
+  assert.equal(opened.events[0].roundTripCostPct, 1);
+  const marked = advanceTurtlePaper(opened.state, {
+    at: "2026-10-12T13:35:00.000Z", sessionDate: "2026-10-12", regularOpen: true,
+    positionObservation: { symbol: "QQQ", price: 99, exitBreakout: false }
+  }, { notionalUsdt: 250, roundTripCostPct: 0.84 });
+  assert.ok(Math.abs(marked.state.position.unrealizedPnlUsdt + 1) < 1e-9);
+  assert.ok(Math.abs(marked.state.position.netReturnPct + 2) < 1e-9);
+  const closed = advanceTurtlePaper(marked.state, {
+    at: "2026-10-14T15:40:00.000Z", sessionDate: "2026-10-14", regularOpen: true,
+    positionObservation: { symbol: "QQQ", price: 95, exitBreakout: false }
+  }, { notionalUsdt: 250, roundTripCostPct: 0.84 });
+  const trade = closed.state.trades[0];
+  assert.equal(trade.notionalUsdt, 50);
+  assert.equal(trade.roundTripCostPct, 1);
+  assert.equal(trade.costUsdt, 0.5);
+  assert.equal(trade.pnlUsdt, -3);
+  assert.equal(trade.returnPct, -6);
+  assert.equal(closed.state.realizedPnlUsdt, -3);
+  assert.equal(closed.state.totalCostUsdt, 0.5);
+});
+
+test("recovers a legacy position cost rate from its recorded returns, not current config", () => {
+  const opened = openQqq().state;
+  delete opened.position.roundTripCostPct;
+  const result = advanceTurtlePaper(opened, {
+    at: "2026-10-14T15:40:00.000Z", sessionDate: "2026-10-14", regularOpen: true,
+    positionObservation: { symbol: "QQQ", price: 101, exitBreakout: true }
+  }, { notionalUsdt: 250, roundTripCostPct: 0.84 });
+  assert.equal(result.state.trades[0].pnlUsdt, 0);
+  assert.equal(result.state.trades[0].notionalUsdt, 50);
+});
+
+test("refuses unknown or inconsistent entry accounting instead of using new sizing", () => {
+  const opened = openQqq().state;
+  delete opened.position.roundTripCostPct;
+  delete opened.position.netReturnPct;
+  const snapshot = { at: "2026-10-14T15:40:00.000Z", sessionDate: "2026-10-14", regularOpen: true,
+    positionObservation: { symbol: "QQQ", price: 95, exitBreakout: false } };
+  assert.throws(() => advanceTurtlePaper(opened, snapshot), /cost/i);
+  opened.position.roundTripCostPct = 1;
+  opened.position.notionalUsdt = 250;
+  assert.throws(() => advanceTurtlePaper(opened, snapshot), /capital/i);
+});
+
+test("preserves a zero entry cost rate when later runtime costs are nonzero", () => {
+  const opened = openQqq().state;
+  opened.position.roundTripCostPct = 0;
+  const result = advanceTurtlePaper(opened, {
+    at: "2026-10-14T15:40:00.000Z", sessionDate: "2026-10-14", regularOpen: true,
+    positionObservation: { symbol: "QQQ", price: 95, exitBreakout: false }
+  }, { notionalUsdt: 250, roundTripCostPct: 1 });
+  assert.equal(result.state.trades[0].costUsdt, 0);
+  assert.equal(result.state.trades[0].pnlUsdt, -2.5);
+});

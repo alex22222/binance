@@ -80,21 +80,36 @@ export function advanceTurtlePaper(inputState, snapshot, options = {}) {
     if (!observation || observation.symbol !== state.position.symbol || !(observation.price > 0)) {
       throw new Error(`Missing Paper mark for ${state.position.symbol}`);
     }
+    const entryNotionalUsdt = Number(state.position.notionalUsdt);
+    if (![entryNotionalUsdt, Number(state.position.quantity), Number(state.position.entryPrice)]
+      .every(value => Number.isFinite(value) && value > 0)
+      || Math.abs(state.position.quantity * state.position.entryPrice - entryNotionalUsdt) > entryNotionalUsdt * 1e-9) {
+      throw new Error("Inconsistent Turtle Paper entry capital");
+    }
+    // Old positions already record gross/net returns; never substitute current config costs.
+    const entryCostPct = state.position.roundTripCostPct ?? (
+      state.position.grossReturnPct != null && state.position.netReturnPct != null
+        ? state.position.grossReturnPct - state.position.netReturnPct : null
+    );
+    if (entryCostPct == null || !Number.isFinite(entryCostPct) || entryCostPct < 0 || entryCostPct >= 100) {
+      throw new Error("Missing or invalid Turtle Paper entry cost");
+    }
+    state.position.roundTripCostPct = entryCostPct;
     const grossReturnPct = (observation.price / state.position.entryPrice - 1) * 100;
-    const netReturnPct = grossReturnPct - roundTripCostPct;
+    const netReturnPct = grossReturnPct - entryCostPct;
     state.position.markPrice = observation.price;
     state.position.markedAt = snapshot.at;
     state.position.grossReturnPct = grossReturnPct;
     state.position.netReturnPct = netReturnPct;
-    state.position.unrealizedPnlUsdt = notionalUsdt * netReturnPct / 100;
+    state.position.unrealizedPnlUsdt = entryNotionalUsdt * netReturnPct / 100;
     state.position.peakNetReturnPct = Math.max(state.position.peakNetReturnPct, netReturnPct);
     state.position.worstNetReturnPct = Math.min(state.position.worstNetReturnPct, netReturnPct);
     const reason = grossReturnPct <= -state.position.initialRiskPct
       ? "TURTLE_2N_STOP"
       : observation.exitBreakout ? "TURTLE_20D_EXIT" : null;
     if (reason) {
-      const grossPnlUsdt = state.position.quantity * observation.price - notionalUsdt;
-      const costUsdt = notionalUsdt * roundTripCostPct / 100;
+      const grossPnlUsdt = state.position.quantity * observation.price - entryNotionalUsdt;
+      const costUsdt = entryNotionalUsdt * entryCostPct / 100;
       const pnlUsdt = grossPnlUsdt - costUsdt;
       const trade = {
         strategyId: state.strategyId,
@@ -104,11 +119,12 @@ export function advanceTurtlePaper(inputState, snapshot, options = {}) {
         entryPrice: state.position.entryPrice,
         exitPrice: observation.price,
         quantity: state.position.quantity,
-        notionalUsdt,
+        notionalUsdt: entryNotionalUsdt,
+        roundTripCostPct: entryCostPct,
         grossPnlUsdt,
         costUsdt,
         pnlUsdt,
-        returnPct: pnlUsdt / notionalUsdt * 100,
+        returnPct: pnlUsdt / entryNotionalUsdt * 100,
         initialRiskPct: state.position.initialRiskPct,
         peakNetReturnPct: state.position.peakNetReturnPct,
         worstNetReturnPct: state.position.worstNetReturnPct,
@@ -151,6 +167,7 @@ export function advanceTurtlePaper(inputState, snapshot, options = {}) {
     entryPrice: selected.price,
     quantity: notionalUsdt / selected.price,
     notionalUsdt,
+    roundTripCostPct,
     initialRiskPct: selected.initialRiskPct,
     breakoutStrengthPct: selected.breakoutStrengthPct,
     signalDate: selected.signalDate,
@@ -171,6 +188,7 @@ export function advanceTurtlePaper(inputState, snapshot, options = {}) {
     price: selected.price,
     quantity: state.position.quantity,
     notionalUsdt,
+    roundTripCostPct,
     initialRiskPct: selected.initialRiskPct,
     signalDate: selected.signalDate,
     evidenceLevel: "PAPER_CANDLE_PROXY"
