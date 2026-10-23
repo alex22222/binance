@@ -28,6 +28,7 @@ import { observationRows, updateObservations } from "./btc-observe.mjs";
 import { BTC_TREND_LABELS, btcTrendSummary } from "./btc-trend.mjs";
 import { dashboardPublicOrigin } from "./dashboard-auth.mjs";
 import { sendManagerFeishu } from "./fund-manager-delivery.mjs";
+import { btcRadarFreshness } from "./btc-radar-risk.mjs";
 
 export const BTC_RADAR_HISTORY_LIMIT = 180;
 const HISTORY_RETENTION_MS = 60 * 86_400_000;
@@ -37,14 +38,14 @@ const PUBLIC_SOURCES = [
   ["gold", "黄金", loadGoldCloses],
   ["funding", "资金费率", loadFundingRates],
   ["openInterest", "持仓量", loadOpenInterestChange],
-  ["polyWeek", "Polymarket 本周", loadPolymarketWeek],
-  ["polyMonth", "Polymarket 本月", loadPolymarketMonth],
   ["fed", "美联储利率预期", loadFedExpectations],
   ["treasury", "美债收益率", loadTreasuryYields]
 ];
 
 // Displayed beside the factors but never scored.
 const REFERENCE_SOURCES = [
+  ["polyWeek", "Polymarket 本周", loadPolymarketWeek],
+  ["polyMonth", "Polymarket 本月", loadPolymarketMonth],
   ["rsi", "BTC 日线 RSI", loadBtcDailyRsi],
   ["fearGreed", "恐惧贪婪指数", loadFearGreed],
   ["trend", "BTC 200 日均线", loadBtcDailyCloses]
@@ -89,6 +90,12 @@ async function collectSource([key, label, load], previousInputs, context, stale,
       return;
     }
     if (!previous) throw new Error(`${label}获取失败且没有可沿用的旧值：${error.message}`);
+    if (btcRadarFreshness({ ts: previous.fetchedAt }, context.nowMs).expired) {
+      if (!optional) throw new Error(`${label}旧值已过期，拒绝重新生成有效评分：${error.message}`);
+      stale.push({ key, label, since: previous.fetchedAt, error: error.message });
+      inputs[key] = { ...previous, expired: true }; // Keep evidence, never use it as a current reference.
+      return;
+    }
     inputs[key] = previous;
     stale.push({ key, label, since: previous.fetchedAt, error: error.message });
   }
@@ -107,13 +114,13 @@ const levelRank = (level) => BTC_RADAR_LEVELS.indexOf(level);
 
 export function btcRadarAlertReasons(previous, current, events = []) {
   const reasons = [];
-  if (previous && levelRank(current.level) > levelRank(previous.level)) reasons.push(`综合等级升至${current.level_name}`);
+  if (previous && previous.modelVersion === current.modelVersion && levelRank(current.level) > levelRank(previous.level)) reasons.push(`综合等级升至${current.level_name}`);
   for (const now of current.positions || (current.position ? [current.position] : [])) {
     if (now.stale) continue;
     const before = now.id ? previous?.positions?.find((held) => held.id === now.id) : previous?.position || null;
     const label = current.positions ? `${now.source === "grid" ? "合约网格" : now.source === "account" ? "普通永续" : "马丁格尔"}${now.direction === "short" ? "空头" : "多头"}：` : "";
-    if (now.level === "red") reasons.push(`${label}持仓距止损不到 3%`);
-    else if (before?.level === "green" && now.level === "orange") reasons.push(`${label}持仓离止损不到 5%`);
+    if (now.level === "red") reasons.push(`${label}${now.risk_reason ? now.level_name : "持仓距止损不到 3%"}`);
+    else if (before?.level === "green" && now.level === "orange") reasons.push(`${label}${now.risk_reason ? now.level_name : "持仓离止损不到 5%"}`);
     if (before && now.safety_filled > before.safety_filled) reasons.push(`${label}自动补仓增加到 ${now.safety_filled}/${now.safety_max}`);
     if (!(now.sl > 0) && (!before || before.sl > 0)) reasons.push(`${label}${now.source && now.source !== "dca" ? "固定价格止损未确认" : "持仓没有止损"}`);
   }
@@ -253,29 +260,27 @@ export async function runBtcRadar({
     funding: inputs.funding.value,
     oi_7d_change_pct: inputs.openInterest.value,
     sentiment: inputs.sentiment?.value ?? null,
-    poly_week: inputs.polyWeek.value,
-    poly_month: inputs.polyMonth.value,
+    poly_week: inputs.polyWeek?.expired ? null : inputs.polyWeek?.value,
+    poly_month: inputs.polyMonth?.expired ? null : inputs.polyMonth?.value,
     fed: inputs.fed.value,
     treasury: inputs.treasury.value,
     position: primary,
     sources: BTC_RADAR_SOURCES
   });
-  snapshot.positions = positions.map((held) => evaluateRadarPosition(held, inputs.btcMarket.value.price, inputs.polyWeek.value));
-  // The page interpolates dragged stop and take-profit levels on this ladder.
-  snapshot.ladders = { week: inputs.polyWeek.value };
+  snapshot.positions = positions.map((held) => evaluateRadarPosition(held, inputs.btcMarket.value.price));
   snapshot.indicators = {
-    rsi14: inputs.rsi?.value ?? null,
-    fearGreed: inputs.fearGreed?.value ?? null
+    rsi14: inputs.rsi?.expired ? null : inputs.rsi?.value ?? null,
+    fearGreed: inputs.fearGreed?.expired ? null : inputs.fearGreed?.value ?? null
   };
-  snapshot.trend = inputs.trend ? btcTrendSummary(inputs.trend.value) : null;
+  snapshot.trend = inputs.trend && !inputs.trend.expired ? btcTrendSummary(inputs.trend.value) : null;
   snapshot.observation = null;
-  if (inputs.trend && inputs.fearGreedHistory && inputs.fundingHistory) {
+  if ([inputs.trend, inputs.fearGreedHistory, inputs.fundingHistory].every(source => source && !source.expired)) {
     const { record, summary } = updateObservations(observations, observationRows({
       closes: inputs.trend.value,
       fearGreed: inputs.fearGreedHistory.value,
       funding: inputs.fundingHistory.value,
-      dollar: inputs.macro?.value.dollar,
-      realYield: inputs.macro?.value.realYield
+      dollar: inputs.macro?.expired ? undefined : inputs.macro?.value.dollar,
+      realYield: inputs.macro?.expired ? undefined : inputs.macro?.value.realYield
     }));
     await writeJson(paths.observations, record);
     snapshot.observation = summary;
@@ -283,12 +288,14 @@ export async function runBtcRadar({
   snapshot.data_status = {
     okxConfigured: Boolean(credentials),
     algoId,
+    sourceFetchedAt: Object.fromEntries(Object.entries(inputs).map(([key, value]) => [key, value.fetchedAt])),
     staleSources: stale.map(({ key, label, since }) => ({ key, label, since })),
     ...(stale.length ? { sourceErrors: stale.map(({ key, since, error }) => ({ key, since, error })) } : {})
   };
 
   const entry = {
     ts: snapshot.ts,
+    modelVersion: snapshot.modelVersion,
     price: snapshot.price,
     score: snapshot.score,
     level: snapshot.level,
@@ -369,13 +376,23 @@ export async function saveBtcRadarSettings(directory, { capitalUsdt } = {}, nowM
   return settings;
 }
 
-export async function loadBtcRadarView(directory) {
+export async function loadBtcRadarView(directory, nowMs = Date.now()) {
   const settings = await loadBtcRadarSettings(directory);
   try {
     const latest = await readJson(join(directory, "latest.json"), null);
     if (!latest) return { status: "MISSING", latest: null, history: [], settings };
     const history = await readJson(join(directory, "history.json"), []);
-    return { status: "AVAILABLE", latest, history: history.slice(-BTC_RADAR_HISTORY_LIMIT), settings };
+    const freshness = btcRadarFreshness(latest, nowMs);
+    const positions = (latest.positions || (latest.position ? [latest.position] : [])).map(held => {
+      const stale = held.stale || btcRadarFreshness({ ts: held.fetchedAt || latest.ts }, nowMs).expired;
+      return { ...held, p_sl_week: null, p_tp_week: null,
+        ...(freshness.expired || stale ? { stale: true, level: "yellow", level_name: "持仓数据失效" } : {}) };
+    });
+    const position = positions.find(held => held.id === latest.position?.id) || positions[0] || null;
+    return { status: freshness.expired ? "STALE" : "AVAILABLE", latest: {
+      ...latest, positions, position,
+      ...(freshness.expired ? { score: null, level: "unknown", level_name: "数据失效", summary: "评估版本或数据时效失效，仅保留历史快照。", factors: freshness.expiredSources.includes("modelVersion") ? [] : (latest.factors || []).map(f => ({ ...f, score: null })) } : {})
+    }, history: history.slice(-BTC_RADAR_HISTORY_LIMIT), settings, freshness };
   } catch {
     return { status: "ERROR", latest: null, history: [], settings };
   }

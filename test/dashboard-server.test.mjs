@@ -128,7 +128,8 @@ test("dashboard records one exact approval without writing the bot state", async
     assert.notEqual(nextRadarPolicy, radarPolicy);
     assert.deepEqual(await fetch(`${origin}/api/btc-radar`).then((response) => response.json()), { status: "MISSING", latest: null, history: [], settings: {} });
     await mkdir(join(directory, "btc-radar"), { recursive: true });
-    await writeFile(join(directory, "btc-radar", "latest.json"), JSON.stringify({ ts: "2026-10-01T21:43:00+08:00", score: 63.5, level: "orange" }));
+    const radarLatest = { ts: new Date().toISOString(), modelVersion: "pressure-v2-no-touch-probability", score: 63.5, level: "orange" };
+    await writeFile(join(directory, "btc-radar", "latest.json"), JSON.stringify(radarLatest));
     await writeFile(join(directory, "btc-radar", "history.json"), JSON.stringify([{ ts: "2026-10-01T21:43:00+08:00", price: 83555.9, score: 63.5 }]));
     const radarResponse = await fetch(`${origin}/api/btc-radar`);
     assert.equal(radarResponse.headers.get("cache-control"), "no-store");
@@ -136,6 +137,11 @@ test("dashboard records one exact approval without writing the bot state", async
     assert.equal(radar.status, "AVAILABLE");
     assert.equal(radar.latest.score, 63.5);
     assert.equal(radar.history.length, 1);
+    await writeFile(join(directory, "btc-radar", "latest.json"), JSON.stringify({ ...radarLatest, modelVersion: "legacy" }));
+    const oldRadar = await fetch(`${origin}/api/btc-radar`).then(response => response.json());
+    assert.equal(oldRadar.status, "STALE");
+    assert.equal(oldRadar.latest.score, null);
+    await writeFile(join(directory, "btc-radar", "latest.json"), JSON.stringify(radarLatest));
     const saveCapital = (capitalUsdt, requestOrigin = origin) => fetch(`${origin}/api/btc-radar/settings`, {
       method: "POST", headers: { "Content-Type": "application/json", Origin: requestOrigin }, body: JSON.stringify({ capitalUsdt })
     });

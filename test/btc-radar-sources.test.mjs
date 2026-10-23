@@ -25,7 +25,7 @@ const market = (question, yes, extra = {}) => ({
   ...extra
 });
 
-test("builds dip and reach ladders from Yes prices, keeping a resolved level at 1", () => {
+test("builds raw dip and reach quotes without resolved levels", () => {
   const ladder = priceLadder([
     market("Will Bitcoin reach $90,000 September 28-October 4?", 0.0355),
     market("Will Bitcoin reach $84,000 September 28-October 4?", 1, { closed: true }),
@@ -35,10 +35,10 @@ test("builds dip and reach ladders from Yes prices, keeping a resolved level at 
     market("Unrelated market?", 0.5),
     { question: "Will Bitcoin dip to $70,000?", outcomes: "[]", outcomePrices: "[]" }
   ]);
-  assert.deepEqual(ladder, { dips: { 80000: 0.105, 78000: 0.06 }, reaches: { 90000: 0.0355, 84000: 1 } });
+  assert.deepEqual(ladder, { dips: { 80000: 0.105, 78000: 0.06 }, reaches: { 90000: 0.0355, 84000: 0.99 } });
   assert.equal(yesPrice({ outcomes: '["No","Yes"]', outcomePrices: '["0.2","0.8"]' }), 0.8);
   assert.equal(yesPrice({ outcomes: '["Yes","No"]', outcomePrices: '["1.4","0"]' }), null);
-  assert.throws(() => priceLadder([market("Will Bitcoin reach $90,000 in October?", 0.4)]), /missing dip or reach/);
+  assert.deepEqual(priceLadder([market("Will Bitcoin reach $90,000 in October?", 0.4)]), { dips: {}, reaches: { 90000: 0.4 } });
 });
 
 test("selects the current weekly price-hit event, not daily, monthly, or yearly ones", () => {

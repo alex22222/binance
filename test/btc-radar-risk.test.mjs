@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { btcRadarHtml } from "../src/btc-radar-html.mjs";
-import { dcaScenario, ladderProbability } from "../src/btc-radar-risk.mjs";
+import { btcRadarFreshness, dcaScenario } from "../src/btc-radar-risk.mjs";
 
 const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} != ${expected}`);
 const position = { avg: 100, sz_btc: 1, liq: 90, lever: 10, ladder: { ctVal: 0.01, pending: [[98, 50], [96, 50]] } };
@@ -56,17 +56,14 @@ test("shorts lose on a rise, profit on a fall and fill ascending safety orders",
   assert.ok(crossed.profitAtTarget < 0);
 });
 
-test("interpolates and clamps Polymarket probability ladders", () => {
-  const ladder = { 80000: 0.2, 76000: 0.05 };
-  close(ladderProbability(ladder, 78000), 0.125);
-  assert.equal(ladderProbability(ladder, 70000), 0.05);
-  assert.equal(ladderProbability(ladder, 90000), 0.2);
-  assert.equal(ladderProbability({}, 78000), null);
-  assert.equal(ladderProbability(ladder, Number.NaN), null);
+test("freshness has a five-hour grace window and rejects future timestamps", () => {
+  const now = Date.now();
+  assert.equal(btcRadarFreshness({ ts: new Date(now).toISOString() }, now).expired, false);
+  assert.equal(btcRadarFreshness({ ts: new Date(now + 120000).toISOString() }, now).expired, true);
 });
 
 test("the radar page embeds exactly the functions tested here", () => {
   const html = btcRadarHtml({ nonce: "n" });
   assert.ok(html.includes(dcaScenario.toString()));
-  assert.ok(html.includes(ladderProbability.toString()));
+  assert.ok(html.includes(btcRadarFreshness.toString()));
 });

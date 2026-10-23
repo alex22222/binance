@@ -216,22 +216,28 @@ export function yesPrice(market) {
   return Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
 }
 
-// "Dip to $X" markets become dips and "Reach $X" markets become reaches.
-// Duplicated levels keep the higher Yes price: a resolved market reads 1.
-export function priceLadder(markets) {
+// Raw quotes only. Never mix a resolved past hit with a newly opened contract
+// at the same price. Prefer the latest creation window; ambiguous duplicates
+// are omitted rather than merged or interpolated.
+export function priceLadder(markets, nowMs = Date.now()) {
   const ladder = { dips: {}, reaches: {} };
+  const selected = new Map();
   for (const market of markets || []) {
+    if (market.closed === true || market.active === false || market.acceptingOrders === false || market.umaResolutionStatus === "resolved") continue;
+    if (market.endDate && !(Date.parse(market.endDate) > nowMs)) continue;
     const match = String(market.question || "").match(/\b(dip to|reach)\s+\$([\d,]+(?:\.\d+)?)/i);
     const yes = yesPrice(market);
     if (!match || yes === null) continue;
     const level = Number(match[2].replaceAll(",", ""));
     if (!(level > 0)) continue;
-    const side = match[1].toLowerCase().startsWith("dip") ? ladder.dips : ladder.reaches;
-    side[String(level)] = Math.max(side[String(level)] ?? 0, yes);
+    const side = match[1].toLowerCase().startsWith("dip") ? "dips" : "reaches";
+    const key = `${side}:${level}`;
+    const created = Date.parse(market.createdAt);
+    const before = selected.get(key);
+    if (!before || created > before.created) selected.set(key, { side, level, yes, created });
+    else if (!(created < before.created)) selected.set(key, { ...before, yes: null });
   }
-  if (!Object.keys(ladder.dips).length || !Object.keys(ladder.reaches).length) {
-    throw new Error("Polymarket price ladder is missing dip or reach markets");
-  }
+  for (const { side, level, yes } of selected.values()) if (yes !== null) ladder[side][level] = yes;
   return ladder;
 }
 
@@ -240,8 +246,17 @@ const WEEKLY_TITLE = new RegExp(
 );
 
 export function selectWeeklyEvent(events, nowMs) {
+  const localDay = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(nowMs));
   return events
-    .filter((event) => WEEKLY_TITLE.test(event.title || "") && Date.parse(event.endDate) > nowMs)
+    .filter((event) => {
+      const match = (event.title || "").match(WEEKLY_TITLE);
+      if (!match || !(Date.parse(event.endDate) > nowMs)) return false;
+      const first = match[1].match(/^([A-Za-z]+) (\d{1,2})/);
+      const month = MONTHS.indexOf(first[1]) + 1;
+      const end = newYorkMonth(Date.parse(event.endDate) - 1000);
+      const year = end.year - (month > end.month ? 1 : 0);
+      return `${year}-${String(month).padStart(2, "0")}-${first[2].padStart(2, "0")}` <= localDay;
+    })
     .sort((left, right) => Date.parse(left.endDate) - Date.parse(right.endDate))[0] || null;
 }
 
@@ -252,7 +267,7 @@ export async function loadPolymarketWeek({ fetchImpl = fetch, nowMs = Date.now()
   );
   const event = selectWeeklyEvent(Array.isArray(events) ? events : [], nowMs);
   if (!event) throw new Error("Weekly Bitcoin price-hit event not found");
-  return { label: event.title.match(WEEKLY_TITLE)[1], ...priceLadder(event.markets) };
+  return { label: event.title.match(WEEKLY_TITLE)[1], ...priceLadder(event.markets, nowMs) };
 }
 
 export async function loadPolymarketMonth({ fetchImpl = fetch, nowMs = Date.now() } = {}) {
@@ -261,7 +276,7 @@ export async function loadPolymarketMonth({ fetchImpl = fetch, nowMs = Date.now(
   const events = await request(`${POLYMARKET_BASE}/events?slug=${slug}`, { fetchImpl });
   const event = Array.isArray(events) ? events[0] : null;
   if (!event) throw new Error(`Monthly Bitcoin price-hit event not found: ${slug}`);
-  return { label: `${month}月`, ...priceLadder(event.markets) };
+  return { label: `${month}月`, ...priceLadder(event.markets, nowMs) };
 }
 
 function meetingProbabilities(event) {

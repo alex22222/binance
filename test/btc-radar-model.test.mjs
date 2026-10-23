@@ -5,14 +5,17 @@ import { evaluateBtcRadar, pyFixed, pyRound, pyRoundInt } from "../src/btc-radar
 
 const fixture = async (name) => JSON.parse(await readFile(new URL(`./fixtures/btc-radar/${name}.json`, import.meta.url), "utf8"));
 
-test("reproduces btc_alert.py output byte for byte, including rounding ties", async () => {
+test("retains the five original factor formulas and normalizes without Polymarket", async () => {
   for (const name of ["a", "b"]) {
     const input = await fixture(`model-input-${name}`);
     const expected = await fixture(`model-expected-${name}`);
-    assert.equal(JSON.stringify(evaluateBtcRadar(input)), JSON.stringify(expected), `fixture ${name}`);
+    const result = evaluateBtcRadar(input);
+    assert.deepEqual(result.factors.slice(1), expected.factors.slice(1), `fixture ${name}`);
+    const weighted = expected.factors.slice(1).reduce((sum, f) => sum + f.weight * f.score, 0) / 75;
+    assert.equal(result.score, pyRound(weighted, 1));
   }
   const tie = evaluateBtcRadar(await fixture("model-input-b"));
-  assert.deepEqual(tie.factors[0].metrics.slice(0, 2), [["本周跌 4%", "22%"], ["本周涨 4%", "34%"]]);
+  assert.equal(tie.factors[0].score, null);
 });
 
 test("rounds the exact binary value half to even like Python", () => {
@@ -40,7 +43,7 @@ test("scores unavailable sentiment as neutral and labels it instead of inventing
   assert.deepEqual(derivatives(missing).metrics[2], ["舆情多 / 空", "未接入"]);
 });
 
-test("grades the position by distance to the stop and fails closed on an empty ladder", async () => {
+test("grades the position without depending on a prediction-market ladder", async () => {
   const input = await fixture("model-input-a");
   const near = evaluateBtcRadar({ ...input, position: { ...input.position, sl: input.price * 0.98 } });
   assert.equal(near.position.level, "red");
@@ -48,10 +51,7 @@ test("grades the position by distance to the stop and fails closed on an empty l
   const safe = evaluateBtcRadar({ ...input, position: { ...input.position, sl: input.price * 0.9 } });
   assert.equal(safe.position.level, "green");
   assert.equal(evaluateBtcRadar({ ...input, position: null }).position, null);
-  assert.throws(
-    () => evaluateBtcRadar({ ...input, poly_week: { ...input.poly_week, dips: {} } }),
-    /Empty probability ladder/
-  );
+  assert.equal(evaluateBtcRadar({ ...input, poly_week: { dips: {}, reaches: {} } }).score, near.score);
 });
 
 test("short risk and touch probabilities follow the upward stop and downward target", async () => {

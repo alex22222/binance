@@ -34,6 +34,7 @@ async function render(payload, status = 200, post = null) {
 }
 
 const latest = {
+  modelVersion: "pressure-v2-no-touch-probability",
   ts: new Date().toISOString(),
   price: 83555.9,
   score: 63.5,
@@ -57,7 +58,7 @@ test("renders the migrated radar from the server API and escapes every saved str
   const { html, get } = await render({
     status: "AVAILABLE",
     latest,
-    history: [{ ts: "2026-10-01T09:00:00+08:00", price: 83000, score: 60 }, { ts: latest.ts, price: 83555.9, score: 63.5 }]
+    history: [{ modelVersion: latest.modelVersion, ts: "2026-10-01T09:00:00+08:00", price: 83000, score: 60 }, { modelVersion: latest.modelVersion, ts: latest.ts, price: 83555.9, score: 63.5 }]
   });
   assert.match(html, /<a href="\/btc-radar" aria-current="page">BTC 风控<\/a>/);
   assert.doesNotMatch(html, /fonts\.googleapis|window\.claude/);
@@ -142,7 +143,7 @@ test("explains missing position access, empty storage, and an expired login", as
   });
   assert.equal(unconfigured.get("pospill").textContent, "未接入持仓");
   assert.match(unconfigured.get("posstats").innerHTML, /尚未配置 OKX 只读 API Key/);
-  assert.match(unconfigured.get("hist").innerHTML, /^$/);
+  assert.match(unconfigured.get("hist").innerHTML, /旧版评分不混用/);
 
   const missing = await render({ status: "MISSING", latest: null, history: [] });
   assert.equal(missing.get("stamp").textContent, "等待服务器第一次评估写入数据");
@@ -183,7 +184,7 @@ test("previews the worst case at a dragged stop and resets to the bot's real set
   assert.match(body, /-7\.1 USDT/);
   assert.match(body, /约占总资金 7\.1%/);
   assert.match(body, /会先成交 2 笔补仓，仓位 2\.0000 BTC，均价 99/);
-  assert.match(body, /止损 10% · 止盈 40%/);
+  assert.doesNotMatch(body, /止损 10% · 止盈 40%/);
   assert.doesNotMatch(body, /预览中/);
   assert.match(view.get("posstats").innerHTML, /4 \/ 10 · 手动 2/);
   view.run('setPreview("sl", 97, radar.position, radar.price, null)');
@@ -216,7 +217,7 @@ test("saves the total capital through the authenticated settings endpoint", asyn
   assert.equal(requests.length, 1);
 });
 
-test("short previews keep the stop above and target below price, with upward danger and swapped probabilities", async () => {
+test("short previews keep the stop above and target below price, without exit probabilities", async () => {
   const short = { ...ladderPosition, id: "dca:short", direction: "short", sl: 105, tp: 96, liq: 110,
     ladder: { ctVal: 0.01, complete: true, pending: [[102, 50], [104, 50]] } };
   const view = await render({ ...ladderPayload, latest: { ...ladderPayload.latest, price: 98, position: short,
@@ -225,7 +226,7 @@ test("short previews keep the stop above and target below price, with upward dan
   assert.match(view.get("ruler").innerHTML, /class="bar short"/);
   assert.match(view.get("rulerHelp").textContent, /止损以上/);
   assert.match(view.get("riskBody").innerHTML, /-7\.1 USDT/);
-  assert.match(view.get("riskBody").innerHTML, /止损 60% · 止盈 20%/);
+  assert.doesNotMatch(view.get("riskBody").innerHTML, /止损 60% · 止盈 20%/);
   assert.match(view.get("riskBody").innerHTML, /止损低于强平/);
   view.run('setPreview("sl", 103, radar.position, radar.price, null)');
   assert.match(view.get("riskBody").innerHTML, /会先成交 1 笔补仓/);
@@ -251,7 +252,50 @@ test("shows grid and account shorts separately and switches the scenario without
   assert.match(view.get("risk").innerHTML, /不是最大亏损/);
   view.run('selectPosition("account:a1")');
   assert.match(view.get("poshead").textContent, /普通永续.*做空 · 旧数据/);
-  assert.match(view.get("riskBody").innerHTML, /固定当前仓位 2\.0000 BTC/);
+  assert.equal(view.get("risk").hidden, true, "stale positions cannot be used for exit calculations");
   view.run('setPreview("sl",105, activePosition(),radar.price,null);resetPreview()');
   assert.match(view.get("poshead").textContent, /普通永续/);
+});
+
+test("identical payloads still expire on the clock and a later network outage invalidates the displayed conclusion", async () => {
+  const view = await render(ladderPayload);
+  view.run('Date.now = () => Date.parse(radar.ts) + 9 * 3600000');
+  await view.run("refresh()");
+  assert.match(view.get("stamp").innerHTML, /数据已过期/);
+  assert.equal(view.get("lvpill").textContent, "数据失效");
+  assert.equal(view.get("risk").hidden, true);
+  view.run('fetch = async () => { throw new Error("offline"); }');
+  await view.run("refresh()");
+  assert.match(view.get("stamp").innerHTML, /连接中断/);
+  assert.notEqual(view.get("lvpill").className, "pill lv-green");
+});
+
+test("neither actual positions nor previews show calendar touch prices as future exit probabilities", async () => {
+  const view = await render(ladderPayload);
+  assert.doesNotMatch(view.get("posstats").innerHTML, /触及止损概率|触及止盈概率/);
+  assert.doesNotMatch(view.get("riskBody").innerHTML, /本周触及概率|止损 10%/);
+  assert.match(view.get("risk").innerHTML, /不提供.*概率/);
+});
+
+test("switching positions cannot restore risk conclusions while disconnected; recovery restores fresh data", async () => {
+  const a = { ...ladderPosition, id: "a" }, b = { ...ladderPosition, id: "b" };
+  const view = await render({ ...ladderPayload, latest: { ...ladderPayload.latest, position: a, positions: [a, b] } });
+  view.run('const goodFetch = fetch; fetch = async () => { throw Error("offline"); }');
+  await view.run("refresh()");
+  view.run('selectPosition("b")');
+  assert.equal(view.get("pospill").textContent, "持仓结论失效");
+  assert.equal(view.get("ruler").innerHTML, "");
+  assert.equal(view.get("risk").hidden, true);
+  view.run("fetch = goodFetch");
+  await view.run("refresh()");
+  assert.equal(view.get("risk").hidden, false);
+  assert.doesNotMatch(view.get("stamp").innerHTML, /连接中断/);
+});
+
+test("old model snapshots fail closed and a model switch clears the previous history SVG", async () => {
+  const view = await render({ ...ladderPayload, latest: { ...ladderPayload.latest, modelVersion: undefined } });
+  assert.equal(view.get("lvpill").textContent, "数据失效");
+  view.get("hist").innerHTML = "<svg>old-version</svg>";
+  view.run('radar.modelVersion="pressure-v2-no-touch-probability"; renderHist([{modelVersion:"old",ts:radar.ts,price:100,score:50}])');
+  assert.doesNotMatch(view.get("hist").innerHTML, /<svg/);
 });

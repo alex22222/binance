@@ -1,8 +1,11 @@
-// Node port of the BTC risk radar scoring model (btc_alert.py). Rounding and
+// BTC pressure model. Non-Polymarket factor formulas retain the original port.
+// Calendar touch contracts are quotes only, not future barrier probabilities.
+// Rounding and
 // number formatting reproduce Python exactly: round() and the "f" format spec
 // round the exact binary value half-to-even, which toFixed() does not.
 
 export const BTC_RADAR_LEVELS = Object.freeze(["green", "yellow", "orange", "red"]);
+export const BTC_RADAR_MODEL_VERSION = "pressure-v2-no-touch-probability";
 
 function exactParts(value) {
   const view = new DataView(new ArrayBuffer(8));
@@ -70,31 +73,16 @@ function pySum(values) {
 
 const clamp = (value, low = 0, high = 100) => Math.max(low, Math.min(high, value));
 
-function interp(ladder, target) {
-  const points = Object.entries(ladder)
-    .map(([price, probability]) => [Number(price), Number(probability)])
-    .sort((left, right) => left[0] - right[0] || left[1] - right[1]);
-  if (!points.length) throw new Error("Empty probability ladder");
-  if (target <= points[0][0]) return points[0][1];
-  if (target >= points.at(-1)[0]) return points.at(-1)[1];
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const [x1, y1] = points[index];
-    const [x2, y2] = points[index + 1];
-    if (x1 <= target && target <= x2) return y1 + (y2 - y1) * (target - x1) / (x2 - x1);
-  }
-  throw new Error("Probability ladder interpolation failed");
-}
-
 function level(score) {
   if (score >= 70) return ["red", "高风险"];
   if (score >= 55) return ["orange", "警戒"];
   if (score >= 40) return ["yellow", "中性"];
-  return ["green", "偏多 / 低风险"];
+  return ["green", "下跌压力较低（未验证）"];
 }
 
 const percent = (probability) => `${pyFixed(probability * 100, 0)}%`;
 
-export function evaluateRadarPosition(held, price, week) {
+export function evaluateRadarPosition(held, price) {
   const referencePrice = held.last_price > 0 ? held.last_price : price;
   const short = held.direction === "short";
   const stopPrice = held.sl_price_type === "mark" ? held.mark_price : referencePrice;
@@ -102,44 +90,50 @@ export function evaluateRadarPosition(held, price, week) {
   const distance = (value, reference) => value > 0 && reference > 0 ? pyRound((value / reference - 1) * 100, 2) : null;
   const toStop = (held.sl / stopPrice - 1) * 100;
   const adverseDistance = short ? -toStop : toStop;
-  const [positionLevel, positionLevelName] = !(held.sl > 0 && stopPrice > 0)
-    ? ["yellow", "止损未确认"]
-    : adverseDistance > -3 ? ["red", "接近止损"]
-      : adverseDistance > -5 ? ["orange", "离止损不远"] : ["green", "安全距离"];
+  const markPrice = held.mark_price > 0 ? held.mark_price : referencePrice;
+  const toLiquidation = held.liq > 0 && markPrice > 0 ? (short ? 1 - held.liq / markPrice : held.liq / markPrice - 1) * 100 : null;
+  const liquidationFirst = held.liq > 0 && held.sl > 0 && (short ? held.sl >= held.liq : held.sl <= held.liq);
+  const [positionLevel, positionLevelName, reason] = held.stale
+    ? ["yellow", "持仓数据非最新", "STALE_POSITION"]
+    : liquidationFirst ? ["red", "止损不先于强平", "LIQUIDATION_BEFORE_STOP"]
+      : toLiquidation !== null && toLiquidation > -3 ? ["red", "接近强平", "NEAR_LIQUIDATION"]
+        : !(held.sl > 0 && stopPrice > 0) ? ["yellow", "止损未确认", "STOP_UNKNOWN"]
+          : adverseDistance > -3 ? ["red", "接近止损", "NEAR_STOP"]
+            : toLiquidation !== null && toLiquidation > -5 ? ["orange", "离强平不远", "NEAR_LIQUIDATION"]
+              : adverseDistance > -5 ? ["orange", "离止损不远", "NEAR_STOP"]
+                : toLiquidation === null ? ["yellow", "强平价未确认", "LIQUIDATION_UNKNOWN"]
+                  : ["green", "距止损至少 5%（仅距离参考）", "DISTANCE_ONLY"];
   return {
     ...held,
     ...(held.source ? { reference_price: referencePrice } : {}),
     d_sl: distance(held.sl, stopPrice), d_liq: distance(held.liq, held.mark_price > 0 ? held.mark_price : referencePrice), d_tp: distance(held.tp, targetPrice),
-    level: positionLevel, level_name: positionLevelName,
-    p_sl_week: held.sl > 0 ? pyRound(interp(short ? week.reaches : week.dips, held.sl), 3) : null,
-    p_tp_week: held.tp > 0 ? pyRound(interp(short ? week.dips : week.reaches, held.tp), 3) : null
+    level: positionLevel, level_name: positionLevelName, risk_reason: reason,
+    p_sl_week: null, p_tp_week: null
   };
 }
 
-// Same output as btc_alert.py. One extension: sentiment may be null when the
-// OKX news API is not configured; its term then contributes zero.
+// Sentiment may be null when the OKX news API is not configured.
 export function evaluateBtcRadar(input) {
   const price = input.price;
   const btc = input.btc_closes;
   const gold = input.gold_closes;
   const factors = [];
 
-  const week = input.poly_week;
-  const month = input.poly_month;
-  const weekDown = interp(week.dips, price * 0.96);
-  const weekUp = interp(week.reaches, price * 1.04);
-  const monthDown = interp(month.dips, price * 0.92);
-  const monthUp = interp(month.reaches, price * 1.08);
-  let score = clamp(0.7 * (50 + (weekDown - weekUp) * 100) + 0.3 * (50 + (monthDown - monthUp) * 100));
+  const quote = (period, side, below) => {
+    const points = Object.entries(period?.[side] || {}).map(([px, yes]) => [Number(px), Number(yes)])
+      .filter(([px, yes]) => px > 0 && yes >= 0 && yes < 1 && (below ? px < price : px > price))
+      .sort((a, b) => Math.abs(a[0] - price) - Math.abs(b[0] - price));
+    return points.length ? `$${pyFixed(points[0][0], 0, { grouping: true })} · Yes ${pyFixed(points[0][1] * 100, 1)}¢` : "暂无有效报价";
+  };
   factors.push({
-    key: "poly", name: "预测市场 Polymarket", weight: 25, score: pyRoundInt(score),
-    metrics: [["本周跌 4%", percent(weekDown)], ["本周涨 4%", percent(weekUp)],
-      ["本月跌 8%", percent(monthDown)], ["本月涨 8%", percent(monthUp)]],
-    note: score >= 55 ? "下跌概率高于上涨" : score <= 42 ? "上涨概率高于下跌" : "涨跌概率接近"
+    key: "poly", name: "预测市场 Polymarket", weight: 0, score: null,
+    metrics: [["本周下沿触价盘", quote(input.poly_week, "dips", true)], ["本周上沿触价盘", quote(input.poly_week, "reaches", false)],
+      ["本月下沿触价盘", quote(input.poly_month, "dips", true)], ["本月上沿触价盘", quote(input.poly_month, "reaches", false)]],
+    note: "仅展示有效合约原始 Yes 报价，各自按合约约定区间结算；不是从现在起的触价概率，不插值、不计分。"
   });
 
   const fed = input.fed;
-  score = clamp(50 + 50 * (0.6 * (fed.p_hike_2026_any - fed.p_cut_2026_any) + 0.4 * (fed.p_hike_next - fed.p_cut_next)));
+  let score = clamp(50 + 50 * (0.6 * (fed.p_hike_2026_any - fed.p_cut_2026_any) + 0.4 * (fed.p_hike_next - fed.p_cut_next)));
   factors.push({
     key: "fed", name: "美联储利率预期", weight: 20, score: pyRoundInt(score),
     metrics: [[`${fed.next_meeting}加息`, percent(fed.p_hike_next)], [`${fed.next_meeting}降息`, percent(fed.p_cut_next)],
@@ -192,14 +186,16 @@ export function evaluateBtcRadar(input) {
     note: funding > 3 ? "多头拥挤" : openInterest < -3 ? "杠杆在出清" : "杠杆水平正常"
   });
 
-  const total = factors.reduce((sum, factor) => sum + factor.score * factor.weight, 0) / 100;
+  const scored = factors.filter(factor => factor.weight > 0);
+  const total = scored.reduce((sum, factor) => sum + factor.score * factor.weight, 0) / scored.reduce((sum, factor) => sum + factor.weight, 0);
   const [riskLevel, levelName] = level(total);
 
-  const position = input.position ? evaluateRadarPosition(input.position, price, week) : null;
+  const position = input.position ? evaluateRadarPosition(input.position, price) : null;
 
-  const top = [...factors].sort((left, right) => (-left.score * left.weight) - (-right.score * right.weight)).slice(0, 2);
+  const top = [...scored].sort((left, right) => (-left.score * left.weight) - (-right.score * right.weight)).slice(0, 2);
   return {
     ts: input.ts,
+    modelVersion: BTC_RADAR_MODEL_VERSION,
     price,
     score: pyRound(total, 1),
     level: riskLevel,

@@ -2,22 +2,19 @@
 // functions with toString(), so each must stay self-contained: no imports and
 // no references outside its own body.
 
-// Linear interpolation of a Polymarket {price: probability} ladder, clamped to
-// its end points; null when the ladder or target is unusable.
-export function ladderProbability(ladder, target) {
-  const points = Object.entries(ladder || {})
-    .map(([price, probability]) => [Number(price), Number(probability)])
-    .filter(([price, probability]) => Number.isFinite(price) && Number.isFinite(probability))
-    .sort((left, right) => left[0] - right[0] || left[1] - right[1]);
-  if (!points.length || !Number.isFinite(target)) return null;
-  if (target <= points[0][0]) return points[0][1];
-  if (target >= points[points.length - 1][0]) return points[points.length - 1][1];
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const [x1, y1] = points[index];
-    const [x2, y2] = points[index + 1];
-    if (x1 <= target && target <= x2) return y1 + (y2 - y1) * (target - x1) / (x2 - x1);
-  }
-  return null;
+// Shared by the API and the browser clock. A newly stamped evaluation must not
+// extend the lifetime of an older scored input. Five hours allows the 4h timer
+// its existing one-hour grace period; this is not real-time position monitoring.
+export function btcRadarFreshness(snapshot, nowMs = Date.now()) {
+  const maxAgeMs = 5 * 3_600_000;
+  const scored = new Set(["btcMarket", "gold", "funding", "openInterest", "fed", "treasury", "sentiment"]);
+  const stamps = [["snapshot", snapshot?.ts], ...Object.entries(snapshot?.data_status?.sourceFetchedAt || {}).filter(([key]) => scored.has(key))];
+  const expiredSources = stamps.filter(([, stamp]) => {
+    const ms = Date.parse(stamp);
+    return !Number.isFinite(ms) || nowMs - ms > maxAgeMs || ms - nowMs > 60_000;
+  }).map(([key]) => key);
+  if (Object.hasOwn(snapshot || {}, "score") && snapshot.modelVersion !== "pressure-v2-no-touch-probability") expiredSources.push("modelVersion");
+  return { expired: expiredSources.length > 0, expiredSources, ageHours: (nowMs - Date.parse(snapshot?.ts)) / 3_600_000 };
 }
 
 // What a long or short DCA position looks like if the stop or take-profit

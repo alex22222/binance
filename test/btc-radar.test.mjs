@@ -86,10 +86,13 @@ test("evaluates public data without OKX credentials and keeps a deduplicated his
   assert.equal(first.snapshot.ts, "2026-10-01T21:00:00+08:00");
   assert.equal(first.snapshot.price, 84000);
   assert.equal(first.snapshot.position, null);
-  assert.deepEqual(first.snapshot.data_status, { okxConfigured: false, algoId: null, staleSources: [] });
+  assert.equal(first.snapshot.data_status.okxConfigured, false);
+  assert.equal(first.snapshot.data_status.algoId, null);
+  assert.deepEqual(first.snapshot.data_status.staleSources, []);
+  assert.equal(first.snapshot.data_status.sourceFetchedAt.btcMarket, new Date(NOW).toISOString());
   assert.deepEqual(first.snapshot.factors.find(({ key }) => key === "deriv").metrics[2], ["舆情多 / 空", "未接入"]);
   assert.deepEqual(first.alert, { status: "NONE", reasons: [] });
-  assert.deepEqual(first.snapshot.ladders.week.dips, { 76000: 0.05, 80000: 0.2 });
+  assert.equal(first.snapshot.ladders, undefined, "the UI no longer interpolates touch probabilities");
   assert.deepEqual(first.snapshot.indicators, {
     rsi14: { closed: 100, intraday: 100, date: "2026-10-01" },
     fearGreed: { value: 72, label: "贪婪", date: "2026-10-02" }
@@ -352,9 +355,9 @@ test("applies the routine's important-change rules", () => {
 test("serves saved radar data with an explicit availability status", async () => {
   const directory = await mkdtemp(join(tmpdir(), "btc-radar-view-"));
   assert.deepEqual(await loadBtcRadarView(directory), { status: "MISSING", latest: null, history: [], settings: {} });
-  await writeFile(join(directory, "latest.json"), JSON.stringify({ ts: "2026-10-01T21:00:00+08:00", score: 60 }));
+  await writeFile(join(directory, "latest.json"), JSON.stringify({ ts: "2026-10-01T21:00:00+08:00", modelVersion: "pressure-v2-no-touch-probability", score: 60 }));
   await writeFile(join(directory, "history.json"), JSON.stringify(Array.from({ length: 200 }, (_, index) => ({ ts: String(index) }))));
-  const view = await loadBtcRadarView(directory);
+  const view = await loadBtcRadarView(directory, NOW);
   assert.equal(view.status, "AVAILABLE");
   assert.equal(view.latest.score, 60);
   assert.equal(view.history.length, 180);
@@ -374,4 +377,15 @@ test("stores the total capital used for the page's loss share and rejects bad in
   assert.equal((await loadBtcRadarSettings(directory)).capitalUsdt, 5000.46);
   assert.deepEqual(await saveBtcRadarSettings(directory, { capitalUsdt: null }), {});
   assert.deepEqual(await loadBtcRadarSettings(directory), {});
+});
+
+test("expired required cache is rejected and the API suppresses conclusions after five hours", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "btc-radar-p0-expiry-"));
+  await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW });
+  await assert.rejects(runBtcRadar({ directory, environment: {}, fetchImpl: responses({ "daily-treasury-rates.csv": "FAIL" }), nowMs: NOW + 6 * HOUR }), /旧值已过期/);
+  const view = await loadBtcRadarView(directory, NOW + 6 * HOUR);
+  assert.equal(view.status, "STALE");
+  assert.equal(view.latest.score, null);
+  assert.equal(view.latest.level_name, "数据失效");
+  assert.equal((await readJson(directory, "latest")).ts, "2026-10-01T21:00:00+08:00", "history is preserved, not restamped");
 });

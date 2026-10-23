@@ -1,4 +1,4 @@
-import { dcaScenario, ladderProbability } from "./btc-radar-risk.mjs";
+import { btcRadarFreshness, dcaScenario } from "./btc-radar-risk.mjs";
 import { SITE_CSS, siteHeader } from "./site-shell.mjs";
 
 // BTC risk radar page, migrated from the claude.ai artifact. Data comes from
@@ -120,12 +120,12 @@ ${siteHeader("/btc-radar")}
   </header>
 
   <section class="hero">
-    <div class="panel gauge" aria-label="综合风险评分">
-      <h2>综合风险评分</h2>
+    <div class="panel gauge" aria-label="下跌压力指数（未验证）">
+      <h2>下跌压力指数 · 未验证预测力</h2>
       <svg viewBox="-12 0 264 140" id="gauge" role="img" aria-label="评分仪表"></svg>
       <span class="pill" id="lvpill">—</span>
       <p class="summary" id="summary">等待第一次评估写入数据。</p>
-      <div class="price">BTC 现价 <b class="num" id="price">—</b></div>
+      <div class="price">BTC 快照价 <b class="num" id="price">—</b></div>
     </div>
     <div class="panel pos">
       <div class="pos-head">
@@ -170,12 +170,12 @@ ${siteHeader("/btc-radar")}
   <section class="panel method">
     <h2>怎么读这个评分</h2>
     <div class="legend">
-      <span class="pill lv-green">0–39 偏多 / 低风险</span><span class="pill lv-yellow">40–54 中性</span>
+      <span class="pill lv-green">0–39 下跌压力较低（非低风险）</span><span class="pill lv-yellow">40–54 中性</span>
       <span class="pill lv-orange">55–69 警戒</span><span class="pill lv-red">70–100 高风险</span>
     </div>
-    <p>分数越高，BTC 下跌的压力越大，不等于空头风险越高，也不是做空信号；空头主要防范上涨，持仓风险另按方向计算。六个因子各自打 0–100 分，按权重加总：预测市场 25%、美联储利率预期 20%、美债收益率 20%、BTC 技术面 15%、黄金 10%、衍生品与情绪 10%。</p>
+    <p>这是未验证的下跌压力指数，不是亏损概率、低风险证明或多空交易信号。Polymarket 触价盘只展示原始报价，不再计分或插值为未来概率；其余五因子按原相对权重 20:20:15:10:10 归一化。新版评分与旧版历史不连线比较。</p>
     <p>「参考」标记的指标只展示、不计入评分：RSI(14) 按 OKX BTC-USDT 的 UTC 日线以 Wilder 方法计算，分别给出已收盘和含当日盘中的读数；恐惧贪婪指数来自 alternative.me。</p>
-    <p>持仓警报单独计算：现价离止损不到 5% 为橙色，不到 3% 为红色。服务器每 4 小时自动评估一次（北京时间每 4 小时的第 43 分），综合等级升高、持仓接近止损、自动补仓增加或策略状态变化时推送飞书；200 日均线趋势状态切换时另发一条。</p>
+    <p>持仓警报优先检查强平是否先于止损，以及距强平是否不足 3%/5%，再检查止损距离；未知或旧数据不宣称安全。服务器每 4 小时评估一次，五小时后评估或评分输入失效；不是实时持仓保护，不会自动下单。等级升高、持仓高危、自动补仓或策略状态变化时推送飞书；200 日均线切换另发一条。</p>
     <p id="sources">数据来源：Polymarket、美国财政部、OKX。</p>
     <p>评分是对公开数据的机械汇总，用来提醒你该去看盘了，不预测价格，也不构成投资建议。</p>
   </section>
@@ -191,9 +191,9 @@ const fmt = (n,d=0) => Number.isFinite(num(n)) ? num(n).toLocaleString("en-US",{
 const pct = n => Number.isFinite(num(n)) ? (num(n)>0?"+":"")+num(n).toFixed(2)+"%" : "—";
 const esc = s => String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const httpsUrl = u => { try { const url = new URL(String(u)); return url.protocol === "https:" ? url.href : null; } catch { return null; } };
-${ladderProbability.toString()}
+${btcRadarFreshness.toString()}
 ${dcaScenario.toString()}
-let radar = null, settings = {}, preview = {}, dragging = null, scale = null, selectedId = null;
+let radar = null, settings = {}, preview = {}, dragging = null, scale = null, selectedId = null, connectionError = null, dataUsable = true;
 const sourceName = p => p.source === "grid" ? "合约网格" : p.source === "account" ? "普通永续" : "合约马丁格尔";
 const activePosition = () => (radar && (radar.positions || []).find(p => p.id === selectedId)) || (radar && radar.position);
 function selectPosition(id){
@@ -245,6 +245,12 @@ function renderPosition(p, price, status){
   price = p.reference_price > 0 ? p.reference_price : price;
   const short = p.direction === "short", dca = !p.source || p.source === "dca";
   $("poshead").textContent=sourceName(p)+" · BTCUSDT 永续 "+(Number.isFinite(num(p.lever))?num(p.lever)+"x ":"")+(short ? "做空" : "做多")+(p.stale ? " · 旧数据" : "");
+  const expired = p.fetchedAt && btcRadarFreshness({ts:p.fetchedAt}).expired;
+  if(!dataUsable || p.stale || expired){
+    $("pospill").textContent=!dataUsable?"持仓结论失效":"持仓数据非最新"; $("pospill").className="pill lv-yellow";
+    $("ruler").innerHTML=""; $("rulerHelp").textContent="旧持仓仅供复核，不提供风险评级或退出测算。";
+    $("posstats").innerHTML=""; risk.hidden=true; return;
+  }
   $("rulerHelp").textContent="蓝色竖线是现价，红橙色段是止损"+(short ? "以上" : "以下")+"的危险区。"+(p.sl > 0 ? "" : (p.stop_note || "未设置止损")+"。")+"拖动「止损」「止盈」仅预览，不会修改 OKX。";
   $("pospill").textContent=p.level_name; $("pospill").className="pill lv-"+lvSafe(p.level);
   scale = rulerScale(p, price);
@@ -267,15 +273,13 @@ function renderPosition(p, price, status){
   const st=[["现价",fmt(price,1),""],["方向 / 仓位",(short ? "空头" : "多头")+" / "+fmt(p.sz_btc,4)+" BTC",""],["距止损"+(p.sl_price_type === "mark" ? "（标记价）" : ""),num(p.sl)>0?pct(p.d_sl):"价格止损未确认",num(p.sl)>0&&(short ? -num(p.d_sl) : num(p.d_sl))>-5?"neg":""],["距强平"+(p.mark_price > 0 ? "（标记价）" : ""),pct(p.d_liq),""],["距止盈",pct(p.d_tp),""],
     ...(p.source === "account" ? [] : [["策略总收益",Number.isFinite(pnl)?(pnl>0?"+":"")+fmt(pnl,2)+" USDT":"—",pnl<0?"neg":"pos-c"]]),
     ...(dca ? [["自动补仓",fmt(p.safety_filled)+" / "+fmt(p.safety_max)+(num(p.manual_adds)>0?" · 手动 "+fmt(p.manual_adds):""),""]] : [["浮动盈亏",fmt(p.unrealized_pnl,2)+" USDT",num(p.unrealized_pnl)<0?"neg":"pos-c"]]),
-    ...(p.source === "grid" ? [["网格收益",fmt(p.grid_pnl,2)+" USDT",num(p.grid_pnl)<0?"neg":"pos-c"],["网格区间",(p.grid_range || []).map(v=>fmt(v)).join(" — "),""]] : []),
-    ["本周触及止损概率",p.p_sl_week!=null&&Number.isFinite(num(p.p_sl_week))?Math.round(num(p.p_sl_week)*100)+"%":"—",""],
-    ["本周触及止盈概率",p.p_tp_week!=null&&Number.isFinite(num(p.p_tp_week))?Math.round(num(p.p_tp_week)*100)+"%":"—",""]];
+    ...(p.source === "grid" ? [["网格收益",fmt(p.grid_pnl,2)+" USDT",num(p.grid_pnl)<0?"neg":"pos-c"],["网格区间",(p.grid_range || []).map(v=>fmt(v)).join(" — "),""]] : [])];
   $("posstats").innerHTML=st.map(([k,v,c])=>'<div class="stat"><div class="k">'+k+'</div><div class="v '+c+'">'+esc(v)+'</div></div>').join("");
   const capital = num(settings.capitalUsdt) > 0 ? num(settings.capitalUsdt) : "";
-  risk.hidden = false;
+  risk.hidden = !dataUsable;
   risk.innerHTML = '<div id="riskBody"></div>'
     + '<div class="capital"><label for="capitalInput">总资金</label><input id="capitalInput" inputmode="decimal" autocomplete="off" placeholder="例如 5000" value="' + esc(capital) + '"> USDT <button class="btn" id="saveCapital" type="button">保存</button><span id="capitalStatus" role="status"></span></div>'
-    + '<p class="foot">' + (dca ? (p.ladder && p.ladder.complete ? "" : "补仓挂单数据暂缺，最坏亏损可能偏低。")+"按 0.4% 维持保证金率估算强平价。" : "仅按当前持仓测算，不预测网格后续买卖或其他挂单，不是最大亏损；强平价直接读取 OKX。") + '按 0.05% 吃单手续费，未计滑点及未来资金费。总资金只用于计算占比，保存在服务器上。</p>';
+    + '<p class="foot">不提供止盈止损概率：日历触价合约不是未来交易路径概率。' + (dca ? (p.ladder && p.ladder.complete ? "" : "补仓挂单数据暂缺，最坏亏损可能偏低。")+"按 0.4% 维持保证金率估算强平价。" : "仅按当前持仓测算，不预测网格后续买卖或其他挂单，不是最大亏损；强平价直接读取 OKX。") + '按 0.05% 吃单手续费，未计滑点及未来资金费。总资金只用于计算占比，保存在服务器上。</p>';
   const save = $("saveCapital");
   if(save && save.addEventListener) save.addEventListener("click", saveCapital);
   renderRisk(p, price);
@@ -309,6 +313,7 @@ function bindRuler(p, price){
 
 // Moves one handle in place, so an active pointer capture survives the update.
 function setPreview(kind, value, p, price, handle){
+  if(!dataUsable || p.stale) return;
   const below = p.direction === "short" ? kind === "tp" : kind === "sl";
   const low = below ? scale.lo : num(price) * 1.001;
   const high = below ? num(price) * 0.999 : scale.hi;
@@ -333,14 +338,11 @@ function resetPreview(){
 }
 
 function renderRisk(p, price){
+  if(!dataUsable || p.stale) return;
   price = p.reference_price > 0 ? p.reference_price : price;
   const s = dcaScenario({ position: p, price: num(price), stop: effective("sl", p), takeProfit: effective("tp", p), capitalUsdt: num(settings.capitalUsdt) > 0 ? num(settings.capitalUsdt) : null });
-  const week = (radar && radar.ladders && radar.ladders.week) || {};
   const short = p.direction === "short", dca = !p.source || p.source === "dca";
-  const touchStop = s.stop ? ladderProbability(short ? week.reaches : week.dips, s.stop) : null;
-  const touchTarget = s.takeProfit ? ladderProbability(short ? week.dips : week.reaches, s.takeProfit) : null;
   const share = v => v == null ? "填写总资金后显示占比" : "约占总资金 " + (v * 100).toFixed(1) + "%";
-  const chance = v => v == null ? "—" : Math.round(v * 100) + "%";
   const previewing = preview.sl != null || preview.tp != null;
   const items = [
     ["止损触发时", s.lossAtStop == null ? "价格止损未确认" : (s.lossAtStop < 0 ? "+" : "") + fmt(-s.lossAtStop, 1) + " USDT", s.lossAtStop == null ? "无法测算止损亏损" : share(s.lossShare),
@@ -350,8 +352,7 @@ function renderRisk(p, price){
     [dca ? "止损前补仓后的估算强平价" : "当前强平价（OKX）", s.worstLiquidation ? (dca ? "约 " : "") + fmt(s.worstLiquidation) : "—",
       s.stopAboveLiquidation == null ? "" : s.stopAboveLiquidation > 0 ? "止损"+(short ? "低于" : "高于")+"强平 " + (s.stopAboveLiquidation * 100).toFixed(1) + "%" : "止损已越过强平价，可能先被强平",
       s.stop ? "止损距现价 " + pct(s.stopDistance * 100) : ""],
-    ["打平所需止盈比例", s.breakevenWinRate == null ? "—" : (s.breakevenWinRate * 100).toFixed(1) + "%", "按一次止损对一次止盈计算", ""],
-    ["本周触及概率", "止损 " + chance(touchStop) + " · 止盈 " + chance(touchTarget), "Polymarket 本周触价盘插值", ""]
+    ["打平所需止盈比例", s.breakevenWinRate == null ? "—" : (s.breakevenWinRate * 100).toFixed(1) + "%", "仅损益比例，不是预测胜率", "按一次止损对一次止盈计算"]
   ];
   $("riskBody").innerHTML = '<div class="risk-head"><h2>风险测算</h2>'
     + (previewing ? '<span class="preview-tag">预览中 · 不会修改 OKX</span><button class="btn" id="resetPreview" type="button">恢复实际设置</button>' : "")
@@ -389,8 +390,9 @@ function referenceRows(key, indicators){
 }
 
 function renderFactors(F, indicators){
-  $("factors").innerHTML=F.map(f=>{const score=num(f.score), lv=lvOf(score), refs=referenceRows(f.key, indicators);return \`<article class="panel fac lv-\${lv}-b">
-    <div class="fac-head"><div><h3>\${esc(f.name)}</h3><span class="w">权重 \${fmt(f.weight)}%</span></div><span class="score" style="color:\${LV[lv]}">\${fmt(score)}</span></div>
+  F=F.filter(f=>f.key!=="poly"||radar.modelVersion==="pressure-v2-no-touch-probability");
+  $("factors").innerHTML=F.map(f=>{const score=dataUsable?num(f.score):NaN, lv=Number.isFinite(score)?lvOf(score):"yellow", refs=referenceRows(f.key, indicators);return \`<article class="panel fac lv-\${lv}-b">
+    <div class="fac-head"><div><h3>\${esc(f.name)}</h3><span class="w">\${f.weight>0?"相对权重 "+fmt(f.weight):"参考 · 不计分"}</span></div><span class="score" style="color:\${Number.isFinite(score)?LV[lv]:"var(--muted)"}">\${fmt(score)}</span></div>
     <div class="meter"><i style="width:\${Math.max(0,Math.min(100,score||0))}%;background:\${LV[lv]}"></i></div>
     <dl class="kv">\${(f.metrics||[]).map(([k,v])=>\`<dt>\${esc(k)}</dt><dd>\${esc(v)}</dd>\`).join("")}\${refs.map(([k,v],i)=>\`<dt class="\${i?"":"ref-first"}">\${esc(k)}<span class="ref">参考</span></dt><dd class="\${i?"":"ref-first"}">\${esc(v)}</dd>\`).join("")}</dl>
     <p class="note">\${esc(f.note)}</p></article>\`}).join("");
@@ -443,22 +445,44 @@ function renderObservation(o){
 
 function renderLatest(d){
   radar = d;
+  dataUsable = !connectionError && !btcRadarFreshness(d).expired;
   gauge(d.score);
   $("lvpill").textContent=d.level_name; $("lvpill").className="pill lv-"+lvSafe(d.level);
   $("summary").textContent=d.summary; $("price").textContent=fmt(d.price,1);
-  const t=new Date(d.ts), age=(Date.now()-t)/3.6e6;
-  const stale=(d.data_status&&d.data_status.staleSources)||[];
-  $("stamp").innerHTML=\`最近评估 <b class="num">\${esc(t.toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false}))}</b>\`+(age>5?\` · <span class="stale">已超过 \${Math.floor(age)} 小时未更新</span>\`:" · 每 4 小时更新")
-    +(stale.some(s=>s.since!==null)?\` · <span class="stale">沿用旧数据：\${stale.filter(s=>s.since!==null).map(s=>esc(s.label)).join("、")}</span>\`:"")
-    +(stale.some(s=>s.since===null)?\` · <span class="stale">采集失败：\${stale.filter(s=>s.since===null).map(s=>esc(s.label)).join("、")}</span>\`:"");
   renderPositions(d); renderTrend(d.trend||null); renderObservation(d.observation||null); renderFactors(d.factors||[], d.indicators||{});
   const sources=(d.sources||[]).map(([n,u])=>[n,httpsUrl(u)]).filter(([,u])=>u);
   if(sources.length) $("sources").innerHTML="数据来源："+sources.map(([n,u])=>\`<a href="\${esc(u)}" target="_blank" rel="noopener noreferrer">\${esc(n)}</a>\`).join("、")+"。";
+  updateHealth();
+}
+
+// Runs independently of payload changes, including after a failed request.
+function updateHealth(){
+  if(!radar) return;
+  const freshness=btcRadarFreshness(radar), t=new Date(radar.ts);
+  const stale=(radar.data_status&&radar.data_status.staleSources)||[];
+  const wasUsable=dataUsable;
+  dataUsable=!connectionError&&!freshness.expired;
+  $("stamp").innerHTML='最近评估 <b class="num">'+esc(t.toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false}))+'</b> · 每 4 小时更新'
+    +(freshness.expired?' · <span class="stale">'+(freshness.expiredSources.includes("modelVersion")?'旧版评估已停用，等待新版采集':'数据已过期（五小时有效期），当前结论失效')+'</span>':'')
+    +(connectionError==='AUTH'?' · 登录已过期，请<a href="/login">重新登录</a>':connectionError?' · <span class="stale">连接中断，当前结论失效</span>':'')
+    +(stale.some(s=>s.since!==null)?' · <span class="stale">沿用旧数据：'+stale.filter(s=>s.since!==null).map(s=>esc(s.label)).join("、")+'</span>':'')
+    +(stale.some(s=>s.since===null)?' · <span class="stale">采集失败：'+stale.filter(s=>s.since===null).map(s=>esc(s.label)).join("、")+'</span>':'');
+  if(!dataUsable){
+    gauge(null); $("lvpill").textContent=connectionError?"连接中断":"数据失效"; $("lvpill").className="pill lv-yellow";
+    $("summary").textContent="仅保留历史快照，不能用于当前交易判断。";
+    $("pospill").textContent="持仓结论失效"; $("pospill").className="pill lv-yellow";
+    $("risk").hidden=true; $("ruler").innerHTML="";
+    $("trendpill").textContent="历史趋势 · 数据失效"; $("trendpill").className="pill lv-yellow";
+    if(wasUsable) renderFactors(radar.factors||[],radar.indicators||{});
+  }else if(activePosition()?.fetchedAt && btcRadarFreshness({ts:activePosition().fetchedAt}).expired){
+    renderPosition(activePosition(),radar.price,radar.data_status);
+  }
 }
 
 function renderHist(rows){
+  rows=rows.filter(r=>r.modelVersion===radar.modelVersion);
   rows=rows.filter(r=>Number.isFinite(num(r.score))&&Number.isFinite(num(r.price))&&Number.isFinite(Date.parse(r.ts)));
-  if(rows.length<2) return;
+  if(rows.length<2){ $("hist").innerHTML='<div class="empty">当前版本尚不足两次评估；旧版评分不混用。</div>'; return; }
   const W=720,H=220,L=36,R=56,T=14,B=28, n=rows.length;
   const xs=i=>L+(W-L-R)*i/(n-1), ys=v=>T+(H-T-B)*(1-v/100);
   const ps=rows.map(r=>num(r.price)), pmin=Math.min(...ps)*0.995, pmax=Math.max(...ps)*1.005;
@@ -481,24 +505,27 @@ async function refresh(){
   if(busy || dragging) return; busy = true;
   try{
     const response = await fetch("/api/btc-radar", { cache: "no-store", signal: AbortSignal.timeout(15000) });
-    if(response.status === 401){ $("stamp").innerHTML='登录已过期，请<a href="/login">重新登录</a>'; return; }
+    if(response.status === 401){ connectionError='AUTH'; if(radar) updateHealth(); else $("stamp").innerHTML='登录已过期，请<a href="/login">重新登录</a>'; return; }
     if(!response.ok) throw new Error("读取失败");
     const payload = await response.text();
-    if(payload === lastPayload) return;
+    const recovering=Boolean(connectionError); connectionError=null;
+    if(payload === lastPayload){ if(recovering) renderLatest(radar); else updateHealth(); return; }
     const data = JSON.parse(payload);
-    if(data.status !== "AVAILABLE" || !data.latest){
+    if(!["AVAILABLE","STALE"].includes(data.status) || !data.latest){
+      if(radar){ connectionError='DATA'; updateHealth(); return; }
       $("stamp").textContent = data.status === "ERROR" ? "评估数据读取失败，稍后刷新再试" : "等待服务器第一次评估写入数据";
       return;
     }
     settings = data.settings || {};
     renderLatest(data.latest); renderHist(data.history||[]); lastPayload = payload;
   }catch(error){
+    connectionError='NETWORK'; updateHealth();
     if(!lastPayload) $("stamp").textContent="暂时读不到评估数据，稍后刷新页面再试";
   }finally{ busy = false; }
 }
 gauge(null);
 refresh();
-setInterval(() => { if(!document.hidden) refresh(); }, 60000);
+setInterval(() => { updateHealth(); if(!document.hidden) refresh(); }, 60000);
 </script>
 </body>
 </html>`;
