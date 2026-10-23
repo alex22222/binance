@@ -62,7 +62,7 @@ test("renders the migrated radar from the server API and escapes every saved str
   });
   assert.match(html, /<a href="\/btc-radar" aria-current="page">BTC 风控<\/a>/);
   assert.doesNotMatch(html, /fonts\.googleapis|window\.claude/);
-  assert.match(get("gauge").innerHTML, />64<\/text>/);
+  assert.equal(get("pressureValue").textContent, "64");
   assert.equal(get("lvpill").className, "pill lv-orange");
   assert.equal(get("pospill").className, "pill lv-yellow");
   assert.equal(get("poshead").textContent, "合约马丁格尔 · BTCUSDT 永续 20x 做多");
@@ -298,4 +298,39 @@ test("old model snapshots fail closed and a model switch clears the previous his
   view.get("hist").innerHTML = "<svg>old-version</svg>";
   view.run('radar.modelVersion="pressure-v2-no-touch-probability"; renderHist([{modelVersion:"old",ts:radar.ts,price:100,score:50}])');
   assert.doesNotMatch(view.get("hist").innerHTML, /<svg/);
+});
+
+test("organizes three named layers with in-page navigation and folded experimental evidence", () => {
+  const html = btcRadarHtml({ nonce: "layout" });
+  const layers = ["market-background", "slow-trend", "account-risk"];
+  for (const id of layers) {
+    assert.match(html, new RegExp('<a[^>]+href="#'+id+'"'));
+    assert.match(html, new RegExp('<section[^>]+id="'+id+'"[^>]+aria-labelledby="'+id+'-title"'));
+  }
+  assert.ok(html.indexOf('id="market-background"') < html.indexOf('id="slow-trend"'));
+  assert.ok(html.indexOf('id="slow-trend"') < html.indexOf('id="account-risk"'));
+  assert.match(html, /<details[^>]+id="experimental-pressure"[^>]*>\s*<summary>/);
+  assert.match(html, /<details[^>]+id="candidate-observations"[^>]*>\s*<summary>/);
+  assert.doesNotMatch(html, /id="experimental-pressure"[^>]*\bopen\b|id="candidate-observations"[^>]*\bopen\b/);
+  assert.doesNotMatch(html, /aria-label="评分仪表"/);
+  assert.match(html, /只读.*不下单/);
+});
+
+test("account attention remains visible above the three layers and is cleared as current data expires", async () => {
+  const dangerous = { ...ladderPosition, id: "account:danger", level: "red", level_name: "止损不先于强平" };
+  const view = await render({ ...ladderPayload, latest: { ...ladderPayload.latest, position: dangerous, positions: [dangerous] } });
+  assert.equal(view.get("accountAlert").hidden, false);
+  assert.match(view.get("accountAlert").textContent, /强平|需关注/);
+  assert.match(view.get("accountSummary").textContent, /1 笔/);
+  view.run('Date.now=()=>Date.parse(radar.ts)+9*3600000');
+  await view.run("refresh()");
+  assert.match(view.get("accountSummary").textContent, /未核实|失效/);
+  assert.match(view.get("accountAlert").textContent, /失效|未核实/);
+});
+
+test("background metrics stay primary while factor score explanations are explicitly experimental", async () => {
+  const view = await render({ status: "AVAILABLE", latest, history: [] });
+  assert.match(view.get("factors").innerHTML, /<details class="factor-method">/);
+  assert.match(view.get("factors").innerHTML, /模型解释.*未验证/);
+  assert.equal(view.get("pressureValue").textContent, "64");
 });

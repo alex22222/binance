@@ -1,10 +1,10 @@
 # BTC 风控雷达
 
-日期：2026-10-01，P0 口径更新于 2026-10-23。来源：claude.ai 看板「BTC 风控雷达」及其定时任务「BTC 风控雷达更新」。
+日期：2026-10-01，P0 口径与 P1 布局更新于 2026-10-23。来源：claude.ai 看板「BTC 风控雷达」及其定时任务「BTC 风控雷达更新」。
 
 ## 迁移内容
 
-- 页面：Dashboard 菜单「BTC 风控」，路径 `/btc-radar`，需要登录。布局、配色、因子卡片、持仓标尺和评分走势沿用原看板。
+- 页面：Dashboard 菜单「BTC 风控」，路径 `/btc-radar`，需要登录。按「市场背景、慢趋势、账户风险」三层组织，顶部提供锚点导航与账户高危/失效直达提示。原始指标优先，实验压力指数、模型解释与候选观察默认折叠；持仓标尺与只读预览保留。见 [P1 布局验收](2026-10-23-btc-radar-p1-layout.md)。
 - 数据：`GET /api/btc-radar`（需要登录）读取 `state/btc-radar/latest.json` 和 `history.json`，页面每 60 秒刷新一次。
 - 计算：`scripts/run-btc-radar.mjs`，由 `binance-agentic-btc-radar.timer` 每 4 小时运行（北京时间 00:43、04:43……20:43，与原定时任务同一时刻）。
 - 模型：`pressure-v2-no-touch-probability`。保留原 Python 移植的五个因子公式及取整测试，但移除 Polymarket 触价因子的评分，将剩余相对权重归一化；不再宣称整体输出与旧 Python 一致。新旧评分走势不连线比较。见 [P0 修复记录](2026-10-23-btc-radar-p0.md)。

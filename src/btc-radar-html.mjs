@@ -16,7 +16,7 @@ export function btcRadarHtml({ nonce }) {
 <title>BTC 风控雷达 · Agentic Wallet</title>
 <style>
 ${SITE_CSS}
-:root{--site-width:1120px;
+:root{--site-width:1184px;
   --ink:var(--text); --accent:var(--blue); --track:#232b36;
   --ok:var(--green); --warn:#e7b94c; --alert:var(--orange); --crit:var(--red);
   --ok-bg:var(--green-soft); --warn-bg:rgba(231,185,76,.13); --alert-bg:rgba(240,160,75,.14); --crit-bg:var(--red-soft);
@@ -26,25 +26,53 @@ ${SITE_CSS}
 body{font-size:14px;line-height:1.6;padding-bottom:env(safe-area-inset-bottom,0px)}
 a{color:var(--blue)}
 a:focus-visible{outline:2px solid var(--brand);outline-offset:3px}
-.wrap{max-width:1120px;margin:0 auto;padding-inline:16px;padding-block:20px 48px;display:grid;gap:16px}
+.wrap{max-width:1184px;margin:0 auto;padding-inline:16px;padding-block:28px 48px;display:grid;gap:16px;min-width:0}
 .num{font-family:var(--f-num);font-variant-numeric:tabular-nums}
-h1{font-size:22px;font-weight:900;margin:0;letter-spacing:.02em}
+h1{font-size:28px;font-weight:800;margin:0;letter-spacing:.02em}
 h2{font-size:13px;font-weight:700;margin:0;color:var(--muted);letter-spacing:.08em;text-wrap:balance}
-.top{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px}
+.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px}
+.eyebrow{font-size:11px;letter-spacing:.16em;color:var(--brand);margin:0 0 6px;font-weight:700}
+.subtitle{margin:6px 0 0;color:var(--muted);font-size:13px}
+.page-meta{display:flex;flex-wrap:wrap;gap:8px}
+.tag{display:inline-flex;align-items:center;padding:4px 9px;border:1px solid var(--line);border-radius:6px;font-size:11px;color:var(--muted)}
+.tag.readonly{color:var(--blue);border-color:rgba(120,169,255,.3);background:var(--blue-soft)}
+.layer-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.layer-nav a{display:flex;align-items:center;gap:12px;min-height:64px;padding:12px 16px;border:1px solid var(--line);border-radius:10px;background:var(--surface);text-decoration:none;color:var(--text);transition:border-color .15s,background-color .15s}
+.layer-nav a:hover{border-color:var(--blue);background:var(--surface-2)}
+.layer-nav .index{color:var(--brand);font-family:var(--font-num);font-size:12px}
+.layer-nav b{display:block;font-size:14px}.layer-nav small{display:block;color:var(--muted);font-size:11px;margin-top:2px}
+.health-bar{padding:12px 16px;border:1px solid var(--line);border-left:3px solid var(--blue);border-radius:9px;background:var(--surface)}
+.account-alert{display:block;padding:12px 16px;border:1px solid var(--alert);border-radius:9px;background:var(--alert-bg);color:var(--ink);font-size:13px;text-decoration:none;min-height:44px}
+.layer{display:grid;gap:14px;padding-top:16px;scroll-margin-top:100px;min-width:0}
+.layer-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.layer-title{display:flex;align-items:center;gap:10px}.layer-title .index{font:12px var(--font-num);color:var(--brand)}
+.layer-title h2{font-size:20px;letter-spacing:0;color:var(--text)}
+.layer-heading p{font-size:12px;color:var(--muted);margin:4px 0 0}
+.context-top{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;padding:18px 20px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius)}
+.context-note{font-size:13px;color:var(--muted);max-width:62ch;margin:0}
 .stamp{color:var(--muted);font-size:12px}
 .stamp b{font-weight:500;color:var(--ink)}
 .stale{color:var(--crit);font-weight:700}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow)}
-.hero{display:grid;grid-template-columns:minmax(0,300px) minmax(0,1fr);gap:16px}
-@media (max-width:760px){.hero{grid-template-columns:minmax(0,1fr)}}
-.gauge{display:grid;justify-items:center;align-content:start;gap:6px;text-align:center}
-.gauge svg{width:100%;max-width:280px;height:auto}
+.disclosure{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);min-width:0}
+summary{cursor:pointer;min-height:44px;list-style-position:inside}
+summary:focus-visible{outline:2px solid var(--brand);outline-offset:3px;border-radius:6px}
+.disclosure>summary{padding:16px 18px;font-size:13px;font-weight:650}
+.disclosure>summary small{font-size:11px;color:var(--muted);margin-left:10px;font-weight:400}
+.detail-body{padding:0 18px 18px;display:grid;gap:16px}
+.pressure-row{display:grid;grid-template-columns:140px minmax(0,1fr);gap:20px;align-items:center}
+.pressure-number{font:36px var(--font-num);line-height:1.2}.pressure-number small{font-size:13px;color:var(--muted)}
+.pressure-label{font-size:11px;color:var(--muted);margin-bottom:6px}
+.account-layout{display:grid;grid-template-columns:minmax(0,1fr) 270px;gap:16px;align-items:start}
+.account-boundary{display:grid;gap:14px;min-width:0}
+.account-boundary h3{font-size:13px;margin:0}.account-boundary p,.account-boundary li{font-size:12px;color:var(--muted);margin:0}
+.account-boundary ol{padding-left:18px;margin:0;display:grid;gap:10px}
 .pill{display:inline-flex;align-items:center;gap:6px;padding:3px 12px;border-radius:999px;font-weight:700;font-size:13px}
 .lv-green{color:var(--ok);background:var(--ok-bg)} .lv-yellow{color:var(--warn);background:var(--warn-bg)}
 .lv-orange{color:var(--alert);background:var(--alert-bg)} .lv-red{color:var(--crit);background:var(--crit-bg)}
-.summary{font-size:15px;margin:4px 0 0;max-width:30ch}
+.summary{font-size:13px;margin:8px 0 0;color:var(--muted)}
 .price{font-size:13px;color:var(--muted)}
-.price b{font-size:18px;color:var(--ink);font-weight:600}
+.price b{display:block;font-size:30px;color:var(--ink);font-weight:600;line-height:1.4}
 .pos{display:grid;gap:14px;min-width:0}
 .pos-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;align-items:center}
 .ruler{position:relative;height:88px;margin:4px 8px 0}
@@ -60,19 +88,16 @@ h2{font-size:13px;font-weight:700;margin:0;color:var(--muted);letter-spacing:.08
 .stat{border-top:1px solid var(--line);padding-top:8px}
 .stat .k{font-size:12px;color:var(--muted)} .stat .v{font-family:var(--f-num);font-size:16px;font-weight:500}
 .neg{color:var(--crit)} .pos-c{color:var(--ok)}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
-@media (max-width:400px){.grid{grid-template-columns:minmax(0,1fr)}}
-.fac{display:grid;gap:10px;border-left-width:4px}
-.fac.lv-green-b{border-left-color:var(--ok)} .fac.lv-yellow-b{border-left-color:var(--warn)}
-.fac.lv-orange-b{border-left-color:var(--alert)} .fac.lv-red-b{border-left-color:var(--crit)}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.fac{display:grid;gap:14px;align-content:start;box-shadow:none;min-width:0}
 .fac-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .fac-head h3{margin:0;font-size:15px;font-weight:700}
-.fac-head .w{font-size:11px;color:var(--muted)}
-.score{font-family:var(--f-num);font-size:26px;font-weight:600;line-height:1}
-.meter{height:6px;background:var(--track);border-radius:3px;overflow:hidden}
-.meter i{display:block;height:100%;border-radius:3px}
-.kv{display:grid;grid-template-columns:1fr auto;gap:2px 12px;font-size:13px;margin:0}
-.kv dt{color:var(--muted)} .kv dd{margin:0;font-family:var(--f-num);text-align:right}
+.factor-method{border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+.factor-method summary{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px}
+.factor-method summary::after{content:'+';font-size:16px}.factor-method[open] summary::after{content:'−'}
+.factor-method .note{font-size:12px;color:var(--muted)}
+.kv{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:7px 12px;font-size:12px;margin:0}
+.kv dt{color:var(--muted)} .kv dd{margin:0;font-family:var(--f-num);text-align:right;overflow-wrap:anywhere}
 .kv .ref-first{border-top:1px dashed var(--line);padding-top:6px;margin-top:4px}
 .ref{margin-left:6px;padding:0 5px;border:1px solid var(--line);border-radius:4px;font-size:10px;color:var(--muted);font-family:var(--f-body)}
 .note{font-size:13px;margin:0}
@@ -81,7 +106,6 @@ h2{font-size:13px;font-weight:700;margin:0;color:var(--muted);letter-spacing:.08
 .empty{color:var(--muted);text-align:center;padding:40px 16px}
 .method{display:grid;gap:8px;font-size:13px;color:var(--muted)}
 .method p{margin:0;max-width:75ch}
-.legend{display:flex;flex-wrap:wrap;gap:8px}
 .mk.drag{cursor:ew-resize;touch-action:none;z-index:2}
 .mk.drag .t{color:var(--ink);font-weight:700}
 .mk.drag .tick{width:4px;height:22px;border-radius:2px;background:var(--ink)}
@@ -99,86 +123,92 @@ h2{font-size:13px;font-weight:700;margin:0;color:var(--muted);letter-spacing:.08
 .preview-tag{color:var(--warn);font-size:12px;font-weight:700}
 .capital{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
 .capital input{width:130px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font-family:var(--f-num)}
-.btn{padding:6px 12px;border:1px solid var(--line);border-radius:6px;background:var(--track);color:var(--ink);cursor:pointer;font:inherit;font-size:13px}
+.btn{min-height:44px;padding:8px 12px;border:1px solid var(--line);border-radius:6px;background:var(--track);color:var(--ink);cursor:pointer;font:inherit;font-size:13px;max-width:100%}
 .btn:focus-visible,.capital input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .foot{font-size:12px;color:var(--muted);margin:0}
-.trend{display:grid;gap:12px}
+.trend{display:grid;gap:20px;border-top:2px solid var(--blue)}
+.trend .pos-head h3{font-size:15px;margin:0}.trend #trendpill{font-size:16px;padding:6px 14px}
+.trend .stats{grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.trend .stat .v{font-size:22px;margin-top:4px}
+.trend .foot{padding-top:12px;border-top:1px solid var(--line)}
 .obs{display:grid;gap:12px}
 .obs-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}
 .obs-item{border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:grid;gap:4px;align-content:start;font-size:13px}
 .obs-item .obs-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .obs-item .s{color:var(--muted);font-size:12px}
 .stat .v small{display:block;font-family:var(--f-body);font-size:12px;font-weight:400;color:var(--muted)}
+@media(max-width:1000px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.account-layout{grid-template-columns:minmax(0,1fr)}.account-boundary{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}}
+@media(max-width:600px){.wrap{padding:20px 12px 36px}.layer-nav{gap:6px}.layer-nav a{padding:10px;gap:6px;min-height:66px}.layer-nav b{font-size:12px}.layer-nav small{font-size:10px}.layer-nav .index{display:none}.grid{grid-template-columns:minmax(0,1fr)}.panel{padding:16px}.layer{scroll-margin-top:16px}.layer-heading .tag{font-size:10px}.context-top{padding:16px}.context-note{font-size:12px}.pressure-row{grid-template-columns:minmax(0,1fr);gap:12px}.trend .stats{grid-template-columns:repeat(2,minmax(0,1fr))}.trend .stat .v{font-size:19px}.account-boundary{grid-template-columns:minmax(0,1fr)}.pos-head{align-items:flex-start}.pos-head h2{max-width:100%;overflow-wrap:anywhere}.obs-grid{grid-template-columns:minmax(0,1fr)}.disclosure>summary small{display:block;margin:4px 0 0 16px}}
+@media(prefers-reduced-motion:reduce){.layer-nav a,.site-nav a{transition:none}}
 </style>
 </head>
 <body>
 ${siteHeader("/btc-radar")}
 <main class="wrap">
   <header class="top">
-    <h1>BTC 风控雷达</h1>
-    <div class="stamp" id="stamp" role="status">正在读取最新评估…</div>
+    <div><p class="eyebrow">BTC / READ-ONLY RADAR</p><h1>BTC 风控雷达</h1><p class="subtitle">市场发生了什么 · 长期环境如何 · 账户暴露在哪里</p></div>
+    <div class="page-meta"><span class="tag readonly">只读 · 不下单</span><span class="tag">4h 快照 · 非实时保护</span></div>
   </header>
+  <nav class="layer-nav" aria-label="雷达三层导航">
+    <a href="#market-background"><span class="index">01</span><span><b>市场背景</b><small>宏观、行情与盘口</small></span></a>
+    <a href="#slow-trend"><span class="index">02</span><span><b>慢趋势</b><small>200 日均线环境</small></span></a>
+    <a href="#account-risk"><span class="index">03</span><span><b>账户风险</b><small>持仓与强平边界</small></span></a>
+  </nav>
+  <div class="health-bar"><div class="stamp" id="stamp" role="status">正在读取最新评估…</div></div>
+  <a id="accountAlert" class="account-alert" href="#account-risk" aria-live="polite" hidden></a>
 
-  <section class="hero">
-    <div class="panel gauge" aria-label="下跌压力指数（未验证）">
-      <h2>下跌压力指数 · 未验证预测力</h2>
-      <svg viewBox="-12 0 264 140" id="gauge" role="img" aria-label="评分仪表"></svg>
-      <span class="pill" id="lvpill">—</span>
-      <p class="summary" id="summary">等待第一次评估写入数据。</p>
-      <div class="price">BTC 快照价 <b class="num" id="price">—</b></div>
+  <section id="market-background" class="layer" aria-labelledby="market-background-title">
+    <div class="layer-heading"><div><div class="layer-title"><span class="index">01</span><h2 id="market-background-title">市场背景</h2></div><p>先看原始指标；背景变化不等于交易信号。</p></div><span class="tag">观察层 / 非预测</span></div>
+    <div class="context-top">
+      <div class="price">BTC / USDT · 采集时点价格<b class="num" id="price">—</b></div>
+      <p class="context-note">宏观、技术面与衍生品分开阅读。Polymarket 是各自合约区间的原始报价，不代表从现在开始的触价概率。</p>
     </div>
-    <div class="panel pos">
-      <div class="pos-head">
-        <h2 id="poshead">OKX · BTCUSDT 永续持仓</h2>
-        <span class="pill" id="pospill">—</span>
+    <div class="grid" id="factors"></div>
+    <details id="experimental-pressure" class="disclosure">
+      <summary>实验性压力指数与历史<small>未验证预测力 · 默认收起</small></summary>
+      <div class="detail-body">
+        <div class="pressure-row">
+          <div><div class="pressure-label">下跌压力指数 / 非风险概率</div><div class="pressure-number"><span id="pressureValue">—</span><small> / 100</small></div></div>
+          <div><span class="pill" id="lvpill">—</span><p class="summary" id="summary">等待第一次评估写入数据。</p></div>
+        </div>
+        <div class="hist" id="hist"><div class="empty">等待同版本评估历史。</div></div>
+        <div class="method"><p>这是未验证的下跌压力指数，不是亏损概率、低风险证明或多空交易信号。Polymarket 不计分；其余五因子按原相对权重 20:20:15:10:10 归一化。新版评分与旧版历史不连线比较。</p><p>「参考」指标不计分：RSI(14) 使用 OKX UTC 日线和 Wilder 平滑；恐惧贪婪指数来自 alternative.me。因子解释是模型假设，不是已经核实的因果关系。</p></div>
       </div>
-      <div id="positionList" class="stats"></div>
-      <label class="stamp" id="positionPicker" hidden>查看持仓 <select id="positionSelect" class="btn" aria-label="选择 BTC 持仓"></select></label>
-      <div class="ruler" id="ruler"></div>
-      <div class="stamp" id="rulerHelp"></div>
-      <div class="stats" id="posstats"></div>
-      <div class="risk" id="risk" hidden></div>
+    </details>
+  </section>
+
+  <section id="slow-trend" class="layer" aria-labelledby="slow-trend-title">
+    <div class="layer-heading"><div><div class="layer-title"><span class="index">02</span><h2 id="slow-trend-title">慢趋势</h2></div><p>判断日级环境，不猜下一根 K 线。</p></div><span class="tag">UTC 已收盘日线</span></div>
+    <div class="panel trend" aria-label="趋势状态">
+      <div class="pos-head"><div><h3>200 日均线 · ±3% 缓冲带</h3><p class="subtitle">只在已收盘日线确认状态，缓冲带内维持此前环境。</p></div><span class="pill" id="trendpill">—</span></div>
+      <div class="stats" id="trendstats"></div>
+      <p class="foot">回避只表示不持有多头，不是做空信号；多头环境也不是买点或杠杆安全证明。状态切换按原规则推送飞书，不会自动执行交易。</p>
+      <details class="disclosure"><summary>规则与历史证据<small>历史回撤仍可能很大</small></summary><div class="detail-body method"><p>日收盘高于 200 日均线 3% 以上为多头环境，低于 3% 以下为回避环境，在 ±3% 之内维持原状态。回测（2022 年以来，现货、次日执行、含手续费）：按此规则持有的最大回撤约 −39%，一直持有约 −67%。这是历史研究，不保证未来结果，不适用于直接推断杠杆仓位安全。</p></div></details>
+    </div>
+    <details id="candidate-observations" class="disclosure">
+      <summary>候选信号观察<small>未验证 · 只记录，不推送</small></summary>
+      <div class="detail-body obs" aria-label="观察模式"><div class="pos-head"><h3>前向观察记录</h3><span class="stamp" id="obsstamp"></span></div><p class="foot" id="obsinputs"></p><div class="obs-grid" id="obsrules"></div>
+      <p class="foot">这些候选信号没有通过 2022 年以后的历史检验。系统按 UTC 日收盘记录触发及之后 7、30、90 天的涨跌（从次日收盘算起），与同期随机日子比较。原观察口径保留：至少 10 次到期触发才给出 p 值；p&lt;0.05 也不等于具备交易资格。</p></div>
+    </details>
+  </section>
+
+  <section id="account-risk" class="layer" aria-labelledby="account-risk-title">
+    <div class="layer-heading"><div><div class="layer-title"><span class="index">03</span><h2 id="account-risk-title">账户风险</h2></div><p id="accountSummary">等待只读账户快照，当前风险未核实。</p></div><span class="tag readonly">OKX / 只读</span></div>
+    <div class="account-layout">
+      <div class="panel pos">
+        <div class="pos-head"><h2 id="poshead">OKX · BTCUSDT 永续持仓</h2><span class="pill" id="pospill">—</span></div>
+        <div id="positionList" class="stats"></div>
+        <label class="stamp" id="positionPicker" hidden>查看持仓 <select id="positionSelect" class="btn" aria-label="选择 BTC 持仓"></select></label>
+        <div class="ruler" id="ruler"></div><div class="stamp" id="rulerHelp"></div><div class="stats" id="posstats"></div><div class="risk" id="risk" hidden></div>
+      </div>
+      <aside class="account-boundary" aria-label="账户风险边界">
+        <div class="panel method"><h3>先检查什么</h3><ol><li>强平是否会先于止损。</li><li>距强平、距止损还有多远。</li><li>补仓后的敞口与假设退出损益。</li></ol><p>绿色也只是距离参考，不是安全保证。</p></div>
+        <div class="panel method"><h3>这页不做什么</h3><p>仅覆盖只读账户中的 BTC-USDT 永续、合约网格与马丁格尔，不代表现货、其他币对或股票 Bot 的全部资产。</p><p>每 4 小时采集、每 60 秒查看缓存；不是实时保护。五小时失效后不保留当前风险结论。</p><p>拖动止损/止盈仅作本页预览。总资金设置只保存展示占比，不修改 OKX 或交易参数。</p></div>
+      </aside>
     </div>
   </section>
 
-  <section class="panel trend" aria-label="趋势状态">
-    <div class="pos-head">
-      <h2>趋势状态 · 200 日均线</h2>
-      <span class="pill" id="trendpill">—</span>
-    </div>
-    <div class="stats" id="trendstats"></div>
-    <p class="foot">日收盘高于 200 日均线 3% 以上为多头环境，低于 3% 以下为回避环境，在 ±3% 之内维持原状态；状态切换时推送飞书。回避只表示不持有多头，不是做空信号。回测（2022 年以来，现货、次日执行、含手续费）：按此规则持有的最大回撤 −39%，一直持有为 −67%；其他常见的多空信号没有通过同样的检验。</p>
-  </section>
-
-  <section class="panel obs" aria-label="观察模式">
-    <div class="pos-head">
-      <h2>观察模式 · 只记录，不推送</h2>
-      <span class="stamp" id="obsstamp"></span>
-    </div>
-    <p class="foot" id="obsinputs"></p>
-    <div class="obs-grid" id="obsrules"></div>
-    <p class="foot">这些候选信号在调研中没有通过 2022 年以后的检验。服务器每天按 UTC 日收盘检查一次，记录每次触发，以及之后 7、30、90 天的涨跌（从次日收盘算起），再与同期随机日子比较。某条规则要在观察开始后积累至少 10 次到期的触发、并且明显好于随机（p&lt;0.05），才值得考虑改为推送。</p>
-  </section>
-
-  <section class="grid" id="factors"></section>
-
-  <section class="panel hist">
-    <h2>评分走势</h2>
-    <div id="hist"><div class="empty">累计两次以上的评估后，这里会画出评分和 BTC 价格的走势。</div></div>
-  </section>
-
-  <section class="panel method">
-    <h2>怎么读这个评分</h2>
-    <div class="legend">
-      <span class="pill lv-green">0–39 下跌压力较低（非低风险）</span><span class="pill lv-yellow">40–54 中性</span>
-      <span class="pill lv-orange">55–69 警戒</span><span class="pill lv-red">70–100 高风险</span>
-    </div>
-    <p>这是未验证的下跌压力指数，不是亏损概率、低风险证明或多空交易信号。Polymarket 触价盘只展示原始报价，不再计分或插值为未来概率；其余五因子按原相对权重 20:20:15:10:10 归一化。新版评分与旧版历史不连线比较。</p>
-    <p>「参考」标记的指标只展示、不计入评分：RSI(14) 按 OKX BTC-USDT 的 UTC 日线以 Wilder 方法计算，分别给出已收盘和含当日盘中的读数；恐惧贪婪指数来自 alternative.me。</p>
-    <p>持仓警报优先检查强平是否先于止损，以及距强平是否不足 3%/5%，再检查止损距离；未知或旧数据不宣称安全。服务器每 4 小时评估一次，五小时后评估或评分输入失效；不是实时持仓保护，不会自动下单。等级升高、持仓高危、自动补仓或策略状态变化时推送飞书；200 日均线切换另发一条。</p>
-    <p id="sources">数据来源：Polymarket、美国财政部、OKX。</p>
-    <p>评分是对公开数据的机械汇总，用来提醒你该去看盘了，不预测价格，也不构成投资建议。</p>
-  </section>
+  <footer class="method"><p id="sources">数据来源：Polymarket、美国财政部、OKX。</p><p>数据汇总与研究观察，不构成投资建议；此页面不会自动开仓、平仓或调整杠杆。</p></footer>
 </main>
 <script nonce="${nonce}">
 const $ = id => document.getElementById(id);
@@ -210,19 +240,21 @@ function renderPositions(d){
   select.value = selectedId;
   select.onchange = () => selectPosition(select.value);
   renderPosition(activePosition(), d.price, d.data_status);
+  renderAccountAttention(d);
 }
 
-function gauge(score){
-  const cx=120, cy=120, r=96;
-  const pt = (v,rr)=>{const a=Math.PI*(1-v/100);return [cx+rr*Math.cos(a), cy-rr*Math.sin(a)]};
-  const arc=(a,b,col)=>{const [x1,y1]=pt(a,r),[x2,y2]=pt(b,r);return \`<path d="M\${x1} \${y1} A\${r} \${r} 0 0 1 \${x2} \${y2}" stroke="\${col}" stroke-width="16" fill="none"/>\`};
-  let s = arc(0,39.5,LV.green)+arc(40.5,54.5,LV.yellow)+arc(55.5,69.5,LV.orange)+arc(70.5,100,LV.red);
-  [0,40,55,70,100].forEach(v=>{const [x,y]=pt(v,r+18);s+=\`<text x="\${x}" y="\${y+4}" text-anchor="middle" font-size="10" fill="var(--muted)" font-family="IBM Plex Mono,monospace">\${v}</text>\`});
-  const value = num(score);
-  if(Number.isFinite(value)){const clamped=Math.max(0,Math.min(100,value)), [nx,ny]=pt(clamped,r-22);
-    s+=\`<line x1="\${cx}" y1="\${cy}" x2="\${nx}" y2="\${ny}" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><circle cx="\${cx}" cy="\${cy}" r="6" fill="var(--ink)"/>\`;
-    s+=\`<text x="\${cx}" y="\${cy-30}" text-anchor="middle" font-size="34" font-weight="600" fill="var(--ink)" font-family="IBM Plex Mono,monospace">\${Math.round(clamped)}</text>\`;}
-  $("gauge").innerHTML=s;
+function renderAccountAttention(d){
+  const positions=d.positions||(d.position?[d.position]:[]);
+  const stale=p=>p.stale||(p.fetchedAt&&btcRadarFreshness({ts:p.fetchedAt}).expired);
+  const incomplete=positions.some(stale)||(d.data_status?.staleSources||[]).some(s=>["dcaPositions","accountPositions","gridPositions"].includes(s.key));
+  const attention=positions.filter(p=>!stale(p)&&["red","orange"].includes(p.level));
+  $("accountSummary").textContent=!d.data_status?.okxConfigured?"未接入只读账户，当前账户风险未核实。":incomplete?"持仓来源不完整或非最新，当前账户风险未核实。":positions.length?positions.length+" 笔 BTC 永续快照 · 分来源展示，不合并均价或收益。":"本次快照未读取到 BTC 永续持仓，不代表其他资产空仓。";
+  $("accountAlert").hidden=attention.length===0&&!incomplete;
+  $("accountAlert").textContent=attention.length?"账户风险需关注 · "+attention.map(p=>sourceName(p)+"："+p.level_name).join("；")+" · 查看账户风险":"账户数据非最新或不完整，当前风险未核实 · 查看账户风险";
+}
+
+function renderPressure(score){
+  $("pressureValue").textContent=Number.isFinite(num(score))?String(Math.round(num(score))):"—";
 }
 
 const effective = (kind, p) => preview[kind] != null ? preview[kind] : num(kind === "sl" ? p.sl : p.tp);
@@ -391,11 +423,11 @@ function referenceRows(key, indicators){
 
 function renderFactors(F, indicators){
   F=F.filter(f=>f.key!=="poly"||radar.modelVersion==="pressure-v2-no-touch-probability");
-  $("factors").innerHTML=F.map(f=>{const score=dataUsable?num(f.score):NaN, lv=Number.isFinite(score)?lvOf(score):"yellow", refs=referenceRows(f.key, indicators);return \`<article class="panel fac lv-\${lv}-b">
-    <div class="fac-head"><div><h3>\${esc(f.name)}</h3><span class="w">\${f.weight>0?"相对权重 "+fmt(f.weight):"参考 · 不计分"}</span></div><span class="score" style="color:\${Number.isFinite(score)?LV[lv]:"var(--muted)"}">\${fmt(score)}</span></div>
-    <div class="meter"><i style="width:\${Math.max(0,Math.min(100,score||0))}%;background:\${LV[lv]}"></i></div>
+  $("factors").innerHTML=F.map(f=>{const score=dataUsable?num(f.score):NaN, refs=referenceRows(f.key, indicators);return \`<article class="panel fac">
+    <div class="fac-head"><h3>\${esc(f.name)}</h3><span class="tag">\${f.weight>0?"背景数据":"原始盘口"}</span></div>
     <dl class="kv">\${(f.metrics||[]).map(([k,v])=>\`<dt>\${esc(k)}</dt><dd>\${esc(v)}</dd>\`).join("")}\${refs.map(([k,v],i)=>\`<dt class="\${i?"":"ref-first"}">\${esc(k)}<span class="ref">参考</span></dt><dd class="\${i?"":"ref-first"}">\${esc(v)}</dd>\`).join("")}</dl>
-    <p class="note">\${esc(f.note)}</p></article>\`}).join("");
+    <details class="factor-method"><summary>\${f.weight>0?"模型解释 · 未验证":"盘口说明 · 不计分"}<span class="num">\${f.weight>0?fmt(score)+" / 100":"仅报价"}</span></summary>
+    <p class="note">\${esc(f.note)}</p>\${f.weight>0?'<p class="note">相对权重 '+fmt(f.weight)+'；不是风险概率。</p>':''}</details></article>\`}).join("");
 }
 
 const TREND = {LONG:["多头环境","green"],AVOID:["回避环境","orange"]};
@@ -446,7 +478,7 @@ function renderObservation(o){
 function renderLatest(d){
   radar = d;
   dataUsable = !connectionError && !btcRadarFreshness(d).expired;
-  gauge(d.score);
+  renderPressure(d.score);
   $("lvpill").textContent=d.level_name; $("lvpill").className="pill lv-"+lvSafe(d.level);
   $("summary").textContent=d.summary; $("price").textContent=fmt(d.price,1);
   renderPositions(d); renderTrend(d.trend||null); renderObservation(d.observation||null); renderFactors(d.factors||[], d.indicators||{});
@@ -468,14 +500,17 @@ function updateHealth(){
     +(stale.some(s=>s.since!==null)?' · <span class="stale">沿用旧数据：'+stale.filter(s=>s.since!==null).map(s=>esc(s.label)).join("、")+'</span>':'')
     +(stale.some(s=>s.since===null)?' · <span class="stale">采集失败：'+stale.filter(s=>s.since===null).map(s=>esc(s.label)).join("、")+'</span>':'');
   if(!dataUsable){
-    gauge(null); $("lvpill").textContent=connectionError?"连接中断":"数据失效"; $("lvpill").className="pill lv-yellow";
+    renderPressure(null); $("lvpill").textContent=connectionError?"连接中断":"数据失效"; $("lvpill").className="pill lv-yellow";
     $("summary").textContent="仅保留历史快照，不能用于当前交易判断。";
     $("pospill").textContent="持仓结论失效"; $("pospill").className="pill lv-yellow";
     $("risk").hidden=true; $("ruler").innerHTML="";
     $("trendpill").textContent="历史趋势 · 数据失效"; $("trendpill").className="pill lv-yellow";
+    $("accountSummary").textContent="数据失效，当前账户风险未核实。";
+    $("accountAlert").hidden=false; $("accountAlert").textContent="数据失效，当前账户风险未核实 · 查看账户风险";
     if(wasUsable) renderFactors(radar.factors||[],radar.indicators||{});
   }else if(activePosition()?.fetchedAt && btcRadarFreshness({ts:activePosition().fetchedAt}).expired){
     renderPosition(activePosition(),radar.price,radar.data_status);
+    renderAccountAttention(radar);
   }
 }
 
@@ -523,7 +558,7 @@ async function refresh(){
     if(!lastPayload) $("stamp").textContent="暂时读不到评估数据，稍后刷新页面再试";
   }finally{ busy = false; }
 }
-gauge(null);
+renderPressure(null);
 refresh();
 setInterval(() => { updateHealth(); if(!document.hidden) refresh(); }, 60000);
 </script>
