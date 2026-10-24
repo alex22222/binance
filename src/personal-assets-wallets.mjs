@@ -3,6 +3,7 @@ import { createHash, createHmac } from "node:crypto";
 const HOST = "https://web3.okx.com";
 const BALANCES = "/api/v6/dex/balance/all-token-balances-by-address";
 const DEFI = "/api/v6/defi/user/asset/platform/list";
+const MARKET_PRICE = "/api/v6/dex/market/price";
 const QUOTE = "https://api.kraken.com/0/public/Trades?pair=USDTUSD&count=1";
 // Exact Solana mint and decimals independently matched against its Token2022 mint metadata.
 // https://developers.jup.ag/docs/price: blockId identifies the price, not createdAt.
@@ -142,7 +143,9 @@ export async function fetchWalletAssets({ provider, credentials, wallets, polyma
   const deadline = AbortSignal.timeout(45_000);
   async function request(url, body) {
     const target = new URL(url);
-    const onchain = target.origin === HOST && [BALANCES, DEFI].includes(target.pathname)
+    const zeroMarket = url === `${HOST}${MARKET_PRICE}` && Array.isArray(body) && body.length === 1
+      && Object.keys(body[0] || {}).length === 2 && body[0].chainIndex === "501" && body[0].tokenContractAddress === ZERO_MINT;
+    const onchain = zeroMarket || target.origin === HOST && [BALANCES, DEFI].includes(target.pathname)
       && ((target.pathname === BALANCES && body === undefined) || (target.pathname === DEFI && body !== undefined && !target.search));
     const zeroQuote = url === ZERO_QUOTE && body === undefined;
     const zeroTime = url === SOLANA_RPC && body?.jsonrpc === "2.0" && body.id === 1 && body.method === "getBlockTime"
@@ -162,6 +165,7 @@ export async function fetchWalletAssets({ provider, credentials, wallets, polyma
         signal: AbortSignal.any([deadline, AbortSignal.timeout(10_000)]), ...(body === undefined ? {} : { body: encoded }) });
       if (!response.ok) {
         await response.body?.cancel().catch(() => {});
+        if (zeroMarket) throw new WalletAssetsError("ZERO 的 OnchainOS 行情查询未完成", response.status);
         if (onchain && [401, 403].includes(response.status)) throw denied();
         if (zeroQuote || zeroTime) throw new WalletAssetsError("ZERO 公开报价查询未完成", response.status);
         if (response.status === 429) throw new WalletAssetsError("钱包只读查询访问受限，请稍后重试", 429);
@@ -284,6 +288,7 @@ export async function fetchWalletAssets({ provider, credentials, wallets, polyma
     } catch { /* Keep exact USDT quantity unpriced instead of assuming its peg. */ }
   }
   let zeroPrice = null;
+  let zeroFallbackAllowed = true;
   let zeroReason = "ZERO 未取得可核实的 Jupiter USD 报价，保留数量暂不估值";
   if (rows.some((row) => row.chainIndex === "501" && row.contract === ZERO_MINT && !row.risk)) {
     try {
@@ -300,14 +305,34 @@ export async function fetchWalletAssets({ provider, credentials, wallets, polyma
         if (block?.jsonrpc === "2.0" && block.id === 1 && block.error === undefined && Number.isSafeInteger(block.result) && block.result > 0 && Number.isSafeInteger(observed)) {
           if (observed > at + 10_000) zeroReason = "ZERO 的 Jupiter 报价时点超过允许的未来偏差，保留数量暂不估值";
           else if (at - observed > 300_000) zeroReason = "ZERO 的 Jupiter 报价已超过 5 分钟，保留数量暂不估值";
-          else zeroPrice = { value: quote.usdPrice, observedAt: new Date(observed).toISOString() };
+          else zeroPrice = { value: quote.usdPrice, observedAt: new Date(observed).toISOString(), source: "Jupiter Price V3" };
         }
       }
     } catch (error) {
+      zeroFallbackAllowed = !(error instanceof WalletAssetsError && [401, 402, 403, 429].includes(error.statusCode));
       zeroReason = `ZERO 的 Jupiter 报价或 Solana 时点查询失败${error instanceof WalletAssetsError && [401, 402, 403, 429].includes(error.statusCode) ? `（HTTP ${error.statusCode}）` : "或响应无效"}，本次不重试，保留数量暂不估值`;
     }
+    if (zeroPrice && atTime(now).getTime() - Date.parse(zeroPrice.observedAt) > 300_000) zeroPrice = null;
+    if (!zeroPrice && zeroFallbackAllowed) {
+      try {
+        const payload = await request(`${HOST}${MARKET_PRICE}`, [{ chainIndex: "501", tokenContractAddress: ZERO_MINT }]);
+        const quote = Array.isArray(payload) && payload.length === 1 ? payload[0] : null;
+        const value = price(quote?.price), observed = typeof quote?.time === "string" && /^\d{13}$/.test(quote.time) ? Number(quote.time) : NaN;
+        const at = atTime(now).getTime();
+        zeroReason += "；ZERO 的 OnchainOS 参考报价未匹配精确链、mint、有效价格或 5 分钟内时点，保留数量暂不估值";
+        if (quote?.chainIndex === "501" && quote.tokenContractAddress === ZERO_MINT && value && Number.isSafeInteger(observed)
+          && observed <= at + 10_000 && at - observed <= 300_000) zeroPrice = { value, observedAt: new Date(observed).toISOString(), source: "OKX OnchainOS Market" };
+      } catch (error) {
+        zeroReason += `；ZERO 的 OnchainOS 参考报价查询失败${error instanceof WalletAssetsError && [401, 402, 403, 429].includes(error.statusCode) ? `（HTTP ${error.statusCode}）` : "或响应无效"}，未付款或重试，保留数量暂不估值`;
+      }
+    }
   }
-  if (pusdPrice && atTime(now).getTime() - Date.parse(pusdPrice.observedAt) > 300_000) pusdPrice = null;
+  const fetched = atTime(now);
+  if (zeroPrice && (fetched.getTime() - Date.parse(zeroPrice.observedAt) > 300_000 || Date.parse(zeroPrice.observedAt) > fetched.getTime() + 10_000)) {
+    zeroPrice = null;
+    zeroReason = "ZERO 报价在读取完成时已超出 5 分钟有效期或未来偏差，保留数量暂不估值";
+  }
+  if (pusdPrice && fetched.getTime() - Date.parse(pusdPrice.observedAt) > 300_000) pusdPrice = null;
   const holdings = [];
   const unpricedAssets = [];
   for (const row of rows) {
@@ -330,13 +355,13 @@ export async function fetchWalletAssets({ provider, credentials, wallets, polyma
     holdings.push({ externalId,
       chainIndex: row.chainIndex, contract: row.contract, name: `${pusd ? row.name : sourcePriced?.name || symbol}（${CHAINS[row.chainIndex].name}）`, category: tether || pusd ? "稳定币" : sourcePriced?.category || "加密资产",
       currency: "USD", amount, quantity: row.quantity, rawQuantity: row.quantity, symbol,
-      ...(zero ? { quoteObservedAt: zeroPrice.observedAt, quoteSource: "Jupiter Price V3" } : {}),
+      ...(zero ? { quoteObservedAt: zeroPrice.observedAt, quoteSource: zeroPrice.source } : {}),
       ...(pusd ? { quoteObservedAt: pusdPrice.observedAt, quoteSource: "Kraken USDC/USD · pUSD抵押权益参考", balanceAddress: row.address,
         cashRawBalance: row.proof.cashRawBalance, cashBlockNumber: row.proof.cashBlockNumber, cashObservedAt: row.proof.cashObservedAt } : {}) });
   }
-  const fetched = atTime(now);
+  const finished = atTime(now);
   const total = holdings.reduce((sum, row) => sum + row.amount, 0);
-  if (!Number.isFinite(total) || total > MAX_VALUE || fetched.getTime() < started.getTime() || fetched.getTime() - started.getTime() > 45_000) throw invalid();
+  if (!Number.isFinite(total) || total > MAX_VALUE || fetched.getTime() < started.getTime() || finished.getTime() < fetched.getTime() || finished.getTime() - started.getTime() > 45_000) throw invalid();
   const pendingDefi = scopes.filter((scope) => !scope.defiClear);
   return {
     provider, currency: "USD", total, holdings, unpricedAssets, derivedWallets, breakdownComplete: true,
@@ -352,7 +377,7 @@ export async function fetchWalletAssets({ provider, credentials, wallets, polyma
       "代币余额与原生币来源报价未提供精确资产或报价时点，页面标记为获取时间，不代表同一实时区块。",
       "只按链与合约识别资产；未知代币即使返回价格也暂不估值，名称和风险标记不构成身份确认。",
       ...(usdtPrice ? [`USDT 使用 Kraken USDT / USD 最近成交价；报价时点 ${usdtPrice.observedAt}，不假设固定 1 美元。`] : []),
-      ...(zeroPrice ? [`ZERO 使用精确 Solana mint 的 Jupiter Price V3 实际 USD 参考价；价格时点 ${zeroPrice.observedAt}，不等于余额时点；仅接受 5 分钟内报价，不保证成交或变现净额。`] : []),
+      ...(zeroPrice ? [`ZERO 使用精确 Solana mint 的 ${zeroPrice.source} USD 参考价；价格时点 ${zeroPrice.observedAt}，不等于余额时点；仅接受 5 分钟内报价，不保证成交或变现净额。`] : []),
       ...(derivedWallets.length ? ["pUSD 为 USDC 抵押权益，按单位数量及 5 分钟内 Kraken USDC/USD 成交价参考估值；不是 pUSD 的直接成交价，当前抵押储备和赎回能力未核实，不代表可变现净额。"] : []),
       ...(rows.some((row) => row.chainIndex === "56" && row.contract === USDT["56"]) ? ["BSC USDT 为 Binance-Peg 合约；美元估值使用 USDT / USD 参考成交价，不核实其链上赎回或跨链溢折价。"] : []),
       ...(holdings.some((row) => row.symbol === "USDT0") ? ["USDT0 使用提供商返回的实际 USD 报价，不按固定 1 美元估值；源未提供精确报价时点，标记为获取时间。"] : []),

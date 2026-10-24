@@ -175,7 +175,9 @@ A 股与原有基金/ETF 绑定共用受限的 `personal-assets-funds.json` 存�
 
 BSC USDT 使用 Kraken 实际 USDT/USD 成交报价；X Layer USD₮0 按[发行方部署表](https://docs.usdt0.to/technical-documentation/deployments)核对合约后采用来源实际代币报价，不固定为 1 USD。SPYon 按 Binance 官方 RWA 清单和[发行方资产页](https://app.ondo.finance/assets/spyon)核对具体链及合约，标明 Ondo 代币化 ETF；使用实际链上代币数乘来源每代币报价，不把底层等效份额作为代币数、也不额外套乘数。源无精确行情／资产时点时标记获取时间。未知、风险或缺价代币保留准确数量但不估值；未核实 DeFi、NFT 和其他链不补零，不纳入已定价小计。
 
-Solana ZERO 仅匹配已核实的精确 mint `EmcxFTNVDqyLHp11NvwvLZ4D7LKGbG9i7B8RF7dwpump`，按实际代币数量乘 [Jupiter Price V3](https://developers.jup.ag/docs/price) 的 USD 参考价格；不使用同名代币或 OnchainOS 的未核时报价替代。公开请求只含固定 mint 和报价区块，不带钱包地址或 Developer 凭据。以 Solana `getBlockTime(blockId)` 核实报价时点，只接受 5 分钟内且未来偏差不超过 10 秒的价格；`createdAt` 是代币创建时间，不能用来判定报价新鲜度。价格来源及价格时点保留在持仓备注中，不把它当成余额时点，也不保证实际成交或变现净额。
+Solana ZERO 仅匹配已核实的精确 mint `EmcxFTNVDqyLHp11NvwvLZ4D7LKGbG9i7B8RF7dwpump`，优先按实际代币数量乘 [Jupiter Price V3](https://developers.jup.ag/docs/price) 的 USD 参考价格。公开请求只含固定 mint 和报价区块，不带钱包地址或 Developer 凭据；以 Solana `getBlockTime(blockId)` 核实报价时点，`createdAt` 不作为价格时间。Jupiter 缺价、异常或过期时，最多再请求一次 [OKX OnchainOS Market Price](https://web3.okx.com/onchainos/dev-docs/market/market-price)，签名请求仅发送固定 Solana 链和该 mint，使用服务器现有 Developer 凭据，不发送钱包地址。必须返回唯一精确链／mint、正的 USD 参考价和有效毫秒价格时间；不是同名代币匹配，也不直接采纳余额列表中的未核时报价。
+
+两种 ZERO 报价均按最终读取完成时间核对，只接受 5 分钟内且未来偏差不超过 10 秒的价格。OnchainOS 的时间采用接口所称价格时间，不把它当成独立验证的最近成交时间。价格来源及价格时间保留在持仓备注中，不等于余额时点，不保证实际成交或变现净额。公开接口返回 401／402／403／429 时不转往备选来源；备选来源失败不再尝试，不签付款凭证、不付款，继续保留未估值数量。所有查询共用原钱包 45 秒预算，不新增轮询。
 
 报价缺失、过期、限流、付费要求或响应异常时不重试、不付款，保留准确数量并标为未估值。若同一链、地址、合约对应的资产已在该账户估值，本次失价会拒绝替换整个账户，保留上次有效账本及成功时点；完整余额清单中已不存在的代币仍可正常移除。首次出现的未估值资产不冒充零金额。查询沿用每天 09:00、21:00 的既有资产任务；手动预览可以查询，不新增轮询或报价日配额，钱包读取仍共用 45 秒上限。
 

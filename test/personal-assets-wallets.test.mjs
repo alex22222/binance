@@ -405,6 +405,7 @@ test("ZERO does not query prices for risk-marked, zero-quantity or symbol-only m
     const data = zeroFixture(); change(data); const { fetchImpl, calls } = zeroFetch(data);
     const result = await run({ fetchImpl });
     assert.equal(calls.some(call => ["api.jup.ag", "api.mainnet-beta.solana.com"].includes(new URL(call.url).hostname)), false);
+    assert.equal(calls.some(call => new URL(call.url).pathname === "/api/v6/dex/market/price"), false);
     assert.equal(result.holdings.some(row => row.contract === zeroMint), false);
   }
 });
@@ -601,4 +602,98 @@ test("Safe reference quote freshness is checked at completion without extending 
   current = time;
   await assert.rejects(run({ provider: "tokenpocket", wallets: [polygon, wallets[1]], polymarketSafeOwner: evm, now: () => current,
     fetchImpl: (url, init) => { if (url.includes("pair=USDTUSD")) current = new Date(time.getTime() + 46_000); return mock.fetchImpl(url, init); } }), /资产|响应/);
+});
+
+const marketPricePath = "/api/v6/dex/market/price";
+const alternateZeroPrice = "0.0002418021942385235846245478401474834";
+function zeroMarketFetch(options = {}) {
+  return zeroFetch(options.data ?? zeroFixture(), {
+    rpc: options.rpc ?? { jsonrpc: "2.0", id: 1, result: time.getTime() / 1000 - 360 },
+    ...(options.quoteResponse ? { quoteResponse: options.quoteResponse } : {}),
+    intercept: (url, init) => url.pathname === marketPricePath ? options.response ? options.response(init) : Response.json(options.payload ?? { code: "0", data: [
+      { chainIndex: "501", tokenContractAddress: zeroMint, time: String(time.getTime() - 10_000), price: alternateZeroPrice },
+    ] }) : undefined,
+  });
+}
+
+test("ZERO can use a fresh exact-mint OnchainOS USD quote when Jupiter is stale without changing its token identity", async () => {
+  const mock = zeroMarketFetch(), result = await run(mock), holding = result.holdings.find(row => row.contract === zeroMint);
+  assert.ok(holding); assert.equal(holding.quoteSource, "OKX OnchainOS Market"); assert.equal(holding.quoteObservedAt, "2026-10-24T12:29:50.000Z");
+  assert.equal(holding.rawQuantity, "309.248658"); assert.ok(Math.abs(holding.amount - 309.248658 * Number(alternateZeroPrice)) < 1e-15);
+  assert.equal(holding.externalId, `token:${createHash("sha256").update(`501:${solana}:${zeroMint}`).digest("hex")}`);
+  assert.equal(result.observedAt, null); assert.equal(result.timeBasis, "retrieved");
+  assert.ok(result.warnings.some(line => /ZERO.*OnchainOS.*价格时点.*不等于余额时点/.test(line)));
+  const marketCalls = mock.calls.filter(call => new URL(call.url).pathname === marketPricePath); assert.equal(marketCalls.length, 1);
+  const call = marketCalls[0], url = new URL(call.url);
+  assert.equal(url.origin, "https://web3.okx.com"); assert.equal(url.search, ""); assert.equal(call.init.method, "POST"); assert.equal(call.init.redirect, "error"); assert.ok(call.init.signal instanceof AbortSignal);
+  assert.deepEqual(JSON.parse(call.init.body), [{ chainIndex: "501", tokenContractAddress: zeroMint }]);
+  assert.equal(call.init.headers["OK-ACCESS-SIGN"], createHmac("sha256", credentials.secret).update(`${time.toISOString()}POST${marketPricePath}${call.init.body}`).digest("base64"));
+  assert.equal(call.init.body.includes(solana), false); assert.equal(call.init.body.includes(evm), false);
+  assert.equal(Object.keys(call.init.headers).some(header => /payment|wallet|authorization/i.test(header)), false);
+});
+
+test("a fresh Jupiter quote avoids the alternate market request, and a public denial is not retried through it", async () => {
+  const mock = zeroMarketFetch({ rpc: { jsonrpc: "2.0", id: 1, result: time.getTime() / 1000 - 60 } });
+  const result = await run(mock); assert.equal(result.holdings.find(row => row.contract === zeroMint).quoteSource, "Jupiter Price V3");
+  assert.equal(mock.calls.some(call => new URL(call.url).pathname === marketPricePath), false);
+  for (const status of [401, 402, 403, 429]) {
+    const denied = zeroMarketFetch({ quoteResponse: () => new Response(credentials.secret, { status }) });
+    const value = await run(denied); assert.equal(value.holdings.some(row => row.contract === zeroMint), false);
+    assert.equal(denied.calls.some(call => new URL(call.url).pathname === marketPricePath), false);
+    assert.equal(value.unpricedAssets.find(row => row.contract === zeroMint).quantity, "309.248658");
+  }
+});
+
+test("alternate ZERO quotes require one precise chain and mint, positive USD value and fresh millisecond source time", async () => {
+  const good = { chainIndex: "501", tokenContractAddress: zeroMint, time: String(time.getTime()), price: alternateZeroPrice };
+  const invalid = [[], [good, good], [{ ...good, chainIndex: "1" }], [{ ...good, tokenContractAddress: usdtSol }],
+    ...[undefined, 0, "0", "-1", "1e-3", "NaN", "1000000000001"].map(price => [{ ...good, price }]),
+    ...[undefined, time.getTime(), String(time.getTime() / 1000), String(time.getTime() - 301000), String(time.getTime() + 11000)].map(time => [{ ...good, time }])];
+  for (const data of invalid) {
+    const mock = zeroMarketFetch({ payload: { code: "0", data } }), result = await run(mock);
+    const unknown = result.unpricedAssets.find(row => row.contract === zeroMint); assert.equal(unknown.quantity, "309.248658"); assert.match(unknown.reason, /ZERO.*OnchainOS/);
+    assert.equal(result.holdings.some(row => row.contract === zeroMint), false); assert.equal(mock.calls.filter(call => new URL(call.url).pathname === marketPricePath).length, 1);
+  }
+  for (const offset of [-300000, 10000]) {
+    const result = await run(zeroMarketFetch({ payload: { code: "0", data: [{ ...good, time: String(time.getTime() + offset) }] } }));
+    assert.ok(result.holdings.some(row => row.contract === zeroMint));
+  }
+});
+
+test("alternate ZERO source failures are bounded and never paid, retried or exposed with credential text", async () => {
+  for (const response of [() => new Response(credentials.secret, { status: 402 }), () => new Response(credentials.apiKey, { status: 429 }),
+    () => new Response(credentials.secret, { status: 403 }), () => new Response("upstream", { status: 500 }),
+    () => new Response("redirect", { status: 302, headers: { location: "https://attacker.invalid" } }),
+    () => new Response("not-json " + credentials.secret), () => new Response("{}", { headers: { "content-length": "1000001" } }),
+    () => Response.json({ code: "50011", msg: credentials.secret }), () => { throw Error(credentials.secret); }]) {
+    const mock = zeroMarketFetch({ response }), result = await run(mock);
+    assert.equal(result.unpricedAssets.find(row => row.contract === zeroMint).quantity, "309.248658");
+    assert.equal(result.holdings.some(row => row.contract === zeroMint), false);
+    assert.equal(mock.calls.filter(call => new URL(call.url).pathname === marketPricePath).length, 1);
+    for (const secret of Object.values(credentials)) assert.equal(JSON.stringify(result).includes(secret), false);
+    assert.equal(mock.calls.some(call => /swap|execute|payment|sendTransaction/.test(call.url)), false);
+  }
+});
+
+test("alternate ZERO freshness uses the returned completion time and never extends the shared deadline", async () => {
+  let afterMarket = false, postMarketReads = 0;
+  const mock = zeroMarketFetch({ response: () => {
+    afterMarket = true;
+    return Response.json({ code: "0", data: [{ chainIndex: "501", tokenContractAddress: zeroMint,
+      price: alternateZeroPrice, time: String(time.getTime() - 299000) }] });
+  } });
+  const result = await run({ ...mock, now: () => !afterMarket || ++postMarketReads === 1 ? time : new Date(time.getTime() + 2000) });
+  assert.equal(result.fetchedAt, new Date(time.getTime() + 2000).toISOString());
+  assert.equal(result.holdings.some(row => row.contract === zeroMint), false);
+  assert.equal(result.unpricedAssets.find(row => row.contract === zeroMint).quantity, "309.248658");
+  assert.match(result.unpricedAssets.find(row => row.contract === zeroMint).reason, /完成.*5 分钟/);
+  assert.equal(mock.calls.filter(call => new URL(call.url).pathname === marketPricePath).length, 1);
+  let current = time;
+  const late = zeroMarketFetch({ response: () => {
+    current = new Date(time.getTime() + 46000);
+    return Response.json({ code: "0", data: [{ chainIndex: "501", tokenContractAddress: zeroMint,
+      price: alternateZeroPrice, time: String(current.getTime()) }] });
+  } });
+  await assert.rejects(run({ ...late, now: () => current }), /资产|响应/);
+  assert.equal(late.calls.filter(call => new URL(call.url).pathname === marketPricePath).length, 1);
 });
