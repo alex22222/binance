@@ -143,7 +143,7 @@ test("DeFi rows, missing scope, stale data and updating aggregates stay unverifi
 
 test("wallet sync validates credentials, provider, address formats and duplicate bindings before networking", async () => {
   for (const options of [{ credentials: null }, { credentials: { ...credentials, secret: "\nsecret" } },
-    { provider: "constructor" }, { wallets: [] }, { wallets: [{ chainIndex: "56", address: evm }] }, { wallets: [{ chainIndex: 1, address: evm }] },
+    { provider: "constructor" }, { wallets: [] }, { wallets: [{ chainIndex: "10", address: evm }] }, { wallets: [{ chainIndex: 1, address: evm }] },
     { wallets: [{ chainIndex: "1", address: solana }] }, { wallets: [{ chainIndex: "501", address: evm }] },
     { wallets: [{ chainIndex: "501", address: "2".repeat(44) + "0" }] }, { wallets: [wallets[0], wallets[0]] }]) {
     let called = false;
@@ -225,4 +225,78 @@ test("upstream failures, redirects, invalid JSON and size limits fail safely wit
     });
   }
   await assert.rejects(run({ fetchImpl: async () => { throw new Error(credentials.secret); } }), (e) => !e.message.includes(credentials.secret));
+});
+
+test("Binance Agentic public BSC balances price native BNB and verified USDT without using a fixed dollar peg", async () => {
+  const wallet = { chainIndex: "56", address: evm };
+  const contract = "0x55d398326f99059ff775485246999027b3197955";
+  const data = fixture();
+  data.balances["56"] = [token(wallet, "", "BNB", "0.00751513166666367", "718.7"),
+    token(wallet, contract, "USDT", "216.824327908410984083", "1.25"),
+    token(wallet, unknownEth, "SPYon", "0.279566661108909015", "759.725")];
+  const { fetchImpl, calls } = fakeFetch(data);
+  const result = await run({ provider: "binanceagentic", wallets: [wallet], fetchImpl });
+  assert.equal(result.provider, "binanceagentic"); assert.match(result.accountLabel, /币安Agentic Wallet.*BNB Smart Chain/);
+  assert.equal(result.holdings.length, 2);
+  assert.ok(Math.abs(result.total - (0.00751513166666367 * 718.7 + 216.824327908410984083 * 0.998)) < 1e-9);
+  assert.equal(result.holdings.find(row => row.symbol === "USDT").rawQuantity, "216.824327908410984083");
+  assert.equal(result.unpricedAssets[0].quantity, "0.279566661108909015");
+  assert.equal(result.valuationComplete, false);
+  assert.equal(calls.filter(call => new URL(call.url).hostname === "api.kraken.com").length, 1);
+  assert.ok(result.warnings.some(line => /BSC.*Binance-Peg/.test(line)));
+});
+
+test("OKX Agentic X Layer identifies USDt0 by chain and official contract and uses actual provider USD price", async () => {
+  const wallet = { chainIndex: "196", address: evm };
+  const contract = "0x779ded0c9e1022225f8e0630b35a9b54be713736";
+  const data = fixture();
+  data.balances["196"] = [token(wallet, "", "OKB", "0.013505097240135695", "106.5"),
+    token(wallet, contract, "USD₮0", "8.493422", "0.99869")];
+  const { fetchImpl, calls } = fakeFetch(data);
+  const result = await run({ provider: "okxagentic", wallets: [wallet], fetchImpl });
+  assert.equal(result.provider, "okxagentic"); assert.match(result.accountLabel, /OKX Agentic Wallet.*X Layer/);
+  assert.equal(result.holdings.length, 2); assert.equal(result.unpricedAssets.length, 0);
+  assert.ok(Math.abs(result.total - (0.013505097240135695 * 106.5 + 8.493422 * 0.99869)) < 1e-12);
+  const stable = result.holdings.find(row => row.contract === contract);
+  assert.equal(stable.symbol, "USDT0"); assert.equal(stable.category, "稳定币");
+  assert.equal(stable.rawQuantity, "8.493422");
+  assert.ok(result.warnings.some(line => /USDT0.*提供商.*报价时点/.test(line)));
+  assert.equal(result.observedAt, null); assert.equal(result.timeBasis, "retrieved");
+  assert.equal(calls.some(call => new URL(call.url).hostname === "api.kraken.com"), false);
+});
+
+test("Agentic source-priced tokens never accept a matching symbol on a foreign contract or invalid prices", async () => {
+  const wallet = { chainIndex: "196", address: evm };
+  const contract = "0x779ded0c9e1022225f8e0630b35a9b54be713736";
+  for (const row of [token(wallet, unknownEth, "USD₮0", "8", "1"),
+    token(wallet, contract, "USD₮0", "8", ""), token(wallet, contract, "USD₮0", "8", "0"),
+    token(wallet, contract, "USD₮0", "8", "0.99", { isRiskToken: true })]) {
+    const data = fixture(); data.balances["196"] = [row];
+    const result = await run({ provider: "okxagentic", wallets: [wallet], ...fakeFetch(data) });
+    assert.equal(result.holdings.length, 0); assert.equal(result.unpricedAssets.length, 1);
+    assert.equal(result.unpricedAssets[0].quantity, "8"); assert.equal(result.valuationComplete, false);
+  }
+  const data = fixture(); data.balances["196"] = [token(wallet, "", "ETH", "1", "2000")];
+  await assert.rejects(run({ provider: "okxagentic", wallets: [wallet], ...fakeFetch(data) }), /响应|资产/);
+});
+
+test("verified BSC SPYon is valued per token, distinguished from ETF shares, and never identified by symbol alone", async () => {
+  const wallet = { chainIndex: "56", address: evm };
+  const contract = "0x6a708ead771238919d85930b5a0f10454e1c331a";
+  const data = fixture();
+  data.balances["56"] = [token(wallet, contract, "SPYon", "0.279566661108909015", "759.725"),
+    token(wallet, unknownEth, "SPYon", "100", "759.725")];
+  const { fetchImpl, calls } = fakeFetch(data);
+  const result = await run({ provider: "binanceagentic", wallets: [wallet], fetchImpl });
+  assert.equal(result.holdings.length, 1); assert.equal(result.unpricedAssets.length, 1);
+  assert.equal(result.unpricedAssets[0].contract, unknownEth);
+  assert.equal(result.holdings[0].contract, contract); assert.equal(result.holdings[0].category, "股票ETF");
+  assert.match(result.holdings[0].name, /SPYon.*Ondo.*代币化ETF/);
+  assert.equal(result.holdings[0].rawQuantity, "0.279566661108909015");
+  assert.ok(Math.abs(result.total - 0.279566661108909015 * 759.725) < 1e-12);
+  assert.ok(result.warnings.some(line => /SPYon.*每代币.*不.*股数/.test(line)));
+  assert.equal(calls.some(call => new URL(call.url).hostname === "api.kraken.com"), false);
+  data.balances["56"][0].isRiskToken = true;
+  const risk = await run({ provider: "binanceagentic", wallets: [wallet], ...fakeFetch(data) });
+  assert.equal(risk.holdings.length, 0); assert.equal(risk.unpricedAssets.length, 2);
 });

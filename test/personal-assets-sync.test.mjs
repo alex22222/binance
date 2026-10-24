@@ -222,6 +222,38 @@ test("wallet connect requires an explicit proper target and preserves partial va
   assert.equal((await readAssetSyncStatus({ stateDir })).providers.tokenpocket.lastValuationComplete, true);
 });
 
+test("agentic wallets reuse only the saved developer credential reference and retain independent account sources", async context => {
+  for (const [provider, platform, chainIndex] of [["binanceagentic", "币安Agentic Wallet", "56"], ["okxagentic", "OKX Agentic Wallet", "196"]]) {
+    const stateDir = await fixture(context); const current = await readPersonalAssets({ stateDir });
+    const targetAccountId = current.portfolio.accounts.find(row=>row.platform===platform).id;
+    const wallets = [{ chainIndex, address: publicAddress }]; let calls = 0;
+    const options = { api: walletApi({}, request=>{calls++;assert.equal(request.credentials.apiKey,credentials.apiKey);}) };
+    await assert.rejects(action(stateDir,provider,"connect",{wallets,targetAccountId,useExistingCredentials:true},options),/Developer|开发者|凭据/);assert.equal(calls,0);
+    await action(stateDir,"okxweb3","connect",{...credentials,wallets:[{chainIndex:"1",address:publicAddress}],targetAccountId:"other"},{api:walletApi()});
+    assert.equal((await readAssetSyncStatus({stateDir})).developerCredentialsAvailable,true);
+    for (const extra of [{useExistingCredentials:"true"},{useExistingCredentials:true,apiKey:"unexpected-secret"}]) await assert.rejects(action(stateDir,provider,"connect",{wallets,targetAccountId,...extra},options));
+    const connected=await action(stateDir,provider,"connect",{wallets,targetAccountId,useExistingCredentials:true},options);const preview=connected.providers[provider].preview;
+    assert.equal(connected.providers[provider].usesExistingCredentials,true);assert.equal(connected.providers[provider].connected,true);assert.equal(calls,1);
+    assert.doesNotMatch(JSON.stringify(connected),/synthetic-key|synthetic-secret|synthetic-passphrase|unexpected-secret/);
+    const stored=JSON.parse(await readFile(privateFile(stateDir),"utf8"));assert.equal(stored.providers[provider].credentialRef,"okxweb3");assert.equal(stored.providers[provider].credentials,undefined);
+    const applied=await action(stateDir,provider,"apply",{previewId:preview.id,revision:preview.revision});assert.equal(applied.sync.providers[provider].enabled,true);
+    assert.equal(applied.assets.portfolio.accounts.find(row=>row.id===targetAccountId).platform,platform);
+    assert.equal(applied.assets.portfolio.entries.find(row=>row.id==="other-total").amount,7);
+    const cycle=await runAssetSyncCycle({stateDir,now:later,api:walletApi({fetchedAt:later.toISOString()},request=>assert.equal(request.credentials.secret,credentials.secret))});assert.deepEqual(cycle,{attempted:1,applied:1,failed:0});
+    await action(stateDir,"okxweb3","disconnect");assert.equal((await readAssetSyncStatus({stateDir})).providers[provider].connected,false);
+    const before=await readFile(join(stateDir,"personal-assets.json"),"utf8");const failed=await runAssetSyncCycle({stateDir,now:new Date("2026-10-25T01:00:00Z"),api:walletApi()});assert.deepEqual(failed,{attempted:1,applied:0,failed:1});assert.equal(await readFile(join(stateDir,"personal-assets.json"),"utf8"),before);
+    await action(stateDir,provider,"disconnect");const disconnected=JSON.parse(await readFile(privateFile(stateDir),"utf8"));assert.equal(disconnected.providers[provider].credentialRef,undefined);
+  }
+});
+
+test("agentic bindings cannot reuse another platform's counted wallet or implicit targets", async context => {
+  const stateDir=await fixture(context);const current=await readPersonalAssets({stateDir});const targetAccountId=current.portfolio.accounts.find(row=>row.platform==="OKX Agentic Wallet").id;
+  await action(stateDir,"okxweb3","connect",{...credentials,wallets:polygonWallet,targetAccountId:"other"},{api:walletApi()});
+  await assert.rejects(action(stateDir,"okxagentic","bind",{wallets:polygonWallet,targetAccountId}),{statusCode:409});
+  await assert.rejects(action(stateDir,"okxagentic","bind",{wallets:[{chainIndex:"196",address:publicAddress}]}),/明确选择/);
+  await assert.rejects(action(stateDir,"okxagentic","bind",{wallets:[{chainIndex:"196",address:publicAddress}],targetAccountId:"okx-exchange"}),/平台/);
+});
+
 test("all unpriced wallets create no false zero valuation while verified empty wallets can record zero", async (context) => {
   const stateDir = await fixture(context);
   const targetAccountId = await tokenPocketTarget(stateDir);
@@ -261,7 +293,7 @@ test("disconnect removes wallet credentials but preserves applied missing valuat
 test("wallet chains and source identity are validated before queries and cannot duplicate across providers", async (context) => {
   const stateDir = await fixture(context);
   const targetAccountId = await tokenPocketTarget(stateDir);
-  for (const wallets of [[], [{ chainIndex: "56", address: publicAddress }], [{ chainIndex: "137", address: "bad" }], [{ chainIndex: "501", address: "0".repeat(44) }], [polygonWallet[0], { ...polygonWallet[0], address: publicAddress.toUpperCase().replace("0X", "0x") }]]) {
+  for (const wallets of [[], [{ chainIndex: "9999", address: publicAddress }], [{ chainIndex: "137", address: "bad" }], [{ chainIndex: "501", address: "0".repeat(44) }], [polygonWallet[0], { ...polygonWallet[0], address: publicAddress.toUpperCase().replace("0X", "0x") }]]) {
     await assert.rejects(action(stateDir, "tokenpocket", "bind", { wallets, targetAccountId }), /地址|链|重复|钱包/);
   }
   const connected = await action(stateDir, "tokenpocket", "connect", { ...credentials, wallets: polygonWallet, targetAccountId }, { api: walletApi() });

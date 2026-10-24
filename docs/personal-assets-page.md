@@ -134,9 +134,9 @@ node --test --test-timeout=30000 test/*.test.mjs
 - 总额、平台分布、类型图和持仓折算支持 CNY / USD / HKD；切换仅改变展示，原币账本不变。历史快照保持当时 CNY 口径。
 - 每日北京时间 23:55 由 `binance-personal-assets-daily-snapshot.timer` 保存一份。服务停机恢复时只保存实际运行当日，不伪造缺失日期；同一北京日并发或重复执行幂等。快照冻结当时已入账资产、自动汇率和只读来源覆盖；未更新账户仍为旧记录，不声称日终实时市值。既有历史不删除，沿用 500 份上限，到限会明确失败并保留数据。
 - `scripts/snapshot-personal-assets.mjs` 可由同一专用服务用户执行验收；它不修改资产金额和修订号，不读取外部钱包登录会话。
-- 每次打开页面自动 POST `/api/assets/ai/review`，普通五分钟资产轮询不触发 AI。五分钟内复用点评；数据变化时明确旧版本，失败保留上次结果并标注失败，失败尝试也限频。
-- 「AI 资产点评 → 配置 OpenAI」调用受登录、同源与 JSON 约束的 `/api/assets/ai/configure`。独立 OpenAI API Key 验证成功后仅存 `state/personal-assets-ai.json`（0600）；`personal-assets-ai-review.json` 只缓存文本和来源版本。Key 不进浏览器存储、备份导出、快照或日志。
-- 使用 [OpenAI Responses API](https://developers.openai.com/api/docs/guides/text)，模型 [gpt-5.4-mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini)，`store:false`，无工具调用。只发送平台、资产类型、报表币种的汇总金额和数据覆盖/时间；不发送账户名、持仓名、备注、钱包地址、截图或其他平台凭据。点评按 CNY，要求区分部分估值、未同步与陈旧数据，不把快照变化当收益，不生成交易指令。真实点评须在用户安全填写 Key 后验收。
+- 每次打开页面读取／请求今日点评；普通资产轮询不触发 AI。按北京时间每天最多发起一次 Moonshot 上游请求，失败也消耗当天次数；重复打开、重新点评、换 Key、并发或重启不能增加额度。未配置、未发起上游请求不消耗次数。保留旧点评的真实供应商、生成日期及资产版本，数据变化时明确旧版本。
+- 「AI 资产点评 → 配置 Moonshot」调用受登录、同源与 JSON 约束的 `/api/assets/ai/configure`。Moonshot API Key 仅存 `state/personal-assets-ai-moonshot.json`（0600）；旧 OpenAI 配置与历史点评保留，不作为 Moonshot 凭据复用。`personal-assets-ai-attempts/` 以私有每日凭证限制调用，部署、换 Key 和回滚都不能删除或重置此目录。Key 不进浏览器存储、备份导出、快照或日志。
+- 使用 [Moonshot 中国区 Chat Completions API](https://platform.kimi.com/docs/guide/kimi-k3-1-pro-quickstart)，模型 `kimi-k3.1-pro`，低推理、最多 2400 completion tokens、无工具调用、无重试或供应商回退。只发送平台、资产类型、报表币种的汇总金额和数据覆盖/时间；不发送账户名、持仓名、备注、钱包地址、截图或其他平台凭据。点评按 CNY，区分部分估值、未同步与陈旧数据，不把快照变化当收益，不生成交易指令。真实点评须在用户安全填写 Key 后验收。
 - 新增「币安Agentic Wallet」「OKX Agentic Wallet」平台选项，与交易所、Web3 账户分别记录；新增选项不自动登录或绑定外部钱包。
 
 ## 长期持有基金的自动净值重估
@@ -165,3 +165,12 @@ A 股与原有基金/ETF 绑定共用受限的 `personal-assets-funds.json` 存�
 当前支持已确认的 SPCX、SPY、PONY、TEM、SFTBY，按用户填写的美股／ADR 股数使用腾讯证券美元行情更新，支持碎股。逐一核对报价代码（含市场后缀）、产品名称、发行人、USD 及 GP／GP-ETF 类别，避免将重复使用的 SPCX 代码误配为旧 ETF。身份核对资料：[SpaceX 投资者关系](https://ir.spacex.com/faqs-and-contact/)、[SPY 发行人](https://www.ssga.com/us/en/intermediary/etfs/state-street-spdr-sp-500-etf-trust-spy)、[Tempus AI](https://investors.tempus.com/resources/investor-faqs)、[Pony AI](https://ir.pony.ai/ir-resources/investor-faqs)、[SFTBY OTC Markets](https://www.otcmarkets.com/stock/SFTBY/quote)。SPY 分类为股票 ETF，其余为股票。
 
 美元行情保留源返回的日期及时间字符串，源时区未核实，不擅自转换为 UTC；页面明确标示。沿用每天北京时间 09:00、21:00 的读取频率和失败保留上次估值机制。股数为人工确认，券商现金仍显示原有来源及日期，不能声称已取得盈立账户最新余额、成本或盈亏。将原证券汇总拆为五笔时先保存完整快照，原汇总从计入明细中替换，避免与五笔证券重复相加；账户统计口径、原币及原现金记录保持原值。
+
+
+## 动态资产气泡版图与 Agentic Wallet
+
+总览移除装饰标题、说明和“资产观察”模块，整体金额与状态置顶。资产版图按平台聚合已核算金额，气泡面积按金额同比例绘制，动画只作为展示、不代表价格涨跌；小额气泡不虚增面积，完整图例可触摸／键盘操作并筛选平台账户。手机单列图例及独立排布；系统要求减少动态时停用漂浮。隐私模式去掉金额相关气泡尺寸及排序，原币明细、手动录入与币种纠错保留在折叠面板。
+
+`binanceagentic` 与 `okxagentic` 分别绑定现有“币安Agentic Wallet”和“OKX Agentic Wallet”账户，使用已核实公开地址，只读查询 BSC（56）或 X Layer（196），不迁移钱包会话、不登录、不签名、不转账。本站可在服务器引用已保存的 OKX Web3 Developer 凭据，不把该凭据复制给浏览器或其他钱包配置。不同平台同链同地址禁止重复计入，首次更新前快照保留；自动更新沿用每天北京时间 09:00、21:00，失败保留上次有效值。
+
+BSC USDT 使用 Kraken 实际 USDT/USD 成交报价；X Layer USD₮0 按[发行方部署表](https://docs.usdt0.to/technical-documentation/deployments)核对合约后采用来源实际代币报价，不固定为 1 USD。SPYon 按 Binance 官方 RWA 清单和[发行方资产页](https://app.ondo.finance/assets/spyon)核对具体链及合约，标明 Ondo 代币化 ETF；使用实际链上代币数乘来源每代币报价，不把底层等效份额作为代币数、也不额外套乘数。源无精确行情／资产时点时标记获取时间。未知、风险或缺价代币保留准确数量但不估值；未核实 DeFi、NFT 和其他链不补零，不纳入已定价小计。

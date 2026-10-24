@@ -13,7 +13,8 @@ import { registerFutuClient, createFutuAuthorization, exchangeFutuCode, refreshF
 
 const PROVIDERS = { okx: { id: "okx-exchange", platform: "OKX", name: "OKX · 交易所" }, futu: { id: "futu-hk", platform: "富途", name: "富途 · 证券账户" },
   polymarket: { id: "polymarket-main", platform: "Polymarket", name: "Polymarket · 资产账户" }, future: { id: "future-main", platform: "Future", name: "Future · Polygon 交易账户" },
-  okxweb3: { id: "okx-web3", platform: "OKX", name: "OKX · Web3 钱包" }, tokenpocket: { id: "tokenpocket-main", platform: "TokenPocket", name: "TokenPocket · 钱包" } };
+  okxweb3: { id: "okx-web3", platform: "OKX", name: "OKX · Web3 钱包" }, tokenpocket: { id: "tokenpocket-main", platform: "TokenPocket", name: "TokenPocket · 钱包" },
+  binanceagentic: { id: "binance-agentic-wallet", platform: "币安Agentic Wallet", name: "币安 Agentic Wallet" }, okxagentic: { id: "okx-agentic-wallet", platform: "OKX Agentic Wallet", name: "OKX Agentic Wallet" } };
 const adapters = { fetchOkxAssets, fetchPolymarketAssets, fetchWalletAssets, registerFutuClient, createFutuAuthorization, exchangeFutuCode, refreshFutuToken, fetchFutuAccounts, fetchFutuAssets };
 const INTERVAL = 12 * 60 * 60_000;
 const digest = (value) => createHash("sha256").update(value).digest("hex");
@@ -21,7 +22,9 @@ const failureText = "只读同步未完成，请检查授权、账户地区和�
 const callbackUri = "https://spaceflag.site/api/assets/sync/futu/callback";
 const syncError = (message, statusCode = 400) => Object.assign(new Error(message), { statusCode });
 const predictionProvider = (provider) => ["polymarket", "future"].includes(provider);
-const walletProvider = (provider) => ["okxweb3", "tokenpocket"].includes(provider);
+const walletProvider = (provider) => ["okxweb3", "tokenpocket", "binanceagentic", "okxagentic"].includes(provider);
+const agenticProvider = provider => ["binanceagentic", "okxagentic"].includes(provider);
+const walletCredentials = (data, value) => value?.credentials || (value?.credentialRef === "okxweb3" ? data.providers.okxweb3?.credentials : undefined);
 const metadataLines = (value) => Array.isArray(value) ? value.filter((line) => typeof line === "string").map((line) => line.slice(0, 500)).slice(0, 20) : [];
 
 function walletAddress(value, chainIndex) {
@@ -43,7 +46,7 @@ function walletList(value) {
   if (!Array.isArray(value) || !value.length || value.length > 10) throw syncError("请至少绑定一个钱包地址，最多 10 个。");
   const seen = new Set();
   return value.map((row) => {
-    if (!row || !["1", "501", "137"].includes(row.chainIndex)) throw syncError("钱包仅支持 Ethereum、Solana 和 Polygon 链。");
+    if (!row || !["1", "501", "137", "56", "196"].includes(row.chainIndex)) throw syncError("钱包仅支持 Ethereum、Solana、Polygon、BSC 和 X Layer 链。");
     const address = walletAddress(row.address, row.chainIndex);
     const key = `${row.chainIndex}:${address}`;
     if (seen.has(key)) throw syncError("同一链的钱包地址重复，请核对绑定。");
@@ -58,7 +61,7 @@ const exactQuantity = (value) => typeof value === "string" && value.length <= 12
 function unpricedSummary(value = []) {
   if (!Array.isArray(value) || value.length > 999) throw syncError("钱包未估值资产无法核验。", 502);
   return value.map((row) => {
-    if (!row || !["1", "501", "137"].includes(row.chainIndex) || typeof row.contract !== "string"
+    if (!row || !["1", "501", "137", "56", "196"].includes(row.chainIndex) || typeof row.contract !== "string"
       || !exactQuantity(row.quantity) || !/[1-9]/.test(row.quantity)
       || ["symbol", "name", "reason"].some((key) => typeof row[key] !== "string" || !row[key].trim() || row[key].length > (key === "reason" ? 500 : key === "name" ? 180 : 100) || /[\u0000-\u001f\u007f]/.test(row[key]))) throw syncError("钱包未估值资产无法核验。", 502);
     let contract = "";
@@ -92,7 +95,7 @@ function uniqueWalletSource(data, current, provider, wallets, targetAccountId) {
     if (row.provider === provider && row.targetAccountId === targetAccountId || !row.wallets.some((wallet) => keys.has(`${wallet.chainIndex}:${wallet.address}`))) continue;
     const account = current.portfolio.accounts.find((item) => item.id === row.targetAccountId);
     const counted = account && account.reviewStatus !== "pending" && current.portfolio.entries.some((entry) => entry.accountId === account.id && entry.kind === (account.basis === "holdings" ? "holding" : "total"));
-    if (row.configured || counted) throw syncError("同一链和钱包地址已绑定其他账户，不能通过 OKX Web3 与 TokenPocket 重复计入；请先核对原账户。", 409);
+    if (row.configured || counted) throw syncError("同一链和钱包地址已绑定其他账户，不能通过不同钱包平台重复计入；请先核对原账户。", 409);
   }
 }
 
@@ -230,7 +233,7 @@ function status(data, now = new Date()) {
     const value = data.providers[name] || {};
     const dueAt = value.enabled && Number.isFinite(Date.parse(value.lastFetchedAt)) ? nextAssetRefreshAt(value.lastFetchedAt) : null;
     providers[name] = {
-      connected: name === "okx" || walletProvider(name) ? Boolean(value.credentials) : predictionProvider(name) ? Boolean(value.address) : Boolean(value.tokens),
+      connected: name === "okx" ? Boolean(value.credentials) : walletProvider(name) ? Boolean(walletCredentials(data, value)) : predictionProvider(name) ? Boolean(value.address) : Boolean(value.tokens),
       enabled: value.enabled === true,
       targetAccountId: value.targetAccountId || (value.enabled ? PROVIDERS[name].id : null),
       lastAttemptAt: value.lastAttemptAt || null,
@@ -246,11 +249,11 @@ function status(data, now = new Date()) {
       lastError: value.lastError || null,
       accountLabel: value.accountLabel || null,
       ...(value.preview ? { preview: value.preview } : {}),
-      ...(walletProvider(name) ? { wallets: value.wallets ? walletList(value.wallets) : [], lastUnpricedAssets: unpricedSummary(value.lastUnpricedAssets), lastValuationComplete: typeof value.lastValuationComplete === "boolean" ? value.lastValuationComplete : null } : {}),
+      ...(walletProvider(name) ? { usesExistingCredentials: value.credentialRef === "okxweb3", wallets: value.wallets ? walletList(value.wallets) : [], lastUnpricedAssets: unpricedSummary(value.lastUnpricedAssets), lastValuationComplete: typeof value.lastValuationComplete === "boolean" ? value.lastValuationComplete : null } : {}),
       ...(name === "futu" ? { accounts: value.accounts || [], selectedAccountId: value.externalAccountId || null } : {})
     };
   }
-  return { providers, serverIp: "173.199.122.23", intervalMinutes: 720, schedule: "北京时间每天 09:00、21:00" };
+  return { providers, developerCredentialsAvailable: Boolean(data.providers.okxweb3?.credentials), serverIp: "173.199.122.23", intervalMinutes: 720, schedule: "北京时间每天 09:00、21:00" };
 }
 
 export async function readAssetSyncStatus({ stateDir, now = new Date() }) { return status(await readPrivate(pathFor(stateDir)), now); }
@@ -336,8 +339,9 @@ async function fetched(data, provider, stateDir, api, now, accountId, persist, r
     if (!value.credentials) throw syncError("请先配置 OKX 只读密钥。");
     result = await api.fetchOkxAssets({ credentials: value.credentials, now: () => now });
   } else if (walletProvider(provider)) {
-    if (!value.credentials) throw syncError("请先填写并验证 OnchainOS Developer 开发者凭据。");
-    result = await walletAssets(provider, value.credentials, walletList(value.wallets), api, now);
+    const credentials = walletCredentials(data, value);
+    if (!credentials) throw syncError("请先填写并验证 OnchainOS Developer 开发者凭据。");
+    result = await walletAssets(provider, credentials, walletList(value.wallets), api, now);
   } else if (predictionProvider(provider)) {
     if (!value.address) throw syncError("请先配置公开资金地址。");
     result = await predictionAssets(provider, value.address, api, now);
@@ -455,6 +459,7 @@ export async function performAssetSyncAction({ stateDir, provider, action, body 
       rememberWalletBinding(data, provider, data.providers[provider]);
       if (walletProvider(provider) && data.providers[provider]?.lastAppliedAt) {
         delete data.providers[provider].credentials;
+        delete data.providers[provider].credentialRef;
         delete data.providers[provider].preview;
         data.providers[provider].enabled = false;
       } else delete data.providers[provider];
@@ -472,19 +477,30 @@ export async function performAssetSyncAction({ stateDir, provider, action, body 
         delete value.preview;
         data.providers[provider] = value;
       } else {
-        const credentials = {};
-        for (const key of ["apiKey", "secret", "passphrase"]) {
-          if (typeof body[key] !== "string" || !body[key].trim() || body[key].length > 300 || /[\r\n]/.test(body[key])) throw syncError("请填写有效的 OnchainOS Developer API Key、Secret 和 Passphrase。");
-          credentials[key] = body[key].trim();
+        let credentials; let credentialRef;
+        if (body.useExistingCredentials !== undefined && typeof body.useExistingCredentials !== "boolean") throw syncError("请选择有效的开发者凭据来源。");
+        if (body.useExistingCredentials) {
+          if (!agenticProvider(provider) || ["apiKey", "secret", "passphrase"].some(key => Object.hasOwn(body, key))) throw syncError("已有开发者凭据与新密钥不能混用。");
+          credentialRef = "okxweb3"; credentials = walletCredentials(data, { credentialRef });
+          if (!credentials) throw syncError("尚未保存可复用的 OnchainOS Developer 开发者凭据。");
+        } else {
+          credentials = {};
+          for (const key of ["apiKey", "secret", "passphrase"]) {
+            if (typeof body[key] !== "string" || !body[key].trim() || body[key].length > 300 || /[\r\n]/.test(body[key])) throw syncError("请填写有效的 OnchainOS Developer API Key、Secret 和 Passphrase。");
+            credentials[key] = body[key].trim();
+          }
         }
         const result = await walletAssets(provider, credentials, wallets, api, now);
         const current = await readPersonalAssets({ stateDir });
         targetAccount(current, provider, targetAccountId, previous);
         uniqueWalletSource(data, current, provider, wallets, targetAccountId);
         const preview = makePreview(result, provider, current.revision, now, targetAccountId);
-        data.providers[provider] = { ...previous, credentials, wallets, targetAccountId, enabled: false, preview, lastAttemptAt: now.toISOString(),
+        const value = { ...previous, wallets, targetAccountId, enabled: false, preview, lastAttemptAt: now.toISOString(),
           lastFetchedAt: preview.fetchedAt, accountLabel: preview.accountLabel, lastError: null,
           ...(!previous.lastAppliedAt ? { observedAt: preview.observedAt, timeBasis: preview.timeBasis } : {}) };
+        delete value.credentials; delete value.credentialRef;
+        if (credentialRef) value.credentialRef = credentialRef; else value.credentials = credentials;
+        data.providers[provider] = value;
       }
     } else if (provider === "okx" && action === "connect") {
       const credentials = {};

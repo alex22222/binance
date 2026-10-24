@@ -69,6 +69,8 @@ test("personal assets share Dashboard authentication and persist isolated review
     assert.equal("selectedAccountId" in initial.sync.providers.futu, false);
     assert.equal("wallets" in initial.sync.providers.okxweb3, false);
     assert.equal("wallets" in initial.sync.providers.tokenpocket, false);
+    for(const provider of ["binanceagentic","okxagentic"]){assert.equal(initial.sync.providers[provider].connected,false);assert.equal("wallets" in initial.sync.providers[provider],false);assert.equal("credentialRef" in initial.sync.providers[provider],false);}
+    assert.equal(initial.sync.developerCredentialsAvailable,false);
     assert.deepEqual(Object.keys(initial.portfolio.rates), ["CNY"]);
     assert.deepEqual(initial.funds, { status: "available", bindings: [] });
     for (const extra of [{}, { Origin: "https://attacker.example" }]) assert.equal((await fetch(`${origin}/api/assets/funds/configure`, { method: "POST", headers: { ...headers, "Content-Type": "application/json", ...extra }, body: "{}" })).status, 403);
@@ -97,7 +99,7 @@ test("personal assets share Dashboard authentication and persist isolated review
     const sync = await fetch(`${origin}/api/assets/sync`, { headers });
     assert.equal(sync.headers.get("cache-control"), "no-store");
     assert.equal((await sync.json()).providers.okx.connected, false);
-    for (const provider of ["okx", "futu", "polymarket", "future", "okxweb3", "tokenpocket"]) {
+    for (const provider of ["okx", "futu", "polymarket", "future", "okxweb3", "tokenpocket", "binanceagentic", "okxagentic"]) {
       for (const action of ["bind", "connect", "authorize", "preview", "apply", "disconnect"]) {
         const path = `/api/assets/sync/${provider}/${action}`;
         assert.equal((await fetch(origin + path, { method: "POST", headers: { "Content-Type": "application/json", Origin: origin }, body: "{}" })).status, 401);

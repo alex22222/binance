@@ -7,9 +7,17 @@ const QUOTE = "https://api.kraken.com/0/public/Trades?pair=USDTUSD&count=1";
 const MAX_BYTES = 1_000_000;
 const MAX_ASSETS = 999;
 const MAX_VALUE = 1_000_000_000_000;
-const CHAINS = Object.freeze({ "1": { name: "Ethereum", symbol: "ETH" }, "501": { name: "Solana", symbol: "SOL" }, "137": { name: "Polygon", symbol: "POL" } });
+const CHAINS = Object.freeze({ "1": { name: "Ethereum", symbol: "ETH" }, "501": { name: "Solana", symbol: "SOL" }, "137": { name: "Polygon", symbol: "POL" },
+  "56": { name: "BNB Smart Chain", symbol: "BNB" }, "196": { name: "X Layer", symbol: "OKB" } });
 // Contract identity comes from https://tether.to/en/supported-protocols/; names alone never identify USDt.
-const USDT = Object.freeze({ "1": "0xdac17f958d2ee523a2206206994597c13d831ec7", "501": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB" });
+// BSC Binance-Peg contract: https://www.binance.com/en-PH/skills/detail/binance-web3/binance-agentic-wallet
+const USDT = Object.freeze({ "1": "0xdac17f958d2ee523a2206206994597c13d831ec7", "501": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+  "56": "0x55d398326f99059ff775485246999027b3197955" });
+// USDT0 issuer deployment: https://docs.usdt0.to/technical-documentation/deployments
+// SPYon BSC identity: Binance public RWA list?type=1; underlying ETF: https://app.ondo.finance/assets/spyon
+const SOURCE_PRICED = Object.freeze({ "196:0x779ded0c9e1022225f8e0630b35a9b54be713736": { symbol: "USDT0", category: "稳定币" },
+  "56:0x6a708ead771238919d85930b5a0f10454e1c331a": { symbol: "SPYon", name: "SPYon · Ondo 代币化ETF", category: "股票ETF" } });
+const PROVIDER_NAMES = Object.freeze({ okxweb3: "OKX Web3", tokenpocket: "TokenPocket", binanceagentic: "币安Agentic Wallet", okxagentic: "OKX Agentic Wallet" });
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 class WalletAssetsError extends Error {
@@ -102,7 +110,7 @@ function defiIsEmpty(data, at) {
 }
 
 export async function fetchWalletAssets({ provider, credentials, wallets, fetchImpl = fetch, now = () => new Date() }) {
-  if (!["okxweb3", "tokenpocket"].includes(provider) || !credentials || [credentials.apiKey, credentials.secret, credentials.passphrase]
+  if (!Object.hasOwn(PROVIDER_NAMES, provider) || !credentials || [credentials.apiKey, credentials.secret, credentials.passphrase]
     .some((value) => typeof value !== "string" || !value.trim() || value.length > 500 || /[\u0000-\u001f\u007f]/.test(value))) {
     throw new WalletAssetsError("请填写有效的 OnchainOS Developer API Key、Secret 和 Passphrase", 400);
   }
@@ -116,7 +124,7 @@ export async function fetchWalletAssets({ provider, credentials, wallets, fetchI
       if (seenWallets.has(key)) throw invalid();
       seenWallets.add(key);
       return normalized;
-    } catch { throw new WalletAssetsError("钱包地址、网络或重复绑定无效，请核对 Ethereum、Solana 或 Polygon 地址", 400); }
+    } catch { throw new WalletAssetsError("钱包地址、网络或重复绑定无效，请核对 Ethereum、Solana、Polygon、BNB Smart Chain 或 X Layer 地址", 400); }
   });
   const started = atTime(now);
   const deadline = AbortSignal.timeout(45_000);
@@ -199,8 +207,9 @@ export async function fetchWalletAssets({ provider, credentials, wallets, fetchI
   for (const row of rows) {
     const native = row.contract === "";
     const tether = !native && row.contract === USDT[row.chainIndex];
-    const known = native || tether;
-    const usdPrice = row.risk || !known ? null : native ? row.tokenPrice : usdtPrice?.value;
+    const sourcePriced = SOURCE_PRICED[`${row.chainIndex}:${row.contract}`];
+    const known = native || tether || sourcePriced;
+    const usdPrice = row.risk || !known ? null : tether ? usdtPrice?.value : row.tokenPrice;
     if (!usdPrice) {
       unpricedAssets.push({ chainIndex: row.chainIndex, contract: row.contract, symbol: row.symbol, name: row.name, quantity: row.quantity,
         reason: !known || row.risk ? "代币身份、风险或报价时点尚未核实，未采用提供商估值" : "缺少可核实的有效 USD 报价，未按固定美元价格估值" });
@@ -208,9 +217,9 @@ export async function fetchWalletAssets({ provider, credentials, wallets, fetchI
     }
     const amount = Number(row.quantity) * usdPrice;
     if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_VALUE) throw invalid();
-    const symbol = native ? CHAINS[row.chainIndex].symbol : "USDT";
+    const symbol = native ? CHAINS[row.chainIndex].symbol : tether ? "USDT" : sourcePriced.symbol;
     holdings.push({ externalId: `token:${digest(`${row.chainIndex}:${row.address}:${row.contract || "native"}`)}`,
-      chainIndex: row.chainIndex, contract: row.contract, name: `${symbol}（${CHAINS[row.chainIndex].name}）`, category: tether ? "稳定币" : "加密资产",
+      chainIndex: row.chainIndex, contract: row.contract, name: `${sourcePriced?.name || symbol}（${CHAINS[row.chainIndex].name}）`, category: tether ? "稳定币" : sourcePriced?.category || "加密资产",
       currency: "USD", amount, quantity: row.quantity, rawQuantity: row.quantity, symbol });
   }
   const fetched = atTime(now);
@@ -221,7 +230,7 @@ export async function fetchWalletAssets({ provider, credentials, wallets, fetchI
     provider, currency: "USD", total, holdings, unpricedAssets, breakdownComplete: true,
     valuationComplete: unpricedAssets.length === 0 && pendingDefi.length === 0,
     externalAccountId: `wallets:${digest([...seenWallets].sort().join("|"))}`,
-    accountLabel: `${provider === "okxweb3" ? "OKX Web3" : "TokenPocket"} · ${bindings.map((wallet) => CHAINS[wallet.chainIndex].name).join(" / ")}`,
+    accountLabel: `${PROVIDER_NAMES[provider]} · ${bindings.map((wallet) => CHAINS[wallet.chainIndex].name).join(" / ")}`,
     asOf: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(fetched),
     fetchedAt: fetched.toISOString(), observedAt: null, timeBasis: "retrieved",
     coverage: ["指定链和公开地址的原生币与提供商完整返回的 ERC20 / SPL / Token2022 代币；风险与空投过滤已关闭。",
@@ -231,6 +240,9 @@ export async function fetchWalletAssets({ provider, credentials, wallets, fetchI
       "代币余额与原生币来源报价未提供精确资产或报价时点，页面标记为获取时间，不代表同一实时区块。",
       "只按链与合约识别资产；未知代币即使返回价格也暂不估值，名称和风险标记不构成身份确认。",
       ...(usdtPrice ? [`USDT 使用 Kraken USDT / USD 最近成交价；报价时点 ${usdtPrice.observedAt}，不假设固定 1 美元。`] : []),
+      ...(rows.some((row) => row.chainIndex === "56" && row.contract === USDT["56"]) ? ["BSC USDT 为 Binance-Peg 合约；美元估值使用 USDT / USD 参考成交价，不核实其链上赎回或跨链溢折价。"] : []),
+      ...(holdings.some((row) => row.symbol === "USDT0") ? ["USDT0 使用提供商返回的实际 USD 报价，不按固定 1 美元估值；源未提供精确报价时点，标记为获取时间。"] : []),
+      ...(holdings.some((row) => row.symbol === "SPYon") ? ["SPYon 为 Ondo 代币化 ETF，按实际代币数量和提供商每代币 USD 价格估值，不转换为券商股数，也不使用固定份额乘数；源未提供精确报价时点。"] : []),
       ...(pendingDefi.length ? ["DeFi 覆盖待核实：协议汇总未加入小计；Polymarket / pUSD 与地址或代理账户口径冲突时，需要独立核对并避免重复计入。"] : [])],
   };
 }

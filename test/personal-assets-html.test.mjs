@@ -179,7 +179,7 @@ test("currency buttons convert every current view without changing ratios, origi
   assert.match(html, /折合 USD 100\.00/);
   assert.match(html, /stroke-dasharray="66\.666667 33\.333333"/);
   assert.match(html, /CNY 700\.00/);
-  assert.match(html, /当前以 USD 展示资产/);
+  assert.match(html, /气泡面积按已核算 USD/);
   assert.doesNotMatch(html, /内部按 CNY 核算/);
   assert.match(ui.get("asset-message").textContent, /重新折合 USD/);
   ui.run("openRates()");
@@ -815,7 +815,7 @@ test("category pie handles empty, zero and single-category portfolios and remove
 });
 
 function syncStatus(overrides = {}) {
-  return { serverIp: "173.199.122.23", providers: { okx: { connected: false, enabled: false }, futu: { connected: false, enabled: false }, polymarket: { connected: false, enabled: false }, future: { connected: false, enabled: false }, okxweb3: { connected: false, enabled: false }, tokenpocket: { connected: false, enabled: false }, ...overrides } };
+  return { serverIp: "173.199.122.23", providers: { okx: { connected: false, enabled: false }, futu: { connected: false, enabled: false }, polymarket: { connected: false, enabled: false }, future: { connected: false, enabled: false }, okxweb3: { connected: false, enabled: false }, tokenpocket: { connected: false, enabled: false }, binanceagentic: { connected: false, enabled: false }, okxagentic: { connected: false, enabled: false }, ...overrides } };
 }
 function syncResponse(data, status = 200) { return { ok: status < 400, status, json: async () => data }; }
 function syncPreviewState() {
@@ -1341,7 +1341,7 @@ test("opening the page automatically requests AI once, polling does not, and pri
  assert.match(ui.get("asset-content").innerHTML,/隐私模式已隐藏点评/);
 });
 
-test("OpenAI configuration clears secrets immediately and preserves assets when verification fails",async()=>{
+test("Moonshot configuration clears secrets immediately and preserves assets when verification fails",async()=>{
  const ui=await view(displayState(),null,{aiHandler:async(url)=>url.endsWith("configure")?syncResponse({error:"认证失败"},400):syncResponse({configured:false,status:"unconfigured",review:null})});
  ui.run('openAiSettings();document.getElementById("ai-api-key").value="sk-synthetic-only"');
  await ui.listeners.submit({target:{id:"ai-config-form"},preventDefault(){}});
@@ -1349,4 +1349,157 @@ test("OpenAI configuration clears secrets immediately and preserves assets when 
  assert.equal(ui.run("state.revision"),3);
  assert.match(ui.get("dialog-error").innerHTML,/认证失败/);
  assert.equal(ui.requests.some(row=>row.options.method==="PUT"),false);
+});
+
+
+test("overview removes the hero copy and observation module while retaining the analysis tab", async () => {
+  const html = personalAssetsHtml({ nonce: "safe" });
+  assert.doesNotMatch(html, /PERSONAL ASSET ATLAS|<h1>个人资产<\/h1>|把分散的账户，放在同一张资产地图上/);
+  assert.match(html, /<main[^>]*aria-label="个人资产管理"/);
+  const ui = await view(displayState());
+  assert.doesNotMatch(ui.get("asset-content").innerHTML, /<h2>资产观察<\/h2>/);
+  assert.match(ui.get("asset-content").innerHTML, /aria-label="平台资产气泡图"/);
+  ui.run('page="analysis"; render()');
+  assert.match(ui.get("asset-content").innerHTML, /分布与新鲜度/);
+});
+
+test("platform bubbles preserve true area proportions and stay separated in desktop and mobile layouts", async () => {
+  const ui = await view(displayState());
+  for (const aspect of [2, 1 / 1.1]) {
+    const layout = JSON.parse(ui.run(`JSON.stringify(layoutPlatformBubbles([{name:"A",value:10000},{name:"B",value:2500},{name:"Tiny",value:0.01}],${aspect}))`));
+    assert.equal(layout.nodes.length, 3);
+    assert.ok(Math.abs(layout.nodes[0].r ** 2 / layout.nodes[1].r ** 2 - 4) < 1e-8);
+    assert.ok(Math.abs(layout.nodes[0].r ** 2 / layout.nodes[2].r ** 2 - 1000000) < 1e-4);
+    for (const node of layout.nodes) {
+      assert.ok(node.x - node.r >= 0 && node.x + node.r <= layout.width);
+      assert.ok(node.y - node.r >= 0 && node.y + node.r <= layout.height);
+      for (const other of layout.nodes) if (node !== other) assert.ok(Math.hypot(node.x - other.x, node.y - other.y) > node.r + other.r);
+    }
+  }
+  const html = ui.get("asset-content").innerHTML;
+  assert.match(html, /面积.*已核算/);
+  assert.match(html, /较小气泡.*下方/);
+  assert.match(html, /<details class="atlas-details">[\s\S]*纠正币种/);
+  assert.match(personalAssetsHtml({nonce:"safe"}), /prefers-reduced-motion:reduce[\s\S]*animation:none/);
+});
+
+test("bubble platform navigation opens its accounts without writes and privacy removes monetary geometry", async () => {
+  const ui = await view(displayState());
+  const platform = ui.run("portfolio().accounts[0].platform");
+  const html = ui.get("asset-content").innerHTML;
+  assert.match(html, /data-bubble-platform=/);
+  await ui.listeners.click({target:{closest:()=>({disabled:false,dataset:{action:"atlas-platform",platform}})}});
+  assert.equal(ui.run("page"), "holdings");
+  assert.equal(ui.run("platformFilter"), platform);
+  assert.match(ui.get("asset-content").innerHTML, /id="holding-platform-filter"/);
+  assert.equal(ui.requests.filter(row => row.options.method === "PUT").length, 0);
+  ui.run('hidden=true;page="overview";render()');
+  const privateAtlas = ui.run("platformAtlas(summarize(portfolio()))");
+  assert.doesNotMatch(privateAtlas, /atlas-position|data-bubble-value|--bubble-|700\.00|350\.00|66\.7%/);
+  assert.match(privateAtlas, /气泡大小与金额已隐藏/);
+});
+
+test("pending, missing-FX and unknown-only platforms never get invented monetary bubbles", async () => {
+  const initial = categorizedState();
+  const ui = await view(initial);
+  const atlas = ui.run("platformAtlas(summarize(portfolio()))");
+  const pendingPlatform = initial.portfolio.accounts[2].platform;
+  const missingPlatform = initial.portfolio.accounts[3].platform;
+  for (const platform of [pendingPlatform, missingPlatform]) assert.doesNotMatch(atlas, new RegExp(`data-bubble-platform="${platform}"`));
+  assert.match(atlas, /未核算与尚未录入/);
+  assert.match(atlas, /待确认|缺汇率/);
+  const unknown = walletState(); unknown.sync = walletStatus({connected:true,enabled:true,lastAppliedAt:"2026-10-24T12:00:00Z",lastValuationComplete:false,lastUnpricedAssets:[unpricedFixture()]});
+  const only = await view(unknown);
+  assert.doesNotMatch(only.run("platformAtlas(summarize(portfolio()))"), /data-bubble-platform="OKX"|data-bubble-value="0"/);
+  assert.match(only.run("platformAtlas(summarize(portfolio()))"), /未估值/);
+});
+
+
+test("Moonshot daily quota disables manual retries and survives the generic busy-state reset", async () => {
+  const quota = {limit:1,timeZone:"Asia/Shanghai",date:entry().asOf,used:1,remaining:0,nextAllowedAt:"2026-10-24T16:00:00Z"};
+  const ui = await view(displayState(),null,{aiHandler:async()=>syncResponse({provider:"moonshot",configured:true,status:"unavailable",quota,error:"今日调用失败",review:null})});
+  assert.match(ui.get("asset-content").innerHTML, /每天最多调用 1 次[\s\S]*调用失败当天也不重试/);
+  assert.match(ui.get("asset-content").innerHTML, /data-action="ai-review" disabled>今日调用已用完/);
+  assert.doesNotMatch(ui.get("asset-content").innerHTML, /配置 OpenAI|5 分钟内复用|重新点评/);
+  await ui.run("loadAi()"); assert.equal(ui.aiRequests.length,1);
+  assert.equal(ui.run(`var dailyButton={dataset:{action:"ai-review"},disabled:false};document.querySelectorAll=(selector)=>selector.includes("ai-review")||selector==="#asset-content button, #asset-content select"?[dailyButton]:[];syncBusy();dailyButton.disabled`),true);
+});
+
+test("Moonshot configuration saves without claiming provider success and labels legacy OpenAI reviews truthfully", async () => {
+  const quota = {limit:1,timeZone:"Asia/Shanghai",date:entry().asOf,used:1,remaining:0};
+  let fail = true;
+  const legacy = {provider:"openai",text:"已保存的历史点评",model:"gpt-5.4-mini",revision:2,generatedAt:"2026-10-23T12:00:00Z"};
+  const ui = await view(displayState(),null,{aiHandler:async(url)=>syncResponse(url.endsWith("configure")?{provider:"moonshot",configured:true,configurationSaved:true,status:fail?"unavailable":"outdated",quota,review:legacy,...(fail?{error:"今日调用未完成"}:{})}:{configured:false,status:"unconfigured",review:null})});
+  ui.run("openAiSettings()");
+  assert.match(ui.get("dialog-title").textContent,/Moonshot/);
+  assert.match(ui.get("dialog-body").innerHTML,/type="password"[\s\S]*Kimi K3.1 Pro/);
+  ui.get("ai-api-key").value="synthetic-moonshot-key"; await ui.run("configureAi()");
+  assert.equal(ui.get("ai-api-key").value,"");
+  assert.match(ui.get("asset-message").textContent,/配置已保存.*点评未完成/);
+  assert.doesNotMatch(ui.get("asset-message").textContent,/已验证|已生成/);
+  assert.match(ui.get("asset-content").innerHTML,/OpenAI（历史点评）[\s\S]*gpt-5.4-mini/);
+  assert.match(ui.get("asset-content").innerHTML,/数据已变化 · 上次点评/);
+  fail=false;ui.get("ai-api-key").value="replacement-only";await ui.run("configureAi()");
+  assert.match(ui.get("asset-message").textContent,/配置已保存.*沿用已保存点评/);
+  assert.equal(ui.requests.some(row=>row.options.method==="PUT"),false);
+});
+
+test("agentic wallets reuse server Developer credentials without copying secrets and retain explicit network-address drafts", async () => {
+  const initial = stateWith(); const status = {...syncStatus(),developerCredentialsAvailable:true};
+  const ui = await view(initial,async(url)=>syncResponse(url==="/api/assets"?initial:status));
+  await ui.run("openSync()");
+  for (const [provider,chain,platform] of [["binanceagentic","56","币安Agentic Wallet"],["okxagentic","196","OKX Agentic Wallet"]]) {
+    const html = ui.run(`syncProviderCard("${provider}")`);
+    assert.match(html,/复用服务器已保存的只读 Developer 凭据/);
+    assert.match(html,new RegExp(`id="sync-${provider}-credentials" disabled`));
+    const address=`0x${"7".repeat(40)}`;
+    await ui.listeners.input({target:{dataset:{syncWalletProvider:provider,chainIndex:chain},value:address}});
+    ui.run("renderSync()");
+    assert.match(ui.get("dialog-body").innerHTML,new RegExp(`data-chain-index="${chain}" value="${address}"`));
+    ui.get(`sync-${provider}-address-${chain}`).value=address;
+    for(const field of ["key","secret","passphrase"])ui.get(`sync-${provider}-${field}`).value="must-never-send";
+    await ui.listeners.submit({target:{id:`sync-${provider}-form`},preventDefault(){}});
+    const sent=JSON.parse(ui.requests.find(row=>row.url.endsWith(`/${provider}/connect`)).options.body);
+    assert.equal(sent.useExistingCredentials,true);
+    assert.deepEqual(sent.wallets,[{chainIndex:chain,address}]);
+    assert.equal(sent.targetAccountId,initial.portfolio.accounts.find(account=>account.platform===platform).id);
+    assert.doesNotMatch(JSON.stringify(sent),/must-never-send|apiKey|secret|passphrase/);
+    assert.equal(ui.get(`sync-${provider}-secret`).value,"");
+  }
+  assert.equal(ui.requests.some(row=>row.options.method==="PUT"||row.url.endsWith("/apply")),false);
+});
+
+test("agentic credential mode toggles clear abandoned secrets and only reference credentials when available", async () => {
+  const initial=stateWith();const status={...syncStatus(),developerCredentialsAvailable:true};
+  const ui=await view(initial,async(url)=>syncResponse(url==="/api/assets"?initial:status));await ui.run("openSync()");
+  ui.get("sync-okxagentic-secret").value="abandoned";
+  await ui.listeners.change({target:{dataset:{syncReuse:"okxagentic"},checked:false}});
+  assert.equal(ui.get("sync-okxagentic-secret").value,"");
+  assert.equal(ui.get("sync-okxagentic-credentials").disabled,false);
+  ui.get("sync-okxagentic-address-196").value=`0x${"8".repeat(40)}`;
+  for(const field of ["key","secret","passphrase"])ui.get(`sync-okxagentic-${field}`).value="independent-fixture";
+  await ui.run('connectWallet("okxagentic")');
+  const sent=JSON.parse(ui.requests.find(row=>row.url.endsWith("/okxagentic/connect")).options.body);
+  assert.equal(sent.useExistingCredentials,undefined);assert.equal(sent.apiKey,"independent-fixture");
+  ui.run("syncState.developerCredentialsAvailable=false");
+  assert.doesNotMatch(ui.run('syncWalletForm("binanceagentic",syncState.providers.binanceagentic)'),/data-sync-reuse/);
+});
+
+
+test("bubble geometry stays absent when the selected display currency cannot be converted",async()=>{
+ const ui=await view(displayState());ui.run('displayCurrency="USD";delete state.portfolio.rates.USD;render()');
+ const atlas=ui.run("platformAtlas(summarize(portfolio()))");
+ assert.doesNotMatch(atlas,/atlas-position|data-bubble-platform=/);
+ assert.match(atlas,/USD\/CNY 汇率暂不可用，暂不绘制金额气泡/);
+});
+
+test("all supported platform bubbles pack deterministically without overlap for flat and highly skewed values",async()=>{
+ const ui=await view();
+ for(const skewed of [false,true])for(const aspect of [2,1/1.1]){
+  const expression=`layoutPlatformBubbles(PLATFORMS.map((name,index)=>({name,value:${skewed?'10 ** (8-index)':'1'}})),${aspect})`;
+  const layout=JSON.parse(ui.run(`JSON.stringify(${expression})`));
+  assert.equal(layout.nodes.length,core.PLATFORMS.length);
+  assert.equal(ui.run(`JSON.stringify(${expression})`),JSON.stringify(layout));
+  for(const node of layout.nodes)for(const other of layout.nodes)if(node!==other)assert.ok(Math.hypot(node.x-other.x,node.y-other.y)>node.r+other.r);
+ }
 });

@@ -17,6 +17,7 @@ try { const stored = window.localStorage.getItem(displayCurrencyKey); if (["CNY"
 let state = null;
 let page = "overview";
 let categoryFilter = "all";
+let platformFilter = "all";
 let hidden = false;
 let saving = false;
 let loading = false;
@@ -55,11 +56,14 @@ let syncLoading = false;
 let syncError = "";
 let syncAccountId = "";
 const syncTargets = {};
-const syncWalletProviders = ["okxweb3", "tokenpocket"];
-const syncWalletNetworks = [{ chainIndex: "1", name: "Ethereum" }, { chainIndex: "501", name: "Solana" }, { chainIndex: "137", name: "Polygon" }];
+const syncAgenticProviders = ["binanceagentic", "okxagentic"];
+const syncWalletProviders = ["okxweb3", "tokenpocket", ...syncAgenticProviders];
+const syncReuseCredentials = {};
+const syncWalletDrafts = {};
+const syncWalletNetworks = [{ chainIndex: "1", name: "Ethereum" }, { chainIndex: "501", name: "Solana" }, { chainIndex: "137", name: "Polygon" }, { chainIndex: "56", name: "BSC" }, { chainIndex: "196", name: "X Layer" }];
 const syncProviders = ["okx", "futu", "polymarket", "future", ...syncWalletProviders];
-const syncNames = { okx: "OKX 交易所", futu: "富途", polymarket: "Polymarket", future: "Future", okxweb3: "OKX Web3 钱包", tokenpocket: "TokenPocket" };
-const syncPlatforms = { okx: "OKX", futu: "富途", polymarket: "Polymarket", future: "Future", okxweb3: "OKX", tokenpocket: "TokenPocket" };
+const syncNames = { okx: "OKX 交易所", futu: "富途", polymarket: "Polymarket", future: "Future", okxweb3: "OKX Web3 钱包", tokenpocket: "TokenPocket", binanceagentic: "币安Agentic Wallet", okxagentic: "OKX Agentic Wallet" };
+const syncPlatforms = { okx: "OKX", futu: "富途", polymarket: "Polymarket", future: "Future", okxweb3: "OKX", tokenpocket: "TokenPocket", binanceagentic: "币安Agentic Wallet", okxagentic: "OKX Agentic Wallet" };
 let syncCallbackHandled = false;
 let fundEditingId = null;
 let stockPnlDraft = null;
@@ -236,6 +240,57 @@ function platformCard(platform, index, summary) {
   const missing = summary.missing.some((entry) => accounts.some((account) => account.id === entry.accountId));
   return `<section class="panel platform-card"><div class="platform-top"><span class="platform-mark">${marks[index] || "?"}</span><span class="platform-name">${escape(platform)}</span></div>${confirmed.length ? `<div class="platform-native"><span class="muted small">已确认原币</span>${confirmed.map((group) => `<div class="platform-number">${escape(group.name)} ${number(group.value)}</div>`).join("")}</div>` : `<div class="platform-number">${entries.length ? pending.length ? "待确认" : "当前口径未录入" : "—"}</div>`}${unpricedOnly ? '<p class="muted small">已记录未估值资产，金额待核实；数量见账户来源。</p>' : ""}${pending.length ? `<div class="platform-pending"><span class="muted small">待确认原币 · 不计入合计</span>${pending.map((group) => `<div class="num">${escape(group.name)} ${number(group.value)}</div>`).join("")}</div>` : ""}${confirmed.length ? `<div class="muted small">${value === undefined ? `折合 ${displayCurrency} 待核算` : displayValue(value) === null ? `折合 ${displayCurrency} 待换算` : `折合 ${displayCurrency} ${displayAmount(value)} · ${percentage(value, summary.total)}`}${missing ? " · 含缺汇率记录" : ""}</div>` : ""}<div class="platform-bottom"><span>${unpricedOnly ? "未估值数量见账户来源" : entries.length ? "按账户所选口径识别币种" : "尚未录入"}</span><button data-action="${accounts.length ? "manual" : "account"}" data-account="${escape(accounts[0]?.id || "")}" data-platform="${escape(platform)}">${entries.length ? "新增" : accounts.length ? "录入" : "添加账户"} →</button></div>${entries.length ? `<button class="button small quiet" data-action="correct-currency" data-platform="${escape(platform)}">纠正币种</button>` : ""}</section>`;
 }
+function layoutPlatformBubbles(groups, aspect = 2) {
+  const width = 1000; const height = width / aspect;
+  if (!groups.length) return { width, height, nodes: [] };
+  const maximum = Math.max(...groups.map(group => group.value));
+  const placed = []; const gap = 14;
+  const bounds = (nodes) => ({ left: Math.min(...nodes.map(node => node.x - node.r)), right: Math.max(...nodes.map(node => node.x + node.r)), top: Math.min(...nodes.map(node => node.y - node.r)), bottom: Math.max(...nodes.map(node => node.y + node.r)) });
+  for (const group of groups) {
+    const r = Math.sqrt(group.value / maximum) * 100;
+    if (!placed.length) { placed.push({ ...group, x: 0, y: 0, r }); continue; }
+    let best = null; let bestScore = Infinity;
+    for (const neighbor of placed) for (let angle = 0; angle < 24; angle++) {
+      const radians = angle * Math.PI / 12;
+      const candidate = { ...group, r, x: neighbor.x + Math.cos(radians) * (neighbor.r + r + gap), y: neighbor.y + Math.sin(radians) * (neighbor.r + r + gap) };
+      if (placed.some(node => Math.hypot(candidate.x - node.x, candidate.y - node.y) < r + node.r + gap - 1e-7)) continue;
+      const box = bounds([...placed, candidate]);
+      const score = Math.max((box.right - box.left) / aspect, box.bottom - box.top) + (box.right - box.left) * (box.bottom - box.top) * 1e-5;
+      if (score < bestScore) { best = candidate; bestScore = score; }
+    }
+    placed.push(best);
+  }
+  const box = bounds(placed); const padding = 18;
+  const scale = Math.min((width - padding * 2) / (box.right - box.left), (height - padding * 2) / (box.bottom - box.top));
+  const left = (width - (box.right - box.left) * scale) / 2; const top = (height - (box.bottom - box.top) * scale) / 2;
+  return { width, height, nodes: placed.map(node => ({ ...node, x: (node.x - box.left) * scale + left, y: (node.y - box.top) * scale + top, r: node.r * scale })) };
+}
+function platformCoverage(platform, summary) {
+  const accounts = portfolio().accounts.filter(account => account.platform === platform);
+  const ids = new Set(accounts.map(account => account.id));
+  const priced = summary.included.filter(entry => ids.has(entry.accountId)).length;
+  const missing = summary.missing.some(entry => ids.has(entry.accountId));
+  const partial = Object.values(state?.sync?.providers || {}).some(row => ids.has(row.targetAccountId) && row.lastAppliedAt && row.lastValuationComplete === false);
+  const pending = accounts.some(account => pendingAccount(account) && accountHasRecords(account));
+  return priced ? `${priced} 条已核算${partial ? " · 含未估值" : ""}${missing ? " · 含缺汇率" : ""}${pending ? " · 含待确认" : ""}` : partial ? "已记录未估值资产" : missing ? "缺汇率 · 待核算" : pending ? "待确认 · 未计入" : accounts.some(accountHasRecords) ? "当前口径无正值估值" : "尚未录入";
+}
+function platformAtlas(summary) {
+  const convertible = displayValue(1) !== null;
+  const groups = convertible ? summary.byPlatform.filter(group => Number.isFinite(group.value) && group.value > 0) : [];
+  const priced = new Set(groups.map(group => group.name));
+  const atlasButton = (platform, body, className = "") => `<button type="button" class="${className}" data-action="atlas-platform" data-platform="${escape(platform)}">${body}</button>`;
+  const legend = `<div class="atlas-legend">${groups.map(group => atlasButton(group.name, `<span><strong>${escape(group.name)}</strong><small>${escape(platformCoverage(group.name, summary))}</small></span><span class="num">${displayCurrency} ${displayAmount(group.value)}<small>${percentage(group.value, summary.total)} · 查看账户 →</small></span>`, "atlas-legend-row")).join("")}</div>`;
+  const chart = (aspect, mobile) => {
+    const layout = layoutPlatformBubbles(groups, aspect);
+    return `<div class="atlas-plot ${mobile ? "atlas-mobile" : "atlas-wide"}" style="aspect-ratio:${aspect}" aria-hidden="true">${layout.nodes.map((node, index) => {
+      const label = `${node.name} · 折合 ${displayCurrency} ${displayAmount(node.value)} · ${percentage(node.value, summary.total)} · ${platformCoverage(node.name, summary)} · 查看账户`;
+      const text = node.r >= (mobile ? 95 : 55);
+      return `<div class="atlas-position" style="left:${(node.x / layout.width * 100).toFixed(8)}%;top:${(node.y / layout.height * 100).toFixed(8)}%;width:${(node.r * 2 / layout.width * 100).toFixed(8)}%"><button type="button" class="atlas-bubble${text ? "" : " atlas-tiny"}" data-action="atlas-platform" data-platform="${escape(node.name)}" data-bubble-platform="${escape(node.name)}" title="${escape(label)}" tabindex="-1" style="--bubble-delay:-${index * 1.3}s;--bubble-duration:${9 + index % 5}s"><span class="bubble-label">${text ? `<span class="bubble-name">${escape(node.name)}</span>${node.r >= (mobile ? 150 : 85) ? `<span class="bubble-value num">${displayCurrency}<br>${displayAmount(node.value)}</span>` : ""}` : ""}</span></button></div>`;
+    }).join("")}</div>`;
+  };
+  const unvalued = PLATFORMS.filter(platform => !priced.has(platform));
+  return `<section class="panel atlas-panel" aria-label="平台资产气泡图"><div class="section-head"><div><h2>我的资产版图</h2><span class="muted small">${hidden ? "气泡大小与金额已隐藏" : `气泡面积按已核算 ${displayCurrency} 金额同比例绘制 · 轻触平台查看账户`}</span></div><button class="button small" data-action="manual">＋ 录入资产</button></div>${hidden ? `<div class="privacy-mask">气泡大小与金额已隐藏</div><div class="actions atlas-private">${PLATFORMS.map(platform => atlasButton(platform, escape(platform), "button small quiet")).join("")}</div>` : groups.length ? `${chart(2, false)}${chart(1 / 1.1, true)}<p class="muted small atlas-caption">较小气泡不放大金额；可在下方查看名称、金额和覆盖范围。动画仅为展示，不代表市场涨跌。</p>${legend}`  : !convertible ? `<div class="empty small">${displayCurrency}/CNY 汇率暂不可用，暂不绘制金额气泡；原币金额见下方明细。</div>` : '<div class="empty small">尚无可绘制的正值估值；未核算金额不按 0 绘制气泡。</div>'}${!hidden && unvalued.length ? `<div class="atlas-unvalued"><h3>未核算与尚未录入</h3><div class="actions">${unvalued.map(platform => atlasButton(platform, `<strong>${escape(platform)}</strong><small>${escape(platformCoverage(platform, summary))}</small>`, "atlas-unvalued-item")).join("")}</div></div>` : ""}<details class="atlas-details"><summary>原币明细与币种纠错 <span class="muted small">添加账户、手动录入及逐条纠正币种</span></summary><div class="platform-grid">${PLATFORMS.map((platform, index) => platformCard(platform, index, summary)).join("")}</div><button class="button small" data-action="account" style="margin-top:14px">＋ 添加资产账户</button></details></section>`;
+}
 function notify(message) {
   clearTimeout(toastTimer);
   $("asset-message").className = "notice success";
@@ -251,10 +306,12 @@ function showError(message) {
   target.innerHTML = `${escape(message)}${conflict ? '<div class="actions"><button class="button small" data-action="backup-json">导出备份（含当前草稿）</button><button class="button small" data-action="reload">重新载入最新数据</button></div>' : ""}`;
   target.hidden = !message;
 }
+function aiQuotaUsed() { return aiState?.quota?.remaining === 0 && aiState.quota.date === currentDate(); }
 function aiPanel() {
-  const review = aiState?.review;
-  const label = aiLoading ? "正在生成…" : review && review.revision !== state?.revision ? "数据已变化 · 上次点评" : ({ fresh: "本次点评", cached: "近期点评", outdated: "数据已变化 · 上次点评", unavailable: "点评更新失败 · 上次结果", unconfigured: "待配置 OpenAI" })[aiState?.status] || "等待点评";
-  return `<section class="panel" aria-label="AI 资产点评" style="margin-bottom:20px"><div class="section-head"><div><h2>AI 资产点评</h2><span class="pill">${label}</span></div><div class="actions"><button class="button small quiet" data-action="ai-settings">${aiState?.configured ? "更新 OpenAI 配置" : "配置 OpenAI"}</button><button class="button small" data-action="ai-review"${aiLoading ? " disabled" : ""}>重新点评</button></div></div><p class="muted small">每次打开自动请求点评 · 5 分钟内复用结果 · 按 CNY 口径观察已入账资产。数据或汇率变化时，旧点评会明确标注。</p>${aiState?.error ? `<p class="notice error">${escape(aiState.error)}</p>` : ""}${hidden ? '<p class="muted">隐私模式已隐藏点评内容。</p>' : review ? `<p class="muted small">OpenAI · ${escape(review.model)} · 生成 ${escape(dateTime(review.generatedAt))} · 资产版本 ${escape(review.revision)}</p><div style="white-space:pre-wrap;overflow-wrap:anywhere">${escape(review.text)}</div>` : `<p class="muted">${aiLoading ? "正在根据资产分布与数据覆盖情况生成观察…" : aiState?.status === "unconfigured" ? "请在安全入口配置 OpenAI API Key，即可自动点评。" : "暂未取得有效 AI 点评，资产记录仍可正常查看。"}</p>`}<p class="muted small">仅向 OpenAI 发送平台/类型/报表币种汇总、估值及同步覆盖；不发送账户名称、持仓名称、备注、钱包地址或其他平台凭据。资产变化不能直接视为投资收益。</p></section>`;
+  const review = aiState?.review; const used = aiQuotaUsed();
+  const label = aiLoading ? "正在读取…" : review && review.revision !== state?.revision ? "数据已变化 · 上次点评" : ({ fresh: "今日点评", cached: "已保存点评", outdated: "数据已变化 · 上次点评", unavailable: "点评不可用 · 保留上次结果", unconfigured: "待配置 Moonshot" })[aiState?.status] || "等待点评";
+  const provider = ({ moonshot: "Moonshot", openai: "OpenAI（历史点评）" })[review?.provider] || "历史点评 · 来源未记录";
+  return `<section class="panel" aria-label="AI 资产点评" style="margin-bottom:20px"><div class="section-head"><div><h2>AI 资产点评</h2><span class="pill">${label}</span></div><div class="actions"><button class="button small quiet" data-action="ai-settings">${aiState?.configured ? "更新 Moonshot 配置" : "配置 Moonshot"}</button><button class="button small" data-action="ai-review"${aiLoading || !aiState?.configured || used ? " disabled" : ""}>${used ? "今日调用已用完" : "生成今日点评"}</button></div></div><p class="muted small">Moonshot · 每天最多调用 1 次，北京时间 00:00 重置。打开页面复用已保存点评；调用失败当天也不重试。${used && aiState?.quota?.nextAllowedAt ? `下次可调用 ${escape(dateTime(aiState.quota.nextAllowedAt))}。` : ""}数据或汇率变化后，旧点评会明确标注。</p>${aiState?.error ? `<p class="notice error">${escape(aiState.error)}</p>` : ""}${hidden ? '<p class="muted">隐私模式已隐藏点评内容。</p>' : review ? `<p class="muted small">${provider} · ${escape(review.model)} · 生成 ${escape(dateTime(review.generatedAt))} · 资产版本 ${escape(review.revision)}</p><div style="white-space:pre-wrap;overflow-wrap:anywhere">${escape(review.text)}</div>` : `<p class="muted">${aiLoading ? "正在读取已保存点评，或按今日额度生成…" : aiState?.status === "unconfigured" ? "请在安全入口配置 Moonshot API Key。" : "暂未取得有效 AI 点评，资产记录仍可正常查看。"}</p>`}<p class="muted small">仅向 Moonshot 发送平台/类型/报表币种汇总、估值及同步覆盖；不发送账户名称、持仓名称、备注、钱包地址或其他平台凭据。资产变化不能直接视为投资收益。</p></section>`;
 }
 async function aiRequest(action, body = {}) {
   const response = await fetch(`/api/assets/ai/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -264,7 +321,7 @@ async function aiRequest(action, body = {}) {
   return data;
 }
 async function loadAi() {
-  if (aiLoading || !state) return;
+  if (aiLoading || !state || aiQuotaUsed()) return;
   aiLoading = true; render();
   try { aiState = await aiRequest("review"); }
   catch (error) { aiState = { ...aiState, status: "unavailable", error: errorText(error) }; }
@@ -272,13 +329,13 @@ async function loadAi() {
 }
 function openAiSettings() {
   modal = "ai";
-  setDialog("OpenAI 安全配置", "输入独立的 OpenAI API Key。验证成功会生成本次点评，随后每次打开页面自动请求。", '<form id="ai-config-form" autocomplete="off"><div class="field"><label for="ai-api-key">OpenAI API Key</label><input id="ai-api-key" type="password" autocomplete="new-password" spellcheck="false" required maxlength="500"></div><p class="muted small">Key 仅存于受保护的服务器，不写入导出、快照或浏览器存储。使用 OpenAI Responses API，模型 gpt-5.4-mini；请求关闭响应存储。API 额度与 ChatGPT 订阅分开。</p><button class="button primary" type="submit">验证并生成点评</button></form>', cancelButton);
+  setDialog("Moonshot 安全配置", "填写 Moonshot 国内平台的 API Key；每天最多调用一次，修改 Key 不会增加当天额度。", '<form id="ai-config-form" autocomplete="off"><div class="field"><label for="ai-api-key">Moonshot API Key</label><input id="ai-api-key" type="password" autocomplete="new-password" spellcheck="false" required maxlength="500"></div><p class="muted small">Key 仅保存在受保护的服务器，不写入导出、快照或浏览器存储。使用 Kimi K3.1 Pro。若今日尚未调用，保存后会尝试生成；调用失败也会消耗今日唯一额度，替换 Key 后需等到次日再调用。</p><button class="button primary" type="submit">保存 Moonshot 配置</button></form>', cancelButton);
 }
 async function configureAi() {
   const apiKey = $("ai-api-key").value.trim(); $("ai-api-key").value = "";
-  if (!apiKey) { showError("请填写 OpenAI API Key。"); return; }
+  if (!apiKey) { showError("请填写 Moonshot API Key。"); return; }
   saving = true; syncBusy();
-  try { aiState = await aiRequest("configure", { apiKey }); modal = null; $("asset-dialog").close(); render(); notify("OpenAI 已验证，资产点评已生成"); }
+  try { aiState = await aiRequest("configure", { apiKey }); modal = null; $("asset-dialog").close(); render(); notify(aiState.status === "fresh" ? "Moonshot 资产点评已生成，今日调用已用完" : aiState.configurationSaved ? aiState.status === "unavailable" ? "Moonshot 配置已保存；本次点评未完成，请查看提示" : "Moonshot 配置已保存；今日沿用已保存点评" : "Moonshot 状态已更新"); }
   catch (error) { showError(errorText(error)); }
   finally { saving = false; syncBusy(); }
 }
@@ -286,6 +343,7 @@ async function configureAi() {
 function syncBusy() {
   document.querySelectorAll("[data-needs-data]").forEach((element) => { element.disabled = !state || saving || loading; });
   document.querySelectorAll("#asset-content button, #asset-content select").forEach((element) => { element.disabled = saving || loading || element.dataset.action === "snapshot" && !portfolio().entries.length; });
+  document.querySelectorAll('[data-action="ai-review"]').forEach((element) => { element.disabled = saving || loading || aiLoading || !aiState?.configured || aiQuotaUsed(); });
   document.querySelectorAll('[data-action="display-currency"]').forEach((element) => { element.disabled = loading || saving && !ratesRefreshing; });
   const fieldset = $("dialog-fields");
   if (fieldset) fieldset.disabled = saving;
@@ -392,19 +450,18 @@ function renderOverview(summary) {
   return `<div class="metrics"><section class="panel metric total"><div class="row"><span class="metric-label">${partial || summary.missing.length || summary.pending.length ? "已核算资产 · 部分估值" : "已录入资产总额"}</span>${displayCurrencyControl()}</div><div class="metric-value"><small>${displayCurrency === "USD" ? "$" : displayCurrency === "HKD" ? "HK$" : "¥"}</small>${displayAmount(partial && !summary.included.length ? null : summary.total)}</div><div class="metric-foot">${initial ? "尚未录入真实金额" : "当前市值 · 按最新可用汇率折算"}${partial ? " · 仅含已定价记录" : ""}</div>${stockPnlPanel(summary)}</section><section class="panel metric overview-status"><div><span class="metric-label">已录入账户 / 全部账户</span><div class="metric-value">${active}<span class="muted"> / ${portfolio().accounts.length}</span></div><span class="metric-foot">${automatic} 个账户已开启只读同步</span></div><div class="summary-update"><span class="metric-label">最近保存</span><div class="small num">${escape(state.updatedAt ? dateTime(state.updatedAt) : "尚未录入")}</div><span class="metric-foot">${summary.included.length} 条计入 · ${summary.missing.length} 条缺汇率 · ${summary.pending.length} 条待确认</span></div></section><section class="panel metric overview-status"><div><span class="metric-label">自动更新计划 · 北京时间</span><div class="refresh-times num">09:00 <span>/</span> 21:00</div><span class="metric-foot">每天两次 · 仅刷新已接入的资产来源</span></div><div class="summary-update"><span class="metric-label">${displayCurrency} 汇率</span><p class="metric-foot">${escape(fxStatusText())}</p><button class="button small quiet" data-action="sync">管理只读同步 →</button></div></section></div>
   <div class="overview-distributions">${assetTypesPanel(summary, true)}<section class="panel"><div class="section-head"><h2>平台分布</h2><span class="pill">按已核算 ${displayCurrency}</span></div>${distribution(summary.byPlatform, summary.total)}</section></div>
   ${displayCurrency !== "CNY" && displayValue(1) === null ? `<div class="notice">${displayCurrency}/CNY 自动汇率暂不可用，总额待换算。可切回 CNY 查看人民币金额。</div>` : ""}${summary.missing.length ? `<div class="notice">${displayCurrency} 合计仅覆盖已完成换算的记录，其余资产见原币参考。缺汇率记录和待确认账户均未计入总额与分布。</div>` : ""}${partialValuationNotice()}${aiPanel()}${pendingAccountsPanel()}
-  <div class="section-head"><div><h2>你的资产版图</h2><span class="muted small">币种自动按已存记录识别 · 原币分开列示 · 可逐条纠错</span></div><button class="button small" data-action="manual">＋ 录入资产</button></div>
-  <div class="platform-grid">${PLATFORMS.map((platform, index) => platformCard(platform, index, summary)).join("")}<section class="panel platform-card"><div class="platform-top"><span class="platform-mark">＋</span><span class="platform-name">继续整理</span></div><p class="muted small" style="margin:0">同一平台可建立多个独立账户。</p><div class="platform-bottom"><button data-action="account">添加资产账户 →</button></div></section></div>
-  <details class="source-details"><summary>数据更新与来源 <span>每天 09:00 / 21:00 · 汇率、连接状态与基金估值明细</span></summary><div class="source-details-body">${originalCurrencyPanel()}${syncCoveragePanel()}${fundValuationPanel()}</div></details><section class="panel" style="margin-top:20px"><h2>资产观察</h2>${insights(summary)}</section>${initial ? '<div class="notice">从一个真实数字开始：可先录入账户总额，也可导入截图或 CSV。</div>' : ""}`;
+  ${platformAtlas(summary)}
+  <details class="source-details"><summary>数据更新与来源 <span>每天 09:00 / 21:00 · 汇率、连接状态与基金估值明细</span></summary><div class="source-details-body">${originalCurrencyPanel()}${syncCoveragePanel()}${fundValuationPanel()}</div></details>${initial ? '<div class="notice">从一个真实数字开始：可先录入账户总额，也可导入截图或 CSV。</div>' : ""}`;
 }
 function renderHoldings(summary) {
   const included = new Set(summary.included.map((entry) => entry.id));
   const missing = new Set(summary.missing.map((entry) => entry.id));
   const pending = new Set(summary.pending.map((entry) => entry.id));
-  const matchesCategory = (entry) => categoryFilter === "all" || entry.category === categoryFilter;
-  const accounts = portfolio().accounts.filter((account) => categoryFilter === "all" || portfolio().entries.some((entry) => entry.accountId === account.id && matchesCategory(entry)));
-  const filteredGroup = summary.byCategory.find((group) => group.name === categoryFilter);
+  const matchesCategory = (entry) => (categoryFilter === "all" || entry.category === categoryFilter) && (platformFilter === "all" || portfolio().accounts.find(account => account.id === entry.accountId)?.platform === platformFilter);
+  const accounts = portfolio().accounts.filter((account) => (platformFilter === "all" || account.platform === platformFilter) && (categoryFilter === "all" || portfolio().entries.some((entry) => entry.accountId === account.id && matchesCategory(entry))));
+  const filteredGroup = { value: summary.included.filter(matchesCategory).reduce((total, entry) => total + entry.amount * portfolio().rates[entry.currency].value, 0) };
   const filteredIncluded = summary.included.filter(matchesCategory);
-  return `<div class="section-head"><div><h2>账户与持仓</h2><span class="muted small">每个账户选择一种统计口径，避免总额与明细重复计算。</span></div><div class="actions"><button class="button small" data-action="account">添加账户</button><button class="button primary small" data-action="manual">＋ 录入资产</button></div></div><section class="panel" id="holdings-filter" style="margin-bottom:18px;scroll-margin-top:100px"><div class="row"><div class="basis"><label for="holding-category-filter">资产类型</label><select id="holding-category-filter"><option value="all"${categoryFilter === "all" ? " selected" : ""}>全部资产类型</option>${options(CATEGORIES, categoryFilter)}</select></div><button class="button small quiet" data-action="clear-category">全部 / 恢复筛选</button></div>${categoryFilter !== "all" ? `<div class="notice"><strong>${escape(categoryFilter)}</strong> · 筛选后已计入 <span class="num">${displayCurrency} ${displayAmount(filteredGroup?.value ?? null)}</span> · ${filteredIncluded.length} 条已计入记录<p>金额仅描述符合账户口径且完成换算的部分；待确认、缺汇率和口径排除的匹配记录仍显示，不能把显示行相加。</p></div>` : ""}${assetTypeGuide()}</section><div class="account-list">${accounts.map((account) => {
+  return `<div class="section-head"><div><h2>账户与持仓</h2><span class="muted small">每个账户选择一种统计口径，避免总额与明细重复计算。</span></div><div class="actions"><button class="button small" data-action="account">添加账户</button><button class="button primary small" data-action="manual">＋ 录入资产</button></div></div><section class="panel" id="holdings-filter" style="margin-bottom:18px;scroll-margin-top:100px"><div class="row"><div class="basis"><label for="holding-platform-filter">平台</label><select id="holding-platform-filter"><option value="all"${platformFilter === "all" ? " selected" : ""}>全部平台</option>${options(PLATFORMS, platformFilter)}</select><label for="holding-category-filter">资产类型</label><select id="holding-category-filter"><option value="all"${categoryFilter === "all" ? " selected" : ""}>全部资产类型</option>${options(CATEGORIES, categoryFilter)}</select></div><button class="button small quiet" data-action="clear-category">全部 / 恢复筛选</button></div>${categoryFilter !== "all" ? `<div class="notice"><strong>${escape(categoryFilter)}</strong> · 筛选后已计入 <span class="num">${displayCurrency} ${displayAmount(filteredGroup?.value ?? null)}</span> · ${filteredIncluded.length} 条已计入记录<p>金额仅描述符合账户口径且完成换算的部分；待确认、缺汇率和口径排除的匹配记录仍显示，不能把显示行相加。</p></div>` : ""}${assetTypeGuide()}</section><div class="account-list">${accounts.map((account) => {
     const entries = portfolio().entries.filter((entry) => entry.accountId === account.id && matchesCategory(entry));
     return `<section class="panel account-card"><div class="section-head"><div><h3>${escape(account.name)} <span class="pill${pendingAccount(account) ? "" : " gold"}">${pendingAccount(account) ? "待确认 · 不计入合计" : "已确认"}</span></h3><span class="muted small">${escape(account.platform)} · ${entries.length} 条${categoryFilter === "all" ? "" : "匹配"}记录</span></div><div class="basis"><label for="basis-${escape(account.id)}">统计口径</label><select id="basis-${escape(account.id)}" data-basis="${escape(account.id)}"><option value="total"${account.basis === "total" ? " selected" : ""}>账户总额</option><option value="holdings"${account.basis === "holdings" ? " selected" : ""}>持仓合计</option></select><button class="button small" data-action="edit-account" data-id="${escape(account.id)}">编辑账户</button><button class="button small" data-action="manual" data-account="${escape(account.id)}">＋ 录入</button></div></div>${visibleNote(account.note)}${accountSyncPanel(account)}${entries.length ? `<p class="muted small">${pendingAccount(account) ? "待确认原币金额（不计入合计）" : "所选口径原币金额"}${categoryFilter === "all" ? "" : " · 符合当前筛选"}：<span class="num">${currencyTotals(selectedEntries(account).filter(matchesCategory)).map((group) => `${escape(group.name)} ${number(group.value)}`).join(" · ") || "当前口径尚无记录"}</span></p><div class="table-scroll"><table><thead><tr><th>资产 / 类型</th><th>资产类型</th><th>原币金额</th><th>折合 ${displayCurrency}</th><th>日期 / 依据</th><th>统计状态</th><th>操作</th></tr></thead><tbody>${entries.map((entry) => `<tr${included.has(entry.id) || missing.has(entry.id) ? "" : ' class="excluded"'}><td><span class="name">${escape(entry.name)}</span><span class="source-label">${kindName(entry.kind)} · ${sourceName(entry.source)}</span>${visibleNote(entry.note)}</td><td>${escape(entry.category)}${entry.category === "组合资产" ? '<span class="source-label" style="display:block">待拆分</span>' : ""}</td><td class="num">${escape(entry.currency)} ${number(entry.amount)}</td><td class="num">${portfolio().rates[entry.currency] && displayValue(1) !== null ? displayAmount(entry.amount * portfolio().rates[entry.currency].value) : "待换算"}</td><td>${escape(entry.asOf)}<span class="source-label" style="display:block">${entryDateBasis(entry)}</span></td><td><span class="pill${included.has(entry.id) ? " gold" : ""}">${pending.has(entry.id) ? "待确认排除" : included.has(entry.id) ? "已计入" : missing.has(entry.id) ? "缺汇率" : "口径排除"}</span></td><td><div class="record-actions"><button class="button quiet" data-action="edit" data-id="${escape(entry.id)}">编辑</button><button class="button quiet danger" data-action="delete" data-id="${escape(entry.id)}">删除</button></div></td></tr>`).join("")}</tbody></table></div>` : accountHasRecords(account) ? '<p class="muted small">已记录未估值资产，数量见上方来源说明。尚无可计入的估值，不能按零资产处理。</p>' : '<p class="muted small">尚未录入资产。此账户的实际余额当前未核实。</p>'}</section>`;
   }).join("") || '<section class="panel empty"><h3>此资产类型暂无记录</h3><p>可恢复全部资产类型，或在录入时选择相应类型。</p><button class="button" data-action="clear-category">恢复全部资产</button></section>'}</div><p class="footnote">账户总额和持仓明细都会保留；只有所选口径计入总资产。待确认账户切换统计口径仍不会纳入合计，需通过“编辑账户”核对平台和确认状态。持仓金额填写当前市值，不填写持仓数量。</p>`;
@@ -510,7 +567,7 @@ function syncPreview(provider, details) {
 }
 function syncTargetControl(provider, details) {
   const accounts = portfolio().accounts.filter((account) => account.platform === syncPlatforms[provider] && (provider !== "okx" || !/web3|wallet|钱包/i.test(`${account.id} ${account.name}`)) && (provider !== "okxweb3" || /web3|wallet|钱包/i.test(`${account.id} ${account.name}`)));
-  const choices = accounts.length ? accounts : [{ id: ({ polymarket: "polymarket-main", future: "future-main", okx: "okx-exchange", futu: "futu-hk", okxweb3: "okx-web3", tokenpocket: "tokenpocket-main" })[provider], name: `新建 ${syncNames[provider]} 账户` }];
+  const choices = accounts.length ? accounts : [{ id: ({ polymarket: "polymarket-main", future: "future-main", okx: "okx-exchange", futu: "futu-hk", okxweb3: "okx-web3", tokenpocket: "tokenpocket-main", binanceagentic: "binance-agentic-wallet", okxagentic: "okx-agentic-wallet" })[provider], name: `新建 ${syncNames[provider]} 账户` }];
   if (details.lastAppliedAt && details.targetAccountId) syncTargets[provider] = details.targetAccountId;
   else if (!choices.some((account) => account.id === syncTargets[provider])) syncTargets[provider] = choices.some((account) => account.id === details.targetAccountId) ? details.targetAccountId : choices.length === 1 ? choices[0].id : "";
   return `<div class="field" style="margin:12px 0"><label for="sync-${provider}-target">更新到资产页中的账户</label><select id="sync-${provider}-target" data-sync-target="${provider}" required${details.lastAppliedAt ? " disabled" : ""}><option value=""${!syncTargets[provider] ? " selected" : ""}>请选择已有账户，避免重复计入</option>${choices.map((account) => `<option value="${escape(account.id)}"${account.id === syncTargets[provider] ? " selected" : ""}>${escape(account.name)}</option>`).join("")}</select><span class="muted small">${details.lastAppliedAt ? "此数据源已绑定上方账户，后续覆盖更新此账户。" : "首次入账会替换所选账户的当前记录，并保留入账前备份和历史快照。"}</span></div>`;
@@ -518,7 +575,10 @@ function syncTargetControl(provider, details) {
 function syncWalletForm(provider, details) {
   if (hidden) return '<p class="muted small">隐私模式已隐藏钱包地址，显示金额后可核对地址或更换 Developer 凭据。</p>';
   const wallets = Array.isArray(details.wallets) ? details.wallets : [];
-  return `<form id="sync-${provider}-form" autocomplete="off"><p class="muted small">使用独立 OnchainOS Developer API 凭据，不同于 OKX 交易所 API。本站仅调用只读资产与价格接口；不需要钱包私钥、助记词或钱包登录，不复制 Agentic Wallet session。请在开发者平台限制服务器 IP：${escape(syncState.serverIp || "173.199.122.23")}。</p><div class="form-grid">${syncWalletNetworks.map((network) => `<div class="field full"><label for="sync-${provider}-address-${network.chainIndex}">${network.name} 公开钱包地址</label><input id="sync-${provider}-address-${network.chainIndex}" value="${escape(wallets.find((wallet) => wallet.chainIndex === network.chainIndex)?.address || "")}" spellcheck="false" autocomplete="off" maxlength="${network.chainIndex === "501" ? 44 : 42}" placeholder="未使用此网络可留空"></div>`).join("")}<div class="field full"><label for="sync-${provider}-key">Developer API Key</label><input id="sync-${provider}-key" type="password" required autocomplete="off" spellcheck="false"></div><div class="field full"><label for="sync-${provider}-secret">Developer Secret Key</label><input id="sync-${provider}-secret" type="password" required autocomplete="new-password" spellcheck="false"></div><div class="field full"><label for="sync-${provider}-passphrase">Developer API Passphrase</label><input id="sync-${provider}-passphrase" type="password" required autocomplete="new-password" spellcheck="false"></div></div><p class="muted small">至少填写一个网络地址；仅同步上方非空网络，不推测其他链。修改地址后需提交凭据验证并重新核对预览，当前自动同步仍使用上次已保存的绑定。合计仅包含可核实价格的资产，NFT 与未核验 DeFi 不在本次覆盖范围。</p><button class="button primary small" type="submit">${details.connected ? "验证 Developer 凭据并更新绑定" : "验证 Developer 凭据并读取预览"}</button></form>`;
+  const canReuse = syncAgenticProviders.includes(provider) && syncState.developerCredentialsAvailable;
+  syncReuseCredentials[provider] ??= Boolean(canReuse);
+  const reuse = canReuse && syncReuseCredentials[provider];
+  return `<form id="sync-${provider}-form" autocomplete="off"><p class="muted small">使用独立 OnchainOS Developer API 凭据，不同于 OKX 交易所 API。本站仅调用只读资产与价格接口；不需要钱包私钥、助记词或钱包登录，不复制 Agentic Wallet session。请在开发者平台限制服务器 IP：${escape(syncState.serverIp || "173.199.122.23")}。</p><div class="form-grid">${syncWalletNetworks.map((network) => `<div class="field full"><label for="sync-${provider}-address-${network.chainIndex}">${network.name} 公开钱包地址</label><input id="sync-${provider}-address-${network.chainIndex}" data-sync-wallet-provider="${provider}" data-chain-index="${network.chainIndex}" value="${escape(syncWalletDrafts[provider]?.[network.chainIndex] ?? wallets.find((wallet) => wallet.chainIndex === network.chainIndex)?.address ?? "")}" spellcheck="false" autocomplete="off" maxlength="${network.chainIndex === "501" ? 44 : 42}" placeholder="未使用此网络可留空"></div>`).join("")}</div>${canReuse ? `<label class="check-label" style="margin:12px 0"><input type="checkbox" data-sync-reuse="${provider}"${reuse ? " checked" : ""}>复用服务器已保存的只读 Developer 凭据，仅新增此平台的公开地址绑定。</label>` : ""}<fieldset id="sync-${provider}-credentials"${reuse ? " disabled" : ""}><div class="form-grid"><div class="field full"><label for="sync-${provider}-key">Developer API Key</label><input id="sync-${provider}-key" type="password" required autocomplete="off" spellcheck="false"></div><div class="field full"><label for="sync-${provider}-secret">Developer Secret Key</label><input id="sync-${provider}-secret" type="password" required autocomplete="new-password" spellcheck="false"></div><div class="field full"><label for="sync-${provider}-passphrase">Developer API Passphrase</label><input id="sync-${provider}-passphrase" type="password" required autocomplete="new-password" spellcheck="false"></div></div></fieldset><p class="muted small">至少填写一个网络地址；仅同步上方非空网络，不推测其他链。修改地址后需提交凭据验证并重新核对预览，当前自动同步仍使用上次已保存的绑定。合计仅包含可核实价格的资产，NFT 与未核验 DeFi 不在本次覆盖范围。</p><button class="button primary small" type="submit">${reuse ? "复用只读凭据并读取预览" : details.connected ? "验证 Developer 凭据并更新绑定" : "验证 Developer 凭据并读取预览"}</button></form>`;
 }
 function syncProviderCard(provider) {
   const details = syncState.providers[provider];
@@ -529,7 +589,7 @@ function syncProviderCard(provider) {
   const introduction = syncWalletProviders.includes(provider) ? "按明确绑定的网络与公开地址同步原生币及代币，单独列出缺价数量；钱包与交易所资产分别入账。" : provider === "okx" ? "同步到 OKX · 交易所账户，不包含 OKX Web3 钱包。" : provider === "futu" ? "选择本人真实证券账户；净资产总额为统计依据。" : provider === "future" ? "Solana 充值地址需对应至 Future 的 Polygon 交易账户；此处使用账户页面的 0x 持仓地址。不需要私钥、助记词或签名。不含未到账的充值。" : "用 Polygon 公开持仓地址读取预测仓位与 pUSD 现金。不需要私钥、助记词或签名。";
   let content;
   if (connected) {
-    content = `<div class="muted small">${["polymarket", "future"].includes(provider) ? "公开账户" : "授权账户"}：${hidden ? "已隐藏" : escape(details.accountLabel || "已连接，等待读取账户")}</div>${syncTimes(details)}${syncSourceNotes(details)}${provider === "futu" && accounts.length ? `<div class="field" style="margin-bottom:12px"><label for="sync-futu-account">授权的真实证券账户</label><select id="sync-futu-account">${accounts.map((account) => `<option value="${escape(account.id)}"${account.id === syncAccountId ? " selected" : ""}>${escape(account.label)}</option>`).join("")}</select></div>` : ""}<div class="actions"><button class="button small" data-action="sync-preview" data-provider="${provider}">读取最新预览</button><button class="button quiet small danger" data-action="sync-disconnect" data-provider="${provider}">断开本站同步</button></div><p class="muted small">${["polymarket", "future"].includes(provider) ? "断开会停止本站同步，保留已入账数据及防止重复计入所需的来源记录。" : "断开会移除本站保存的凭证并停止同步。平台上的 API / OAuth 授权请到对应平台撤销。"}</p>${syncPreview(provider, details)}`;
+    content = `<div class="muted small">${["polymarket", "future", ...syncWalletProviders].includes(provider) ? "公开账户" : "授权账户"}：${hidden ? "已隐藏" : escape(details.accountLabel || "已连接，等待读取账户")}</div>${syncTimes(details)}${syncSourceNotes(details)}${provider === "futu" && accounts.length ? `<div class="field" style="margin-bottom:12px"><label for="sync-futu-account">授权的真实证券账户</label><select id="sync-futu-account">${accounts.map((account) => `<option value="${escape(account.id)}"${account.id === syncAccountId ? " selected" : ""}>${escape(account.label)}</option>`).join("")}</select></div>` : ""}<div class="actions"><button class="button small" data-action="sync-preview" data-provider="${provider}">读取最新预览</button><button class="button quiet small danger" data-action="sync-disconnect" data-provider="${provider}">断开本站同步</button></div><p class="muted small">${details.usesExistingCredentials ? "断开只停止此钱包的本站同步，不会移除其他账户复用的 Developer 凭据；已入账数据保留。" : ["polymarket", "future"].includes(provider) ? "断开会停止本站同步，保留已入账数据及防止重复计入所需的来源记录。" : "断开会移除本站保存的凭证并停止同步。平台上的 API / OAuth 授权请到对应平台撤销。"}</p>${syncPreview(provider, details)}`;
   } else if (provider === "okx") {
     content = `<ol class="sync-steps"><li>在 OKX 的 API 管理中新建独立 API，只勾选 Read（读取），不要启用交易或提币。</li><li>绑定服务器 IP：<span class="num">${escape(syncState.serverIp || "173.199.122.23")}</span>。选择账户所属地区，再填写新 API 的凭证。</li><li>验证通过后先查看预览，核对后才更新已录入资产。</li></ol><form id="sync-okx-form" autocomplete="off"><div class="form-grid"><div class="field full"><label for="sync-okx-region">OKX 账户所属地区 / 实体</label><select id="sync-okx-region"><option value="global">全球站账户</option><option value="us">美国 / 澳大利亚账户</option><option value="eea">欧洲经济区账户（EEA）</option></select></div><div class="field full"><label for="sync-okx-key">API Key</label><input id="sync-okx-key" type="password" required autocomplete="off" spellcheck="false"></div><div class="field full"><label for="sync-okx-secret">Secret Key</label><input id="sync-okx-secret" type="password" required autocomplete="new-password" spellcheck="false"></div><div class="field full"><label for="sync-okx-passphrase">API Passphrase（创建 API 时设置）</label><input id="sync-okx-passphrase" type="password" required autocomplete="new-password" spellcheck="false"></div></div><div class="actions" style="margin-top:14px"><button class="button primary small" type="submit">验证只读权限并读取预览</button></div></form>`;
   } else if (syncWalletProviders.includes(provider)) {
@@ -585,9 +645,10 @@ async function connectOkx() {
 async function connectWallet(provider) {
   if (!syncWalletProviders.includes(provider) || saving) return;
   if (hidden) { clearSyncSecrets(); showError("请先显示金额，再核对公开钱包地址。"); return; }
-  const body = { apiKey: $(`sync-${provider}-key`).value.trim(), secret: $(`sync-${provider}-secret`).value.trim(), passphrase: $(`sync-${provider}-passphrase`).value, wallets: syncWalletNetworks.map((network) => ({ chainIndex: network.chainIndex, address: $(`sync-${provider}-address-${network.chainIndex}`).value.trim() })).filter((wallet) => wallet.address), ...syncTargetBody(provider) };
+  const reuse = syncAgenticProviders.includes(provider) && syncState?.developerCredentialsAvailable && syncReuseCredentials[provider];
+  const body = { ...(reuse ? { useExistingCredentials: true } : { apiKey: $(`sync-${provider}-key`).value.trim(), secret: $(`sync-${provider}-secret`).value.trim(), passphrase: $(`sync-${provider}-passphrase`).value }), wallets: syncWalletNetworks.map((network) => ({ chainIndex: network.chainIndex, address: $(`sync-${provider}-address-${network.chainIndex}`).value.trim() })).filter((wallet) => wallet.address), ...syncTargetBody(provider) };
   clearSyncSecrets();
-  if (!body.apiKey || !body.secret || !body.passphrase) { showError("请填写独立 Developer API 的 Key、Secret 和 Passphrase。"); return; }
+  if (!reuse && (!body.apiKey || !body.secret || !body.passphrase)) { showError("请填写独立 Developer API 的 Key、Secret 和 Passphrase。"); return; }
   if (!body.wallets.length) { showError("请至少填写一个网络的公开钱包地址。"); return; }
   const invalid = body.wallets.find((wallet) => !(wallet.chainIndex === "501" ? /^[1-9A-HJ-NP-Za-km-z]{32,44}$/ : /^0x[0-9a-fA-F]{40}$/).test(wallet.address));
   if (invalid) { showError(`请填写有效的 ${syncWalletNetworks.find((network) => network.chainIndex === invalid.chainIndex).name} 公开钱包地址，请勿混用网络。`); return; }
@@ -913,7 +974,11 @@ document.addEventListener("click", async (event) => {
   else if (action === "ai-settings") openAiSettings();
   else if (action === "ai-review") await loadAi();
   else if (action === "fund-edit") openFund(button.dataset.id);
+  else if (action === "atlas-platform" && PLATFORMS.includes(button.dataset.platform)) {
+    platformFilter = button.dataset.platform; categoryFilter = "all"; page = "holdings"; render(); $("holdings-filter").scrollIntoView({ block: "start" });
+  }
   else if (action === "category" || action === "clear-category") {
+    platformFilter = "all";
     categoryFilter = action === "category" && CATEGORIES.includes(button.dataset.category) ? button.dataset.category : "all";
     page = "holdings";
     render();
@@ -950,6 +1015,7 @@ document.addEventListener("click", async (event) => {
 document.addEventListener("input", (event) => {
   if (saving) return;
   const target = event.target;
+  if (syncWalletProviders.includes(target.dataset.syncWalletProvider)) { (syncWalletDrafts[target.dataset.syncWalletProvider] ??= {})[target.dataset.chainIndex] = target.value; return; }
   if (target.dataset.pnlAccount && stockPnlDraft?.[target.dataset.pnlAccount]) { stockPnlDraft[target.dataset.pnlAccount][target.dataset.pnlField] = target.value; return; }
   if (target.dataset.entryField && draft) {
     const field = target.dataset.entryField;
@@ -988,7 +1054,13 @@ document.addEventListener("input", (event) => {
 document.addEventListener("change", async (event) => {
   if (saving) return;
   const target = event.target;
-  if (target.id === "holding-category-filter") { categoryFilter = CATEGORIES.includes(target.value) ? target.value : "all"; render(); }
+  if (syncAgenticProviders.includes(target.dataset.syncReuse)) {
+    const provider = target.dataset.syncReuse; syncReuseCredentials[provider] = target.checked;
+    for (const field of ["key", "secret", "passphrase"]) $(`sync-${provider}-${field}`).value = "";
+    $(`sync-${provider}-credentials`).disabled = target.checked;
+  }
+  else if (target.id === "holding-platform-filter") { platformFilter = PLATFORMS.includes(target.value) ? target.value : "all"; render(); }
+  else if (target.id === "holding-category-filter") { categoryFilter = CATEGORIES.includes(target.value) ? target.value : "all"; render(); }
   else if (syncProviders.includes(target.dataset.syncTarget)) { const provider = target.dataset.syncTarget; syncTargets[provider] = target.value; if (syncState?.providers[provider]) delete syncState.providers[provider].preview; renderSync(); }
   else if (target.id === "sync-futu-account") { syncAccountId = target.value; if (syncState?.providers.futu) delete syncState.providers.futu.preview; renderSync(); }
   else if (target.id === "csv-file" && target.files?.[0]) await readCsv(target.files[0]);
@@ -1007,7 +1079,7 @@ document.addEventListener("change", async (event) => {
   }
 });
 document.addEventListener("submit", async (event) => {
-  if (!["stock-pnl-form", "fund-form", "ai-config-form", "entry-form", "account-form", "sync-okx-form", "sync-polymarket-form", "sync-future-form", "sync-okxweb3-form", "sync-tokenpocket-form"].includes(event.target.id)) return;
+  if (!["stock-pnl-form", "fund-form", "ai-config-form", "entry-form", "account-form", "sync-okx-form", "sync-polymarket-form", "sync-future-form", "sync-okxweb3-form", "sync-tokenpocket-form", "sync-binanceagentic-form", "sync-okxagentic-form"].includes(event.target.id)) return;
   event.preventDefault();
   if (saving) return;
   if (event.target.id === "stock-pnl-form") await saveStockPnl();
@@ -1020,6 +1092,8 @@ document.addEventListener("submit", async (event) => {
   else if (event.target.id === "sync-future-form") await connectFuture();
   else if (event.target.id === "sync-okxweb3-form") await connectWallet("okxweb3");
   else if (event.target.id === "sync-tokenpocket-form") await connectWallet("tokenpocket");
+  else if (event.target.id === "sync-binanceagentic-form") await connectWallet("binanceagentic");
+  else if (event.target.id === "sync-okxagentic-form") await connectWallet("okxagentic");
 });
 $("asset-dialog").addEventListener("cancel", (event) => { event.preventDefault(); closeDialog(); });
 window.addEventListener("pageshow", (event) => { if (event.persisted) { aiOpened = false; void load(); } });
