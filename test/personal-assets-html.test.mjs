@@ -47,7 +47,7 @@ async function view(initial = stateWith(), handleRequest = null, { search = "", 
     Blob,
     location: { origin: "http://localhost:3000", search, assign: (url) => navigations.push(url) },
     window: { localStorage: storage, addEventListener() {} },
-    document: { getElementById: get, querySelectorAll: () => [], addEventListener: (name, handler) => { listeners[name] = handler; }, createElement: () => ({ click() {}, remove() {} }) },
+    document: { documentElement: { dataset: {} }, getElementById: get, querySelectorAll: () => [], addEventListener: (name, handler) => { listeners[name] = handler; }, createElement: () => ({ click() {}, remove() {} }) },
     setTimeout: () => 0, clearTimeout() {}, setInterval: (handler, delay) => { intervals.push({ handler, delay }); return intervals.length; },
     fetch: async (url, options = {}) => {
       if (url.startsWith("/api/assets/ai/")) {
@@ -789,13 +789,31 @@ test("overview and analysis render an accessible category pie using only account
   assert.match(pie, /<desc id="asset-type-pie-description">/);
   assert.match(pie, /stroke-dasharray="66\.666667 33\.333333"/);
   assert.match(pie, /stroke-dasharray="33\.333333 66\.666667"/);
-  const colors = [...pie.matchAll(/data-pie-category="([^"]+)"[^>]*stroke="(#[0-9a-f]{6})"/g)];
+  const colors = [...pie.matchAll(/data-pie-category="([^"]+)"[^>]*style="stroke:(var\(--cat-\d+\))"/g)];
   assert.equal(colors.length, 2);
   for (const [, category, color] of colors) assert.ok(pie.includes(`data-category="${category}"`) && pie.includes(`background:${color}`));
   assert.doesNotMatch(pie, /990\.00|1,190\.00|900\.00|200\.00/);
   assert.ok(ui.get("asset-content").innerHTML.includes(pie.match(/<svg[\s\S]*?<\/svg>/)[0]));
   ui.run('page="analysis"; render()');
   assert.ok(ui.get("asset-content").innerHTML.includes(pie));
+});
+
+test("both themes define a color for every asset category and the toggle persists the choice", async () => {
+  const html = personalAssetsHtml({ nonce: "n" });
+  for (let index = 0; index < core.CATEGORIES.length; index++) {
+    assert.equal(html.match(new RegExp(`--cat-${index}:#[0-9a-f]{6}`, "g"))?.length, 2);
+  }
+  assert.match(html, /<script nonce="n">[^<]*localStorage\.getItem\("assets-theme"\)/);
+  const saved = new Map();
+  const ui = await view(stateWith(), null, { storage: { getItem: (key) => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) } });
+  ui.run('localStorage = window.localStorage; document.documentElement.dataset.theme = "dark"; syncThemeToggle()');
+  assert.equal(ui.get("theme-toggle").textContent, "明亮模式");
+  const toggle = ui.get("theme-toggle");
+  toggle.id = "theme-toggle";
+  await ui.listeners.click({ target: { closest: () => toggle } });
+  assert.equal(ui.run("document.documentElement.dataset.theme"), "light");
+  assert.equal(saved.get("assets-theme"), "light");
+  assert.equal(toggle.textContent, "深色模式");
 });
 
 test("category pie handles empty, zero and single-category portfolios and removes geometry in privacy mode", async () => {
@@ -1363,13 +1381,13 @@ test("overview removes the hero copy and observation module while retaining the 
   assert.match(ui.get("asset-content").innerHTML, /分布与新鲜度/);
 });
 
-test("platform bubbles preserve true area proportions and stay separated in desktop and mobile layouts", async () => {
+test("platform bubbles keep area proportions above a readable floor and stay separated in desktop and mobile layouts", async () => {
   const ui = await view(displayState());
-  for (const aspect of [2, 1 / 1.1]) {
-    const layout = JSON.parse(ui.run(`JSON.stringify(layoutPlatformBubbles([{name:"A",value:10000},{name:"B",value:2500},{name:"Tiny",value:0.01}],${aspect}))`));
+  for (const [aspect, minimum] of [[2, 34], [1 / 1.1, 46]]) {
+    const layout = JSON.parse(ui.run(`JSON.stringify(layoutPlatformBubbles([{name:"A",value:10000},{name:"B",value:2500},{name:"Tiny",value:0.01}],${aspect},${minimum}))`));
     assert.equal(layout.nodes.length, 3);
     assert.ok(Math.abs(layout.nodes[0].r ** 2 / layout.nodes[1].r ** 2 - 4) < 1e-8);
-    assert.ok(Math.abs(layout.nodes[0].r ** 2 / layout.nodes[2].r ** 2 - 1000000) < 1e-4);
+    assert.ok(Math.abs(layout.nodes[2].r / layout.nodes[0].r - minimum / 100) < 1e-8);
     for (const node of layout.nodes) {
       assert.ok(node.x - node.r >= 0 && node.x + node.r <= layout.width);
       assert.ok(node.y - node.r >= 0 && node.y + node.r <= layout.height);
@@ -1379,6 +1397,11 @@ test("platform bubbles preserve true area proportions and stay separated in desk
   const html = ui.get("asset-content").innerHTML;
   assert.match(html, /面积.*已核算/);
   assert.match(html, /较小气泡.*下方/);
+  const bubbles = [...html.matchAll(/<button[^>]*data-bubble-platform="([^"]+)"[^>]*--bubble-color:var\(--cat-(\d+)\)/g)];
+  assert.ok(bubbles.length > 0);
+  const leads = new Map(JSON.parse(ui.run("JSON.stringify([...platformLeadCategories(summarize(portfolio()))])")));
+  for (const [, platform, index] of bubbles) assert.equal(core.CATEGORIES[Number(index)], leads.get(platform));
+  assert.match(html, /颜色 = 平台主要资产类型/);
   assert.match(html, /<details class="atlas-details">[\s\S]*纠正币种/);
   assert.match(personalAssetsHtml({nonce:"safe"}), /prefers-reduced-motion:reduce[\s\S]*animation:none/);
 });

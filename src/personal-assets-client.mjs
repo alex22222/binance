@@ -216,15 +216,14 @@ function assetTypesPanel(summary, compact = false) {
   return `<section class="panel" aria-label="资产类型" style="margin:0"><div class="section-head"><div><h2>资产类型</h2><span class="muted small">仅统计已确认、已换算且符合账户口径的记录 · 点击图例查看明细</span></div><button class="button small quiet" data-action="clear-category">查看全部资产 →</button></div>${assetTypeChart(summary, compact)}${compact ? `<details class="pnl-sources"><summary>资产分类说明</summary>${assetTypeGuide()}</details>` : assetTypeGuide()}</section>`;
 }
 function assetTypeChart(summary, compact = false) {
-  const colors = ["#f5c14f", "#6ba4ed", "#64c7ab", "#b5a2f4", "#e89a67", "#d77ea7", "#74beca", "#c2ca70", "#ae9679", "#8d9edf", "#75b988", "#a4a9b3"];
-  const color = (name) => colors[Math.max(0, CATEGORIES.indexOf(name)) % colors.length];
+  const color = (name) => `var(--cat-${Math.max(0, CATEGORIES.indexOf(name))})`;
   const legend = `<div class="type-legend">${summary.byCategory.map((group) => `<button type="button" class="type-legend-item" data-action="category" data-category="${escape(group.name)}"><span class="type-key" style="background:${color(group.name)}" aria-hidden="true"></span><span class="type-name">${escape(group.name)}${!compact && categoryDescription(group.name) ? `<small>${escape(categoryDescription(group.name))}</small>` : ""}</span><span class="type-figures num">${displayCurrency} ${displayAmount(group.value)}<small>${percentage(group.value, summary.total)} · 查看明细 →</small></span></button>`).join("")}</div>`;
   if (hidden) return `<div class="type-pie-layout"><div class="empty small">分布及占比已隐藏</div>${legend}</div>`;
   if (!(summary.total > 0)) return `<div class="empty small">暂无可绘制的资产类型金额，录入并核算资产后显示饼图。</div>${legend}`;
   let offset = 0;
   const segments = summary.byCategory.filter((group) => group.value > 0).map((group) => {
     const share = Math.min(100, Math.max(0, group.value / summary.total * 100));
-    const segment = `<circle class="type-pie-segment" data-pie-category="${escape(group.name)}" cx="110" cy="110" r="80" fill="none" stroke="${color(group.name)}" stroke-width="27" pathLength="100" stroke-dasharray="${share.toFixed(6)} ${(100 - share).toFixed(6)}" stroke-dashoffset="${(-offset).toFixed(6)}" transform="rotate(-90 110 110)"><title>${escape(group.name)} · ${percentage(group.value, summary.total)} · ${displayCurrency} ${displayAmount(group.value)}</title></circle>`;
+    const segment = `<circle class="type-pie-segment" data-pie-category="${escape(group.name)}" cx="110" cy="110" r="80" fill="none" style="stroke:${color(group.name)}" stroke-width="27" pathLength="100" stroke-dasharray="${share.toFixed(6)} ${(100 - share).toFixed(6)}" stroke-dashoffset="${(-offset).toFixed(6)}" transform="rotate(-90 110 110)"><title>${escape(group.name)} · ${percentage(group.value, summary.total)} · ${displayCurrency} ${displayAmount(group.value)}</title></circle>`;
     offset += share;
     return segment;
   }).join("");
@@ -240,14 +239,16 @@ function platformCard(platform, index, summary) {
   const missing = summary.missing.some((entry) => accounts.some((account) => account.id === entry.accountId));
   return `<section class="panel platform-card"><div class="platform-top"><span class="platform-mark">${marks[index] || "?"}</span><span class="platform-name">${escape(platform)}</span></div>${confirmed.length ? `<div class="platform-native"><span class="muted small">已确认原币</span>${confirmed.map((group) => `<div class="platform-number">${escape(group.name)} ${number(group.value)}</div>`).join("")}</div>` : `<div class="platform-number">${entries.length ? pending.length ? "待确认" : "当前口径未录入" : "—"}</div>`}${unpricedOnly ? '<p class="muted small">已记录未估值资产，金额待核实；数量见账户来源。</p>' : ""}${pending.length ? `<div class="platform-pending"><span class="muted small">待确认原币 · 不计入合计</span>${pending.map((group) => `<div class="num">${escape(group.name)} ${number(group.value)}</div>`).join("")}</div>` : ""}${confirmed.length ? `<div class="muted small">${value === undefined ? `折合 ${displayCurrency} 待核算` : displayValue(value) === null ? `折合 ${displayCurrency} 待换算` : `折合 ${displayCurrency} ${displayAmount(value)} · ${percentage(value, summary.total)}`}${missing ? " · 含缺汇率记录" : ""}</div>` : ""}<div class="platform-bottom"><span>${unpricedOnly ? "未估值数量见账户来源" : entries.length ? "按账户所选口径识别币种" : "尚未录入"}</span><button data-action="${accounts.length ? "manual" : "account"}" data-account="${escape(accounts[0]?.id || "")}" data-platform="${escape(platform)}">${entries.length ? "新增" : accounts.length ? "录入" : "添加账户"} →</button></div>${entries.length ? `<button class="button small quiet" data-action="correct-currency" data-platform="${escape(platform)}">纠正币种</button>` : ""}</section>`;
 }
-function layoutPlatformBubbles(groups, aspect = 2) {
+// Bubble area tracks value, but small platforms are lifted to `minimum` (out
+// of a 100 radius for the largest) so every bubble stays big enough to name.
+function layoutPlatformBubbles(groups, aspect = 2, minimum = 34) {
   const width = 1000; const height = width / aspect;
   if (!groups.length) return { width, height, nodes: [] };
   const maximum = Math.max(...groups.map(group => group.value));
   const placed = []; const gap = 14;
   const bounds = (nodes) => ({ left: Math.min(...nodes.map(node => node.x - node.r)), right: Math.max(...nodes.map(node => node.x + node.r)), top: Math.min(...nodes.map(node => node.y - node.r)), bottom: Math.max(...nodes.map(node => node.y + node.r)) });
   for (const group of groups) {
-    const r = Math.sqrt(group.value / maximum) * 100;
+    const r = Math.max(minimum, Math.sqrt(group.value / maximum) * 100);
     if (!placed.length) { placed.push({ ...group, x: 0, y: 0, r }); continue; }
     let best = null; let bestScore = Infinity;
     for (const neighbor of placed) for (let angle = 0; angle < 24; angle++) {
@@ -261,7 +262,8 @@ function layoutPlatformBubbles(groups, aspect = 2) {
     placed.push(best);
   }
   const box = bounds(placed); const padding = 18;
-  const scale = Math.min((width - padding * 2) / (box.right - box.left), (height - padding * 2) / (box.bottom - box.top));
+  // The 0.86 leaves open space for the bubbles to drift and collide in.
+  const scale = 0.86 * Math.min((width - padding * 2) / (box.right - box.left), (height - padding * 2) / (box.bottom - box.top));
   const left = (width - (box.right - box.left) * scale) / 2; const top = (height - (box.bottom - box.top) * scale) / 2;
   return { width, height, nodes: placed.map(node => ({ ...node, x: (node.x - box.left) * scale + left, y: (node.y - box.top) * scale + top, r: node.r * scale })) };
 }
@@ -274,22 +276,112 @@ function platformCoverage(platform, summary) {
   const pending = accounts.some(account => pendingAccount(account) && accountHasRecords(account));
   return priced ? `${priced} 条已核算${partial ? " · 含未估值" : ""}${missing ? " · 含缺汇率" : ""}${pending ? " · 含待确认" : ""}` : partial ? "已记录未估值资产" : missing ? "缺汇率 · 待核算" : pending ? "待确认 · 未计入" : accounts.some(accountHasRecords) ? "当前口径无正值估值" : "尚未录入";
 }
+// The asset type holding the most accounted value on each platform; it picks
+// the bubble's rim color, matching the asset-type pie.
+function platformLeadCategories(summary) {
+  const platformOf = new Map(portfolio().accounts.map(account => [account.id, account.platform]));
+  const totals = new Map();
+  for (const entry of summary.included) {
+    const rate = entry.currency === "CNY" ? 1 : portfolio().rates[entry.currency]?.value;
+    const platform = platformOf.get(entry.accountId);
+    if (!platform || !(rate > 0)) continue;
+    const byCategory = totals.get(platform) ?? new Map();
+    byCategory.set(entry.category, (byCategory.get(entry.category) ?? 0) + entry.amount * rate);
+    totals.set(platform, byCategory);
+  }
+  return new Map([...totals].map(([platform, byCategory]) => [platform, [...byCategory].sort((a, b) => b[1] - a[1])[0][0]]));
+}
 function platformAtlas(summary) {
   const convertible = displayValue(1) !== null;
   const groups = convertible ? summary.byPlatform.filter(group => Number.isFinite(group.value) && group.value > 0) : [];
   const priced = new Set(groups.map(group => group.name));
+  const leadCategories = platformLeadCategories(summary);
   const atlasButton = (platform, body, className = "") => `<button type="button" class="${className}" data-action="atlas-platform" data-platform="${escape(platform)}">${body}</button>`;
   const legend = `<div class="atlas-legend">${groups.map(group => atlasButton(group.name, `<span><strong>${escape(group.name)}</strong><small>${escape(platformCoverage(group.name, summary))}</small></span><span class="num">${displayCurrency} ${displayAmount(group.value)}<small>${percentage(group.value, summary.total)} · 查看账户 →</small></span>`, "atlas-legend-row")).join("")}</div>`;
   const chart = (aspect, mobile) => {
-    const layout = layoutPlatformBubbles(groups, aspect);
-    return `<div class="atlas-plot ${mobile ? "atlas-mobile" : "atlas-wide"}" style="aspect-ratio:${aspect}" role="group" aria-label="平台资产气泡">${layout.nodes.map((node, index) => {
+    const layout = layoutPlatformBubbles(groups, aspect, mobile ? 46 : 34);
+    return `<div class="atlas-plot ${mobile ? "atlas-mobile" : "atlas-wide"}" style="aspect-ratio:${aspect}" data-aspect="${aspect}" role="group" aria-label="平台资产气泡">${layout.nodes.map((node, index) => {
       const label = `${node.name} · 折合 ${displayCurrency} ${displayAmount(node.value)} · ${percentage(node.value, summary.total)} · ${platformCoverage(node.name, summary)} · 查看账户`;
-      const text = node.r >= (mobile ? 95 : 55);
-      return `<div class="atlas-position" style="left:${(node.x / layout.width * 100).toFixed(8)}%;top:${(node.y / layout.height * 100).toFixed(8)}%;width:${(node.r * 2 / layout.width * 100).toFixed(8)}%"><button type="button" class="atlas-bubble${text ? "" : " atlas-tiny"}" data-action="atlas-platform" data-platform="${escape(node.name)}" data-bubble-platform="${escape(node.name)}" aria-label="${escape(label)}" title="${escape(label)}" tabindex="-1" style="--bubble-delay:-${index * 1.3}s;--bubble-duration:${9 + index % 5}s"><span class="bubble-label">${text ? `<span class="bubble-name">${escape(node.name)}</span>${node.r >= (mobile ? 150 : 85) ? `<span class="bubble-value num">${displayCurrency}<br>${displayAmount(node.value)}</span>` : ""}` : ""}</span></button></div>`;
+      const lead = leadCategories.get(node.name);
+      // Shrink long names so they stay on one line: CJK counts as a full em, Latin about half.
+      const nameEm = [...node.name].reduce((sum, character) => sum + (/[\u3000-\u9fff]/.test(character) ? 1 : 0.58), 0);
+      return `<div class="atlas-position" style="left:${(node.x / layout.width * 100).toFixed(8)}%;top:${(node.y / layout.height * 100).toFixed(8)}%;width:${(node.r * 2 / layout.width * 100).toFixed(8)}%"><button type="button" class="atlas-bubble" data-action="atlas-platform" data-platform="${escape(node.name)}" data-bubble-platform="${escape(node.name)}" aria-label="${escape(label)}" title="${escape(label)}" tabindex="-1" style="--bubble-color:var(--cat-${Math.max(0, CATEGORIES.indexOf(lead))});--name-size:${Math.min(19, 68 / Math.max(1, nameEm)).toFixed(2)}cqi;--bubble-delay:-${index * 1.3}s;--bubble-duration:${9 + index % 5}s"><span class="bubble-label"><span class="bubble-mark" aria-hidden="true">${escape(marks[PLATFORMS.indexOf(node.name)] || "?")}</span><span class="bubble-name">${escape(node.name)}</span><span class="bubble-value num">${percentage(node.value, summary.total)}</span></span></button></div>`;
     }).join("")}</div>`;
   };
+  const shownCategories = CATEGORIES.filter(category => [...leadCategories.values()].includes(category));
+  const bubbleKey = `<div class="atlas-key" aria-label="气泡颜色说明"><span>颜色 = 平台主要资产类型</span>${shownCategories.map(category => `<span><i style="background:var(--cat-${CATEGORIES.indexOf(category)})" aria-hidden="true"></i>${escape(category)}</span>`).join("")}</div>`;
   const unvalued = PLATFORMS.filter(platform => !priced.has(platform));
-  return `<section class="panel atlas-panel" aria-label="平台资产气泡图"><div class="section-head"><div><h2>我的资产版图</h2><span class="muted small">${hidden ? "气泡大小与金额已隐藏" : `气泡面积按已核算 ${displayCurrency} 金额同比例绘制 · 轻触平台查看账户`}</span></div><button class="button small" data-action="manual">＋ 录入资产</button></div>${hidden ? `<div class="privacy-mask">气泡大小与金额已隐藏</div><div class="actions atlas-private">${PLATFORMS.map(platform => atlasButton(platform, escape(platform), "button small quiet")).join("")}</div>` : groups.length ? `${chart(2, false)}${chart(1 / 1.1, true)}<p class="muted small atlas-caption">较小气泡不放大金额；可在下方查看名称、金额和覆盖范围。动画仅为展示，不代表市场涨跌。</p>${legend}`  : !convertible ? `<div class="empty small">${displayCurrency}/CNY 汇率暂不可用，暂不绘制金额气泡；原币金额见下方明细。</div>` : '<div class="empty small">尚无可绘制的正值估值；未核算金额不按 0 绘制气泡。</div>'}${!hidden && unvalued.length ? `<div class="atlas-unvalued"><h3>未核算与尚未录入</h3><div class="actions">${unvalued.map(platform => atlasButton(platform, `<strong>${escape(platform)}</strong><small>${escape(platformCoverage(platform, summary))}</small>`, "atlas-unvalued-item")).join("")}</div></div>` : ""}<details class="atlas-details"><summary>原币明细与币种纠错 <span class="muted small">添加账户、手动录入及逐条纠正币种</span></summary><div class="platform-grid">${PLATFORMS.map((platform, index) => platformCard(platform, index, summary)).join("")}</div><button class="button small" data-action="account" style="margin-top:14px">＋ 添加资产账户</button></details></section>`;
+  return `<section class="panel atlas-panel" aria-label="平台资产气泡图"><div class="section-head"><div><h2>我的资产版图</h2><span class="muted small">${hidden ? "气泡大小与金额已隐藏" : `气泡面积按已核算 ${displayCurrency} 金额比例绘制 · 轻触平台查看账户`}</span></div><button class="button small" data-action="manual">＋ 录入资产</button></div>${hidden ? `<div class="privacy-mask">气泡大小与金额已隐藏</div><div class="actions atlas-private">${PLATFORMS.map(platform => atlasButton(platform, escape(platform), "button small quiet")).join("")}</div>` : groups.length ? `<div class="atlas-stage">${chart(2, false)}${chart(1 / 1.1, true)}${bubbleKey}</div><p class="muted small atlas-caption">较小气泡放大到可读尺寸，面积不再与金额同比例；实际金额与覆盖范围见下方。漂浮与碰撞仅为展示，不代表市场涨跌，悬停时暂停。</p>${legend}`  : !convertible ? `<div class="empty small">${displayCurrency}/CNY 汇率暂不可用，暂不绘制金额气泡；原币金额见下方明细。</div>` : '<div class="empty small">尚无可绘制的正值估值；未核算金额不按 0 绘制气泡。</div>'}${!hidden && unvalued.length ? `<div class="atlas-unvalued"><h3>未核算与尚未录入</h3><div class="actions">${unvalued.map(platform => atlasButton(platform, `<strong>${escape(platform)}</strong><small>${escape(platformCoverage(platform, summary))}</small>`, "atlas-unvalued-item")).join("")}</div></div>` : ""}<details class="atlas-details"><summary>原币明细与币种纠错 <span class="muted small">添加账户、手动录入及逐条纠正币种</span></summary><div class="platform-grid">${PLATFORMS.map((platform, index) => platformCard(platform, index, summary)).join("")}</div><button class="button small" data-action="account" style="margin-top:14px">＋ 添加资产账户</button></details></section>`;
+}
+// Drifting bubbles with elastic collisions, run in the same 1000-wide units
+// as layoutPlatformBubbles. Only the visible plot moves; hovering or focusing
+// it pauses motion so a bubble can be clicked, and reduced motion keeps the
+// packed layout still.
+let bubbleFrame = 0;
+function startBubbleMotion() {
+  if (typeof requestAnimationFrame !== "function") return;
+  cancelAnimationFrame(bubbleFrame);
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const plot = [...document.querySelectorAll(".atlas-plot")].find(element => element.offsetWidth > 0);
+  if (!plot) return;
+  const width = 1000; const height = width / Number(plot.dataset.aspect);
+  const bubbles = [...plot.querySelectorAll(".atlas-position")].map((element, index) => {
+    const r = parseFloat(element.style.width) * width / 200;
+    const angle = index * 2.399963;
+    const speed = 14 + 22 * (1 - Math.min(1, r / 160));
+    return { element, r, mass: r * r, x: parseFloat(element.style.left) * width / 100, y: parseFloat(element.style.top) * height / 100, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed };
+  });
+  let paused = false;
+  const pause = () => { paused = true; };
+  const resume = () => { paused = false; };
+  plot.addEventListener("pointerenter", pause);
+  plot.addEventListener("pointerleave", resume);
+  plot.addEventListener("focusin", pause);
+  plot.addEventListener("focusout", resume);
+  plot.classList.add("atlas-live");
+  let last = performance.now();
+  const step = (now) => {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (!plot.isConnected) return;
+    if (!paused) {
+      for (const bubble of bubbles) {
+        bubble.x += bubble.vx * dt;
+        bubble.y += bubble.vy * dt;
+        if (bubble.x - bubble.r < 0) { bubble.x = bubble.r; bubble.vx = Math.abs(bubble.vx); }
+        if (bubble.x + bubble.r > width) { bubble.x = width - bubble.r; bubble.vx = -Math.abs(bubble.vx); }
+        if (bubble.y - bubble.r < 0) { bubble.y = bubble.r; bubble.vy = Math.abs(bubble.vy); }
+        if (bubble.y + bubble.r > height) { bubble.y = height - bubble.r; bubble.vy = -Math.abs(bubble.vy); }
+      }
+      for (let i = 0; i < bubbles.length; i++) for (let j = i + 1; j < bubbles.length; j++) {
+        const a = bubbles[i]; const b = bubbles[j];
+        const dx = b.x - a.x; const dy = b.y - a.y;
+        const distance = Math.hypot(dx, dy) || 0.001;
+        const overlap = a.r + b.r + 4 - distance;
+        if (overlap <= 0) continue;
+        const nx = dx / distance; const ny = dy / distance;
+        const total = a.mass + b.mass;
+        a.x -= nx * overlap * b.mass / total; a.y -= ny * overlap * b.mass / total;
+        b.x += nx * overlap * a.mass / total; b.y += ny * overlap * a.mass / total;
+        const approach = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+        if (approach <= 0) continue;
+        const impulse = 2 * approach / total;
+        a.vx -= impulse * b.mass * nx; a.vy -= impulse * b.mass * ny;
+        b.vx += impulse * a.mass * nx; b.vy += impulse * a.mass * ny;
+      }
+      for (const bubble of bubbles) {
+        // Keep every bubble near its cruising speed so the field never stalls or races.
+        const speed = Math.hypot(bubble.vx, bubble.vy) || 1;
+        const target = 14 + 22 * (1 - Math.min(1, bubble.r / 160));
+        const correction = 1 + (target / speed - 1) * Math.min(1, dt * 0.8);
+        bubble.vx *= correction; bubble.vy *= correction;
+        bubble.element.style.left = `${(bubble.x / width * 100).toFixed(4)}%`;
+        bubble.element.style.top = `${(bubble.y / height * 100).toFixed(4)}%`;
+      }
+    }
+    bubbleFrame = requestAnimationFrame(step);
+  };
+  bubbleFrame = requestAnimationFrame(step);
 }
 function notify(message) {
   clearTimeout(toastTimer);
@@ -478,6 +570,7 @@ function render() {
   document.querySelectorAll("[data-page]").forEach((button) => { if (button.dataset.page === page) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current"); });
   $("asset-content").innerHTML = `${loadFailed ? '<div class="notice error">最近一次重新载入失败，以下仍为上次读取的资产记录。</div>' : ""}${page === "overview" ? renderOverview(summary) : page === "holdings" ? renderHoldings(summary) : page === "analysis" ? renderAnalysis(summary) : renderHistory()}`;
   syncBusy();
+  startBubbleMotion();
 }
 function setDialog(title, description, body, footer, wide = false) {
   clearSyncSecrets();
@@ -956,6 +1049,13 @@ function rerenderDialog() {
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
+  if (button.id === "theme-toggle") {
+    const theme = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem("assets-theme", theme); } catch {}
+    syncThemeToggle();
+    return;
+  }
   if (button.id === "privacy-toggle") {
     hidden = !hidden;
     button.textContent = hidden ? "显示金额" : "隐藏金额";
@@ -1102,4 +1202,11 @@ setInterval(async () => {
   if (!state || saving || loading || modal || conflict || document.visibilityState === "hidden") return;
   await load();
 }, 12 * 60 * 60 * 1000);
+function syncThemeToggle() {
+  const light = document.documentElement.dataset.theme === "light";
+  $("theme-toggle").textContent = light ? "深色模式" : "明亮模式";
+  $("theme-toggle").setAttribute("aria-pressed", String(light));
+}
+syncThemeToggle();
+if (typeof matchMedia === "function") matchMedia("(max-width:600px)").addEventListener("change", startBubbleMotion);
 void load();
