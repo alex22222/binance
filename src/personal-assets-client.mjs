@@ -539,7 +539,7 @@ function renderOverview(summary) {
   const partial = partialValuationSources().length > 0;
   const initial = !active;
   const automatic = Object.values(state.sync?.providers || {}).filter(row => row.connected && row.enabled && row.lastAppliedAt).length;
-  return `<div class="metrics"><section class="panel metric total"><div class="row"><span class="metric-label">${partial || summary.missing.length || summary.pending.length ? "已核算资产 · 部分估值" : "已录入资产总额"}</span>${displayCurrencyControl()}</div><div class="metric-value"><small>${displayCurrency === "USD" ? "$" : displayCurrency === "HKD" ? "HK$" : "¥"}</small>${displayAmount(partial && !summary.included.length ? null : summary.total)}</div><div class="metric-foot">${initial ? "尚未录入真实金额" : "当前市值 · 按最新可用汇率折算"}${partial ? " · 仅含已定价记录" : ""}</div>${stockPnlPanel(summary)}</section><section class="panel metric overview-status"><div><span class="metric-label">已录入账户 / 全部账户</span><div class="metric-value">${active}<span class="muted"> / ${portfolio().accounts.length}</span></div><span class="metric-foot">${automatic} 个账户已开启只读同步</span></div><div class="summary-update"><span class="metric-label">最近保存</span><div class="small num">${escape(state.updatedAt ? dateTime(state.updatedAt) : "尚未录入")}</div><span class="metric-foot">${summary.included.length} 条计入 · ${summary.missing.length} 条缺汇率 · ${summary.pending.length} 条待确认</span></div></section><section class="panel metric overview-status"><div><span class="metric-label">自动更新计划 · 北京时间</span><div class="refresh-times num">09:00 <span>/</span> 21:00</div><span class="metric-foot">每天两次 · 仅刷新已接入的资产来源</span></div><div class="summary-update"><span class="metric-label">${displayCurrency} 汇率</span><p class="metric-foot">${escape(fxStatusText())}</p><button class="button small quiet" data-action="sync">管理只读同步 →</button></div></section></div>
+  return `<div class="metrics"><section class="panel metric total"><div class="row"><span class="metric-label">${partial || summary.missing.length || summary.pending.length ? "已核算资产 · 部分估值" : "已录入资产总额"}</span>${displayCurrencyControl()}</div><div class="total-line"><div class="metric-value"><small>${displayCurrency === "USD" ? "$" : displayCurrency === "HKD" ? "HK$" : "¥"}</small>${displayAmount(partial && !summary.included.length ? null : summary.total)}</div>${privacyToggle()}</div><div class="metric-foot">${initial ? "尚未录入真实金额" : "当前市值 · 按最新可用汇率折算"}${partial ? " · 仅含已定价记录" : ""}</div>${stockPnlPanel(summary)}</section><section class="panel metric overview-status"><div><span class="metric-label">已录入账户 / 全部账户</span><div class="metric-value">${active}<span class="muted"> / ${portfolio().accounts.length}</span></div><span class="metric-foot">${automatic} 个账户已开启只读同步</span></div><div class="summary-update"><span class="metric-label">最近保存</span><div class="small num">${escape(state.updatedAt ? dateTime(state.updatedAt) : "尚未录入")}</div><span class="metric-foot">${summary.included.length} 条计入 · ${summary.missing.length} 条缺汇率 · ${summary.pending.length} 条待确认</span></div></section><section class="panel metric overview-status"><div><span class="metric-label">自动更新计划 · 北京时间</span><div class="refresh-times num">09:00 <span>/</span> 21:00</div><span class="metric-foot">每天两次 · 仅刷新已接入的资产来源</span></div><div class="summary-update"><span class="metric-label">${displayCurrency} 汇率</span><p class="metric-foot">${escape(fxStatusText())}</p><button class="button small quiet" data-action="sync">管理只读同步 →</button></div></section></div>
   <div class="overview-distributions">${assetTypesPanel(summary, true)}<section class="panel"><div class="section-head"><h2>平台分布</h2><span class="pill">按已核算 ${displayCurrency}</span></div>${distribution(summary.byPlatform, summary.total)}</section></div>
   ${displayCurrency !== "CNY" && displayValue(1) === null ? `<div class="notice">${displayCurrency}/CNY 自动汇率暂不可用，总额待换算。可切回 CNY 查看人民币金额。</div>` : ""}${summary.missing.length ? `<div class="notice">${displayCurrency} 合计仅覆盖已完成换算的记录，其余资产见原币参考。缺汇率记录和待确认账户均未计入总额与分布。</div>` : ""}${partialValuationNotice()}${aiPanel()}${pendingAccountsPanel()}
   ${platformAtlas(summary)}
@@ -563,6 +563,17 @@ function renderAnalysis(summary) {
 }
 function renderHistory() {
   return `<div class="notice">快照保留保存时的 CNY 金额，不使用今天的汇率重算。转入转出、汇率变化和记录调整都会影响总额，资产变化不能直接视为投资收益。</div><div class="section-head"><div><h2>你的资产时间线</h2><span class="muted small">${state.snapshots.length} 个已保存快照 · 每日北京时间 23:55 自动保存</span></div><button class="button primary small" data-action="snapshot"${!portfolio().entries.length ? " disabled" : ""}>＋ 保存当前快照</button></div>${state.snapshots.length ? `<div class="history-list">${[...state.snapshots].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).map((snapshot) => `<section class="panel history-item"><div><strong>${escape(dateTime(snapshot.at))}${snapshot.dailyDate ? " · 每日自动快照" : ""}</strong><p class="muted small" style="margin:4px 0 0">${snapshot.missing ? `${snapshot.missing} 条缺汇率 · 部分估值` : "已录入资产估值"} · 资产变化非投资收益</p></div><div><span class="muted small">CNY</span><div class="num">${number(snapshot.total)}</div></div></section>`).join("")}</div>` : '<section class="panel empty"><div class="empty-mark">◷</div><h3>把今天，留给未来的自己</h3><p>录入资产后保存当前快照，逐步留下每个时点的资产全貌。</p><button class="button" data-action="manual">先录入一笔资产</button></section>'}`;
+}
+const eyeIcon = (paths) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+function privacyToggle() {
+  const label = hidden ? "显示金额" : "隐藏金额";
+  return `<button type="button" class="eye-toggle" id="privacy-toggle" aria-pressed="${hidden}" aria-label="${label}" title="${label}">${hidden
+    ? eyeIcon('<path d="M3 3l18 18"/><path d="M10.6 5.1A9.9 9.9 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6C3.9 8.4 2 12 2 12s3.6 7 10 7a9.6 9.6 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>')
+    : eyeIcon('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>')}</button>`;
+}
+function setSettingsOpen(open) {
+  $("settings-panel").hidden = !open;
+  $("settings-toggle").setAttribute("aria-expanded", String(open));
 }
 function render() {
   if (!state) return;
@@ -1048,6 +1059,9 @@ function rerenderDialog() {
 }
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
+  if (button?.id === "settings-toggle") { setSettingsOpen($("settings-panel").hidden); return; }
+  // Any other click, including choosing a menu item, closes the settings menu.
+  if (!$("settings-panel").hidden) setSettingsOpen(false);
   if (!button || button.disabled) return;
   if (button.id === "theme-toggle") {
     const theme = document.documentElement.dataset.theme === "light" ? "dark" : "light";
@@ -1058,10 +1072,9 @@ document.addEventListener("click", async (event) => {
   }
   if (button.id === "privacy-toggle") {
     hidden = !hidden;
-    button.textContent = hidden ? "显示金额" : "隐藏金额";
-    button.setAttribute("aria-pressed", String(hidden));
     render();
     rerenderDialog();
+    $("privacy-toggle")?.focus();
     return;
   }
   if (button.dataset.page) { page = button.dataset.page; render(); return; }
@@ -1195,6 +1208,11 @@ document.addEventListener("submit", async (event) => {
   else if (event.target.id === "sync-binanceagentic-form") await connectWallet("binanceagentic");
   else if (event.target.id === "sync-okxagentic-form") await connectWallet("okxagentic");
 });
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || $("settings-panel").hidden) return;
+  setSettingsOpen(false);
+  $("settings-toggle").focus();
+});
 $("asset-dialog").addEventListener("cancel", (event) => { event.preventDefault(); closeDialog(); });
 window.addEventListener("pageshow", (event) => { if (event.persisted) { aiOpened = false; void load(); } });
 window.addEventListener("pagehide", () => { clearOcr(); clearSyncSecrets(); });
@@ -1204,7 +1222,7 @@ setInterval(async () => {
 }, 12 * 60 * 60 * 1000);
 function syncThemeToggle() {
   const light = document.documentElement.dataset.theme === "light";
-  $("theme-toggle").textContent = light ? "深色模式" : "明亮模式";
+  $("theme-toggle-label").textContent = light ? "深色模式" : "明亮模式";
   $("theme-toggle").setAttribute("aria-pressed", String(light));
 }
 syncThemeToggle();

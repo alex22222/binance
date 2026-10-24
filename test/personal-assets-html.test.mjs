@@ -20,6 +20,7 @@ class Element {
   showModal() { this.open = true; }
   close() { this.open = false; }
   scrollIntoView() {}
+  focus() {}
   addEventListener(name, handler) { this.listeners[name] = handler; }
   setAttribute() {}
   removeAttribute() {}
@@ -807,13 +808,38 @@ test("both themes define a color for every asset category and the toggle persist
   const saved = new Map();
   const ui = await view(stateWith(), null, { storage: { getItem: (key) => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) } });
   ui.run('localStorage = window.localStorage; document.documentElement.dataset.theme = "dark"; syncThemeToggle()');
-  assert.equal(ui.get("theme-toggle").textContent, "明亮模式");
+  assert.equal(ui.get("theme-toggle-label").textContent, "明亮模式");
   const toggle = ui.get("theme-toggle");
   toggle.id = "theme-toggle";
   await ui.listeners.click({ target: { closest: () => toggle } });
   assert.equal(ui.run("document.documentElement.dataset.theme"), "light");
   assert.equal(saved.get("assets-theme"), "light");
-  assert.equal(toggle.textContent, "深色模式");
+  assert.equal(ui.get("theme-toggle-label").textContent, "深色模式");
+});
+
+test("page tools sit in a gear menu in the top bar and the eye beside the total hides amounts", async () => {
+  const html = personalAssetsHtml({ nonce: "n" });
+  const actions = html.match(/<div class="site-actions">([\s\S]*?)<\/div><\/div><\/header>/)[1];
+  assert.match(actions, /id="settings-toggle" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-panel" aria-label="设置"/);
+  assert.match(actions, /id="settings-panel" role="menu"[^>]* hidden>/);
+  for (const action of ["import", "sync", "export"]) assert.match(actions, new RegExp(`role="menuitem" data-action="${action}" data-needs-data disabled>`));
+  assert.match(actions, /role="menuitem" id="theme-toggle"/);
+  assert.doesNotMatch(html.match(/<header class="asset-head">[\s\S]*?<\/header>/)[0], /<button[^>]*(data-action|privacy-toggle|theme-toggle)/);
+  assert.doesNotMatch(actions, /privacy-toggle/);
+
+  const ui = await view(stateWith([entry({ amount: 1234.56 })]));
+  const panel = ui.get("settings-panel"); const gear = ui.get("settings-toggle");
+  panel.hidden = true; gear.id = "settings-toggle";
+  await ui.listeners.click({ target: { closest: () => gear } });
+  assert.equal(panel.hidden, false);
+  await ui.listeners.click({ target: { closest: () => null } });
+  assert.equal(panel.hidden, true);
+
+  const total = () => ui.get("asset-content").innerHTML.match(/<div class="total-line">[\s\S]*?<\/button><\/div>/)[0];
+  assert.match(total(), /1,234\.56[\s\S]*id="privacy-toggle" aria-pressed="false" aria-label="隐藏金额"/);
+  await ui.listeners.click({ target: { closest: () => ({ id: "privacy-toggle", dataset: {} }) } });
+  assert.match(total(), /id="privacy-toggle" aria-pressed="true" aria-label="显示金额"/);
+  assert.doesNotMatch(total(), /1,234\.56/);
 });
 
 test("category pie handles empty, zero and single-category portfolios and removes geometry in privacy mode", async () => {
