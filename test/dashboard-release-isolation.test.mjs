@@ -1,17 +1,25 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { lstat, mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { stageDashboardRelease, sourceIdentity } from "../ops/dashboard-release/stage.mjs";
 import { decideRenewal, digest } from "../ops/auth-renewal/core.mjs";
+import { verifyPersonalAssetsRelease } from "../ops/personal-assets/dashboard-loader.mjs";
 
 const hash = value => createHash("sha256").update(value).digest("hex");
 const code = ["dashboard-loader.mjs", "dashboard-hooks.mjs", "src/personal-assets-client.mjs",
   "src/personal-assets-core.mjs", "src/personal-assets-html.mjs", "src/personal-assets-routes.mjs",
-  "src/personal-assets.mjs", "src/site-shell.mjs"];
+  "src/personal-assets.mjs", "src/site-shell.mjs", "src/personal-assets-sync.mjs",
+  "src/personal-assets-okx.mjs", "src/personal-assets-futu.mjs", "src/personal-assets-fx.mjs",
+  "src/personal-assets-polymarket.mjs", "src/personal-assets-wallets.mjs",
+  "src/personal-assets-ai.mjs", "src/personal-assets-funds.mjs"];
+const supportingFiles = ["README.md", "docs/personal-assets-page.md",
+  "scripts/sync-personal-assets.mjs", "scripts/snapshot-personal-assets.mjs",
+  "deploy/binance-personal-assets-sync.service", "deploy/binance-personal-assets-sync.timer",
+  "deploy/binance-personal-assets-daily-snapshot.service", "deploy/binance-personal-assets-daily-snapshot.timer"];
 
 async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), "dashboard-release-isolation-"));
@@ -28,6 +36,23 @@ async function fixture() {
   }
   await writeFile(join(source, "manifest.json"), JSON.stringify(manifest));
   return { dir, projectRoot, source, destination, manifest, expectedCodeHash: await sourceIdentity(projectRoot) };
+}
+
+async function fullFixture() {
+  const x = await fixture();
+  const ocr = ["NOTICE.txt", "tesseract.min.js", "tesseract.min.js.LICENSE.txt", "worker.min.js", "worker.min.js.LICENSE.txt",
+    "core/LICENSE", "core/tesseract-core-lstm.wasm.js", "core/tesseract-core-relaxedsimd-lstm.wasm.js", "core/tesseract-core-simd-lstm.wasm.js",
+    "lang/chi_sim.traineddata.gz", "lang/chi_tra.traineddata.gz", "lang/eng.traineddata.gz"];
+  const tests = (await readdir(new URL("../test/", import.meta.url))).filter(name => /^personal-assets[a-zA-Z0-9.-]*\.test\.mjs$/.test(name));
+  for (const file of [...code, ...supportingFiles, ...ocr.map(name => `assets/personal-assets/ocr/${name}`), ...tests.map(name => `test/${name}`)]) {
+    const original = file.startsWith("dashboard-") ? `ops/personal-assets/${file}` : file;
+    const bytes = await readFile(new URL(`../${original}`, import.meta.url));
+    await mkdir(dirname(join(x.source, file)), { recursive: true });
+    await writeFile(join(x.source, file), bytes);
+    x.manifest.files[file] = hash(bytes);
+  }
+  await writeFile(join(x.source, "manifest.json"), JSON.stringify(x.manifest));
+  return x;
 }
 
 function decision(codeHash, expected) {
@@ -64,6 +89,49 @@ test("isolated UI staging keeps source bytes and renewal identity unchanged, inc
   assert.equal((await lstat(x.destination)).mode & 0o022, 0);
 });
 
+test("the complete personal-assets package passes dry run, stages and verifies with the current loader", async () => {
+  const x = await fullFixture();
+  const files = Object.keys(x.manifest.files);
+  assert.ok(files.length >= 50, "include the full release, not only the original page modules");
+  const checked = await stageDashboardRelease({ ...x, checkOnly: true });
+  assert.equal(checked.files, files.length);
+  await assert.rejects(lstat(x.destination), { code: "ENOENT" });
+  const result = await stageDashboardRelease(x);
+  assert.equal(result.files, files.length);
+  for (const file of [...files, "manifest.json"]) {
+    assert.deepEqual(await readFile(join(x.destination, file)), await readFile(join(x.source, file)));
+  }
+  const verified = await verifyPersonalAssetsRelease(x.destination, {
+    metadata: async path => Object.assign(await lstat(path), { uid: 0 })
+  });
+  assert.equal(verified.root, await realpath(x.destination));
+  assert.equal(await sourceIdentity(x.projectRoot), x.expectedCodeHash);
+  assert.equal(decision(await sourceIdentity(x.projectRoot), x.expectedCodeHash).action, "KEEP");
+});
+
+test("every module required by the current assets loader must be present before staging", async () => {
+  for (const file of code) {
+    const x = await fixture();
+    delete x.manifest.files[file];
+    await writeFile(join(x.source, "manifest.json"), JSON.stringify(x.manifest));
+    await assert.rejects(stageDashboardRelease(x), /missing required/i);
+    await assert.rejects(lstat(x.destination), { code: "ENOENT" });
+  }
+});
+
+test("supporting scripts, unit templates and documentation remain hash-checked before any write", async () => {
+  for (const file of supportingFiles) {
+    const x = await fixture();
+    await mkdir(dirname(join(x.source, file)), { recursive: true });
+    await writeFile(join(x.source, file), "tampered");
+    x.manifest.files[file] = hash("expected");
+    await writeFile(join(x.source, "manifest.json"), JSON.stringify(x.manifest));
+    await assert.rejects(stageDashboardRelease(x), /hash mismatch/i);
+    await assert.rejects(lstat(x.destination), { code: "ENOENT" });
+    assert.equal(await sourceIdentity(x.projectRoot), x.expectedCodeHash);
+  }
+});
+
 test("rejects original incident's direct-to-live destination before writing even one file", async () => {
   const x = await fixture();
   for (const destination of [x.projectRoot, join(x.projectRoot, "src"), join(x.projectRoot, "ui/release")]) {
@@ -94,7 +162,10 @@ test("trade changes remain protected; no UI-only release accepts or rebinds chan
 });
 
 test("all payload paths and hashes are checked before writes; trade, credential and traversal paths fail closed", async () => {
-  for (const file of ["src/strategy.mjs", "src/extra-page.mjs", "state/private.json", "strategy-governance/authorizations.json", "../escape.mjs", "/absolute.mjs", "src/../strategy.mjs"]) {
+  for (const file of ["src/strategy.mjs", "src/extra-page.mjs", "state/private.json", "strategy-governance/authorizations.json", "config.json", ".env",
+    "scripts/run-monthly-trend-research.mjs", "scripts/sync-personal-assets-extra.mjs", "ops/auth-renewal/run.mjs",
+    "deploy/binance-agentic-stock-bot.service", "deploy/binance-personal-assets-sync.service.d/override.conf",
+    "../escape.mjs", "/absolute.mjs", "src/../strategy.mjs"]) {
     const x = await fixture();
     x.manifest.files[file] = "a".repeat(64);
     await writeFile(join(x.source, "manifest.json"), JSON.stringify(x.manifest));

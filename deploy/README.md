@@ -73,8 +73,13 @@ from the trading hash or refresh the authorization baseline to hide this.
 
 Personal-assets pages, shared navigation and OCR use the existing Dashboard-only
 loader and immutable `/opt/binance-agentic-personal-assets/releases/<id>/`
-releases. Prepare a manifest with the eight loader/page code hashes and optional
-OCR, documentation and test hashes, then use the guarded staging entry:
+releases. Prepare a manifest with all sixteen loader/page/collector module
+hashes required by the current personal-assets loader. Optional supporting files
+are limited to `README.md`, `docs/personal-assets-page.md`,
+`scripts/sync-personal-assets.mjs`, `scripts/snapshot-personal-assets.mjs`,
+the four `deploy/binance-personal-assets-{sync,daily-snapshot}.{service,timer}`
+templates, OCR resources and personal-assets tests. No other source module,
+script or systemd unit is accepted. Then use the guarded staging entry:
 
 ```bash
 sudo node /opt/binance-dashboard-release-tools/current/stage.mjs check /path/to/prepared-ui-payload new-release-id
@@ -87,6 +92,8 @@ rejects trading/credential/state paths and checks the original trading identity
 before and after staging. Existing releases are never overwritten. It does not
 switch `current`, update the Dashboard entry, restart services, read wallet
 credentials or modify grants, consent, risk controls or the renewal halt latch.
+Bundled collector scripts are never executed and systemd templates are only
+archived inside the isolated release, never installed or enabled by this tool.
 Activation remains a separately reviewed Dashboard operation; retain the BTC,
 personal-assets and authorization loaders. A Dashboard entry change also needs
 its pinned `dashboardSourceHash` reviewed; never change `liveCodeHash` or the
