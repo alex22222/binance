@@ -64,6 +64,39 @@ HTTP Basic Auth is accepted only over the TLS reverse proxy. The Node dashboard
 continues to bind to loopback and rejects state-changing requests from origins
 other than loopback or the origins listed in `DASHBOARD_PUBLIC_ORIGIN`.
 
+## Dashboard-only updates while the trading Bot is Live
+
+The Live identity and bounded renewal deliberately cover **all production
+`src/*.mjs` files**. Adding a navigation link or a new page there changes the
+identity just as adding a trading rule does. Do not exclude UI-looking filenames
+from the trading hash or refresh the authorization baseline to hide this.
+
+Personal-assets pages, shared navigation and OCR use the existing Dashboard-only
+loader and immutable `/opt/binance-agentic-personal-assets/releases/<id>/`
+releases. Prepare a manifest with the eight loader/page code hashes and optional
+OCR, documentation and test hashes, then use the guarded staging entry:
+
+```bash
+sudo node /opt/binance-dashboard-release-tools/current/stage.mjs check /path/to/prepared-ui-payload new-release-id
+sudo node /opt/binance-dashboard-release-tools/current/stage.mjs stage /path/to/prepared-ui-payload new-release-id
+```
+
+`ops/dashboard-release/stage.mjs` validates the **whole** payload before any
+write, refuses a destination inside the Bot checkout (including symlink aliases),
+rejects trading/credential/state paths and checks the original trading identity
+before and after staging. Existing releases are never overwritten. It does not
+switch `current`, update the Dashboard entry, restart services, read wallet
+credentials or modify grants, consent, risk controls or the renewal halt latch.
+Activation remains a separately reviewed Dashboard operation; retain the BTC,
+personal-assets and authorization loaders. A Dashboard entry change also needs
+its pinned `dashboardSourceHash` reviewed; never change `liveCodeHash` or the
+30-day policy. An actual trading-code change must still stop renewal and require
+explicit review/authorization.
+
+This guard is the supported UI staging path, not a claim that arbitrary root
+commands cannot bypass it. Never copy a full local checkout over a running Live
+checkout for a page-only update.
+
 ## Start in safe mode
 
 ```bash
