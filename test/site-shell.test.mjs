@@ -18,6 +18,16 @@ test("the shared header marks only the active page and needs no image", () => {
   assert.doesNotMatch(html + SITE_CSS, /<img|url\(/);
 });
 
+test("light is the default theme, dark stays behind data-theme, and dark-era page colors are fixed per page", () => {
+  assert.match(SITE_CSS, /:root\{color-scheme:light;/);
+  assert.match(SITE_CSS, /:root\[data-theme=dark\]\{color-scheme:dark;/);
+  const fixes = SITE_CSS.split("\n").filter((line) => line.includes("body:has("));
+  assert.ok(fixes.length > 20);
+  for (const line of fixes) {
+    assert.match(line, /^html:not\(\[data-theme=dark\]\) body:has\((\.site-nav a\[aria-current\]\[href="(\/|\/strategies|\/fund-manager|\/btc-radar)"\]|form\[action="\/login"\])\)/, line);
+  }
+});
+
 test("navigation leads with personal assets and names the Binance wallet without changing its route", () => {
   const html = siteHeader("/");
   const links = [...html.matchAll(/<a href="([^"]+)"(?: aria-current="page")?>([^<]+)<\/a>/g)]

@@ -6,23 +6,10 @@ const DARK_CATEGORY_COLORS = ["#f5c14f", "#6ba4ed", "#64c7ab", "#b5a2f4", "#e89a
 const LIGHT_CATEGORY_COLORS = ["#8e8e93", "#32ade6", "#34c759", "#007aff", "#5856d6", "#af52de", "#a2845e", "#00c7be", "#ff9500", "#ffcc00", "#ff6482", "#c7c7cc"];
 const categoryVars = (colors) => colors.map((color, index) => `--cat-${index}:${color}`).join(";");
 
-// Light theme for this page only (the default; dark is an opt-in saved in
-// localStorage): Mercury-style neutral surfaces and indigo accent, iOS system
-// colors for asset types, ledger-style tables. The shared site header is
-// restyled here too so other dashboard pages stay dark.
+// Extra light-theme polish for this page; the shared shell supplies the light
+// and dark tokens. iOS system colors mark asset types and tables read like a
+// ledger. Dark is an opt-in saved in localStorage.
 const LIGHT_THEME_CSS = `
-:root[data-theme=light]{color-scheme:light;
---bg:#f7f7fa;--surface:#fff;--surface-2:#f7f7fa;--surface-3:#ececf2;--line:#e4e4eb;--line-soft:#efeff4;
---text:#171721;--muted:#6b6b78;--faint:#9a9aa6;
---brand:#5266eb;--brand-strong:#3d52d9;--brand-ink:#fff;--brand-soft:rgba(82,102,235,.08);
---green:#1f9d55;--red:#d92d3a;--blue:#007aff;--orange:#e8830c;
---green-soft:rgba(31,157,85,.1);--red-soft:rgba(217,45,58,.08);--blue-soft:rgba(0,122,255,.08);
---shadow:0 16px 40px rgba(23,23,33,.1);${categoryVars(LIGHT_CATEGORY_COLORS)}}
-[data-theme=light] body{background:var(--bg)}
-[data-theme=light] .site-header{background:linear-gradient(var(--bg) 0%,rgba(247,247,250,.92) 70%,transparent)}
-[data-theme=light] .site-bar{background:rgba(255,255,255,.88);border-color:var(--line);box-shadow:0 1px 2px rgba(23,23,33,.04)}
-[data-theme=light] .site-mark{box-shadow:none}
-[data-theme=light] .site-nav a:hover{background:rgba(23,23,33,.05)}
 [data-theme=light] .panel,[data-theme=light] .source-details{border-radius:12px}
 [data-theme=light] .metric.total{background:var(--surface);border-color:var(--line)}
 [data-theme=light] .metric-value,[data-theme=light] .platform-number,[data-theme=light] .refresh-times,[data-theme=light] .stock-pnl-value,[data-theme=light] .history-item .num,[data-theme=light] .type-pie-total{font-family:var(--font);font-weight:400;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
@@ -51,7 +38,8 @@ export function personalAssetsHtml({ nonce }) {
 <script nonce="${safeNonce}">{let theme="light";try{if(localStorage.getItem("assets-theme")==="dark")theme="dark"}catch{}document.documentElement.dataset.theme=theme}</script>
 <style>
 ${SITE_CSS}
-:root{--site-width:1280px;${categoryVars(DARK_CATEGORY_COLORS)}}
+:root{--site-width:1280px;${categoryVars(LIGHT_CATEGORY_COLORS)}}
+:root[data-theme=dark]{${categoryVars(DARK_CATEGORY_COLORS)}}
 ${LIGHT_THEME_CSS}
 *{box-sizing:border-box}[hidden]{display:none!important}body{font-size:14px;line-height:1.6}
 button,input,select,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:wait;opacity:.5}a{color:var(--brand)}
