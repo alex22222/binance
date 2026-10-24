@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -788,4 +788,178 @@ test("prediction asset identifiers survive preview and applied ledger notes with
   assert.equal(preview.holdings[0].symbol, tokenId);
   const result = await action(stateDir, "polymarket", "apply", { previewId: preview.id, revision: preview.revision }, { api: source });
   assert.ok(result.assets.portfolio.entries.find((row) => row.kind === "holding" && row.accountId === targetAccountId).note.includes(tokenId));
+});
+
+const safeAddress = `0x${"ef".repeat(20)}`;
+const safePusd = "0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb";
+const safeClaim = { protocol: "polymarket-safe-pusd", chainIndex: "137", owner: publicAddress, address: safeAddress,
+  cashRawBalance: "10200000", cashBlockNumber: "0x12345", cashObservedAt: at.toISOString() };
+const safeCash = { externalId: `token:${createHash("sha256").update(`137:${safeAddress}:${safePusd}`).digest("hex")}`,
+  name: "pUSD · USDC抵押权益参考", category: "稳定币", currency: "USD", amount: 10.2 * 0.998, symbol: "pUSD", quantity: "10.2", rawQuantity: "10.2",
+  balanceAddress: safeAddress, cashRawBalance: "10200000", cashBlockNumber: "0x12345", cashObservedAt: at.toISOString(),
+  quoteSource: "Kraken USDC/USD · pUSD抵押权益参考", quoteObservedAt: at.toISOString() };
+const safeApi = (overrides = {}) => walletApi({ total: safeCash.amount, holdings: [safeCash], valuationComplete: false, derivedWallets: [safeClaim], ...overrides });
+async function safeConnected(stateDir, overrides = {}) {
+  const targetAccountId = await tokenPocketTarget(stateDir);
+  return (await action(stateDir, "tokenpocket", "connect", { ...credentials, wallets: polygonWallet, polymarketSafeOwner: publicAddress, targetAccountId }, { api: safeApi(overrides) })).providers.tokenpocket.preview;
+}
+
+test("Safe claims and row-level cash evidence survive apply separately from the original EOA source identity", async context => {
+  const stateDir = await fixture(context), preview = await safeConnected(stateDir);
+  assert.equal(preview.externalAccountId, walletId(polygonWallet)); assert.deepEqual(preview.derivedWallets, [safeClaim]);
+  assert.equal(preview.holdings[0].balanceAddress, safeAddress); assert.equal(preview.holdings[0].cashRawBalance, "10200000");
+  const result = await action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision });
+  const entry = result.assets.portfolio.entries.find(row => row.kind === "holding" && row.accountId === preview.targetAccountId);
+  assert.match(entry.note, /Safe现金/); assert.match(entry.note, /10200000.*0x12345/); assert.match(entry.note, /USDC抵押权益参考/);
+  assert.equal(entry.note.includes(safeAddress), false);
+  assert.equal(result.sync.providers.tokenpocket.observedAt, null);
+  assert.deepEqual(result.sync.providers.tokenpocket.wallets, polygonWallet);
+  assert.deepEqual(result.sync.providers.tokenpocket.lastProtocolBalances, [{ protocol: safeClaim.protocol, cashRawBalance: safeClaim.cashRawBalance, cashBlockNumber: safeClaim.cashBlockNumber, cashObservedAt: safeClaim.cashObservedAt }]);
+  const stored = JSON.parse(await readFile(privateFile(stateDir), "utf8"));
+  assert.deepEqual(stored.providers.tokenpocket.appliedDerivedWallets, [safeClaim]);
+  assert.deepEqual(stored.walletBindings.find(row => row.targetAccountId === preview.targetAccountId).derivedWallets, [safeClaim]);
+});
+
+test("a pending or applied Safe cash source cannot be counted again through wallet, Polymarket or Future after disconnect", async context => {
+  const stateDir = await fixture(context), preview = await safeConnected(stateDir);
+  const current = await readPersonalAssets({ stateDir });
+  const rejectDuplicates = async () => {
+    for (const provider of ["polymarket", "future"]) {
+      const targetAccountId = current.portfolio.accounts.find(row => row.platform === (provider === "future" ? "Future" : "Polymarket")).id;
+      await assert.rejects(action(stateDir, provider, "connect", { address: safeAddress, targetAccountId }, { api: predictionApi() }), { statusCode: 409 });
+    }
+    await assert.rejects(action(stateDir, "okxweb3", "bind", { wallets: [{ chainIndex: "137", address: safeAddress }], targetAccountId: "other" }), { statusCode: 409 });
+  };
+  await rejectDuplicates();
+  await action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision });
+  await action(stateDir, "tokenpocket", "disconnect");
+  await rejectDuplicates();
+});
+
+test("prediction claims also block new direct or derived wallet sources, including retained disconnected holdings", async context => {
+  const stateDir = await fixture(context), current = await readPersonalAssets({ stateDir });
+  const targetAccountId = current.portfolio.accounts.find(row => row.platform === "Polymarket").id;
+  const first = await action(stateDir, "polymarket", "connect", { address: safeAddress, targetAccountId }, { api: predictionApi() });
+  for (const disconnected of [false, true]) {
+    if (disconnected) {
+      const preview = first.providers.polymarket.preview;
+      await action(stateDir, "polymarket", "apply", { previewId: preview.id, revision: preview.revision });
+      await action(stateDir, "polymarket", "disconnect");
+    }
+    await assert.rejects(action(stateDir, "okxweb3", "bind", { wallets: [{ chainIndex: "137", address: safeAddress }], targetAccountId: "other" }), { statusCode: 409 });
+    await assert.rejects(safeConnected(stateDir), { statusCode: 409 });
+  }
+});
+
+test("Safe source loss or changed ownership never removes previously counted cash in connect, preview, apply or automatic cycles", async context => {
+  const stateDir = await fixture(context), preview = await safeConnected(stateDir);
+  await action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision });
+  const before = await readFile(join(stateDir, "personal-assets.json"), "utf8"), statusBefore = await readAssetSyncStatus({ stateDir });
+  const missing = { total: 0, holdings: [], derivedWallets: [], fetchedAt: later.toISOString() };
+  await assert.rejects(safeConnected(stateDir, missing), /Safe|派生.*来源|保留/);
+  await assert.rejects(action(stateDir, "tokenpocket", "preview", {}, { api: safeApi(missing), now: later }), /Safe|派生.*来源|保留/);
+  assert.deepEqual(await runAssetSyncCycle({ stateDir, api: safeApi(missing), now: later }), { attempted: 1, applied: 0, failed: 1 });
+  assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
+  assert.equal((await readAssetSyncStatus({ stateDir })).providers.tokenpocket.lastFetchedAt, statusBefore.providers.tokenpocket.lastFetchedAt);
+  const next = await action(stateDir, "tokenpocket", "preview", {}, { api: safeApi() });
+  const data = JSON.parse(await readFile(privateFile(stateDir), "utf8")); data.providers.tokenpocket.preview.derivedWallets = [];
+  await writeFile(privateFile(stateDir), JSON.stringify(data));
+  await assert.rejects(action(stateDir, "tokenpocket", "apply", { previewId: next.providers.tokenpocket.preview.id, revision: next.providers.tokenpocket.preview.revision }), /Safe|派生.*来源|保留/);
+  assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
+});
+
+test("only a verified zero cash proof can remove Safe cash while the source claim remains persistent", async context => {
+  const stateDir = await fixture(context), preview = await safeConnected(stateDir);
+  await action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision });
+  const zero = { ...safeClaim, cashRawBalance: "0", cashObservedAt: later.toISOString() };
+  const next = await action(stateDir, "tokenpocket", "preview", {}, { api: safeApi({ total: 0, holdings: [], derivedWallets: [zero], fetchedAt: later.toISOString() }), now: later });
+  const p = next.providers.tokenpocket.preview;
+  const applied = await action(stateDir, "tokenpocket", "apply", { previewId: p.id, revision: p.revision }, { now: later });
+  assert.equal(applied.assets.portfolio.entries.some(row => row.accountId === p.targetAccountId && row.kind === "holding"), false);
+  assert.equal(applied.sync.providers.tokenpocket.lastProtocolBalances[0].cashRawBalance, "0");
+});
+
+test("derived cash proofs are narrow, fresh and owner-linked rather than arbitrary claims or copied metadata", async context => {
+  const stateDir = await fixture(context);
+  for (const overrides of [{ derivedWallets: [{ ...safeClaim, owner: safeAddress }] }, { derivedWallets: [{ ...safeClaim, chainIndex: "1" }] },
+    { derivedWallets: [{ ...safeClaim, protocol: "unknown-protocol" }] }, { derivedWallets: [safeClaim, safeClaim] },
+    { derivedWallets: [{ ...safeClaim, cashObservedAt: "2026-10-24T11:50:00.000Z" }] }, { derivedWallets: [{ ...safeClaim, cashRawBalance: "10200001" }] },
+    { holdings: [{ ...safeCash, balanceAddress: publicAddress }] }, { holdings: [{ ...safeCash, cashRawBalance: "10200001" }] },
+    { derivedWallets: [], holdings: [safeCash] }]) {
+    await assert.rejects(safeConnected(stateDir, overrides), { statusCode: 502 });
+  }
+});
+
+test("a pre-ledger Safe reservation survives post-ledger persistence failure then disconnect or rebind", async context => {
+  for (const nextAction of ["disconnect", "bind"]) {
+    const stateDir = await fixture(context), targetAccountId = await tokenPocketTarget(stateDir);
+    const original = await action(stateDir, "tokenpocket", "connect", { ...credentials, wallets: polygonWallet, targetAccountId }, { api: walletApi() });
+    const old = original.providers.tokenpocket.preview;
+    await action(stateDir, "tokenpocket", "apply", { previewId: old.id, revision: old.revision });
+    const preview = await safeConnected(stateDir);
+    const snapshots = join(stateDir, "personal-assets-snapshots");
+    await rename(snapshots, snapshots + ".saved"); await writeFile(snapshots, "synthetic snapshot obstruction");
+    await assert.rejects(action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision }));
+    const beforeLedger = JSON.parse(await readFile(privateFile(stateDir), "utf8"));
+    assert.ok(beforeLedger.walletBindings.some(row => row.derivedWallets?.some(claim => claim.address === safeAddress)));
+    await rm(snapshots); await rename(snapshots + ".saved", snapshots);
+    await action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision });
+    // Restore the actual durable pre-ledger config, as if final provider persistence failed.
+    await writeFile(privateFile(stateDir), JSON.stringify(beforeLedger));
+    await action(stateDir, "tokenpocket", nextAction, nextAction === "bind" ? { wallets: polygonWallet, targetAccountId: preview.targetAccountId, polymarketSafeOwner: publicAddress } : {});
+    const current = await readPersonalAssets({ stateDir }), target = current.portfolio.accounts.find(row => row.platform === "Polymarket").id;
+    await assert.rejects(action(stateDir, "polymarket", "connect", { address: safeAddress, targetAccountId: target }, { api: predictionApi() }), { statusCode: 409 });
+    assert.equal(current.portfolio.entries.filter(row => row.accountId === preview.targetAccountId && row.kind === "holding").length, 1);
+  }
+});
+
+test("changing explicit Safe scope requires a fresh preview and cannot release an applied counted source", async context => {
+  const stateDir = await fixture(context), targetAccountId = await tokenPocketTarget(stateDir);
+  for (const owner of [safeAddress, "invalid", [publicAddress]]) await assert.rejects(action(stateDir, "tokenpocket", "bind", { wallets: polygonWallet, targetAccountId, polymarketSafeOwner: owner }));
+  const preview = await safeConnected(stateDir);
+  const data = JSON.parse(await readFile(privateFile(stateDir), "utf8")); data.providers.tokenpocket.polymarketSafeOwner = null;
+  await writeFile(privateFile(stateDir), JSON.stringify(data));
+  await assert.rejects(action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision }), { statusCode: 409 });
+  data.providers.tokenpocket.polymarketSafeOwner = publicAddress; await writeFile(privateFile(stateDir), JSON.stringify(data));
+  await action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision });
+  await assert.rejects(action(stateDir, "tokenpocket", "bind", { wallets: polygonWallet, targetAccountId, polymarketSafeOwner: null }), /Safe.*保留/);
+});
+
+test("Safe price loss retains its prior ledger and successful timestamps across all refresh paths", async context => {
+  const stateDir = await fixture(context), preview = await safeConnected(stateDir);
+  await action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision });
+  const before = await readFile(join(stateDir, "personal-assets.json"), "utf8"), initial = (await readAssetSyncStatus({ stateDir })).providers.tokenpocket;
+  const missing = { externalId: safeCash.externalId, chainIndex: "137", contract: safePusd, symbol: "pUSD", name: "pUSD", quantity: "10.2", reason: "缺少新鲜参考报价" };
+  const overrides = { fetchedAt: later.toISOString(), total: 0, holdings: [], unpricedAssets: [missing], derivedWallets: [{ ...safeClaim, cashObservedAt: later.toISOString() }] };
+  await assert.rejects(safeConnected(stateDir, overrides), /保留上次有效估值/);
+  await assert.rejects(action(stateDir, "tokenpocket", "preview", {}, { api: safeApi(overrides), now: later }), /保留上次有效估值/);
+  assert.deepEqual(await runAssetSyncCycle({ stateDir, api: safeApi(overrides), now: later }), { attempted: 1, applied: 0, failed: 1 });
+  assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
+  const final = (await readAssetSyncStatus({ stateDir })).providers.tokenpocket;
+  assert.equal(final.lastFetchedAt, initial.lastFetchedAt); assert.equal(final.lastAppliedAt, initial.lastAppliedAt);
+});
+
+test("a full source reservation history fails closed without persisting an over-limit configuration", async context => {
+  const stateDir = await fixture(context), targetAccountId = await tokenPocketTarget(stateDir);
+  const connected = await action(stateDir, "tokenpocket", "connect", { ...credentials, wallets: polygonWallet, targetAccountId }, { api: walletApi() });
+  const preview = connected.providers.tokenpocket.preview;
+  await action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision });
+  const data = JSON.parse(await readFile(privateFile(stateDir), "utf8")); data.providers.tokenpocket.polymarketSafeOwner = publicAddress;
+  data.walletBindings = Array.from({ length: 100 }, (_, index) => ({ provider: "tokenpocket", targetAccountId: `old-source-${index}`, wallets: [{ chainIndex: "137", address: `0x${(index + 1).toString(16).padStart(40, "0")}` }] }));
+  await writeFile(privateFile(stateDir), JSON.stringify(data));
+  const before = await readFile(join(stateDir, "personal-assets.json"), "utf8");
+  const next = safeApi({ fetchedAt: later.toISOString(), derivedWallets: [{ ...safeClaim, cashObservedAt: later.toISOString() }], holdings: [{ ...safeCash, cashObservedAt: later.toISOString(), quoteObservedAt: later.toISOString() }] });
+  assert.deepEqual(await runAssetSyncCycle({ stateDir, api: next, now: later }), { attempted: 1, applied: 0, failed: 1 });
+  assert.equal(JSON.parse(await readFile(privateFile(stateDir), "utf8")).walletBindings.length, 100);
+  assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
+});
+
+test("reserving a Safe leaves unrelated legacy wallet binding records unchanged", async context => {
+  const stateDir = await fixture(context);
+  const legacy = { provider: "okxweb3", targetAccountId: "other", wallets: [{ chainIndex: "1", address: publicAddress }] };
+  await writeFile(privateFile(stateDir), JSON.stringify({ schemaVersion: 1, providers: {}, walletBindings: [legacy] }), { mode: 0o600 });
+  const preview = await safeConnected(stateDir);
+  await action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision });
+  const config = JSON.parse(await readFile(privateFile(stateDir), "utf8"));
+  assert.deepEqual(config.walletBindings.find(row => row.targetAccountId === "other"), legacy);
 });

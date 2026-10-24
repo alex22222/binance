@@ -451,3 +451,154 @@ test("ZERO quote work does not extend the existing forty-five-second wallet snap
   await assert.rejects(run({ ...mock, now: () => current }), /资产|响应/);
   assert.equal(mock.calls.filter(call => call.url === zeroQuoteUrl).length, 1);
 });
+
+const safeFactory = "0xaacfeea03eb1561c4e67d661e40682bd20e3541b";
+const pusdContract = "0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb";
+const polygonRpc = "https://polygon.publicnode.com";
+const polygon = { chainIndex: "137", address: evm };
+const word = value => BigInt(value).toString(16).padStart(64, "0");
+const ownerArray = owner => `0x${word(32)}${word(1)}${owner.slice(2).padStart(64, "0")}`;
+function safeFetch(options = {}) {
+  const data = fixture();
+  data.balances["137"] = [token(polygon, "", "POL", "2", "0.6")];
+  data.defi.walletIdPlatformList = [{ platformList: [{ platformName: "Polymarket", totalAssets: "99999" }] }];
+  if (options.emptyDefi) data.defi.walletIdPlatformList = [];
+  return fakeFetch(data, (url, init) => {
+    if (url.href === polygonRpc + "/") {
+      if (options.rpcResponse) return options.rpcResponse(init);
+      const rows = JSON.parse(init.body).map(call => {
+        let result;
+        if (call.method === "eth_chainId") result = options.chain ?? "0x89";
+        else if (call.method === "eth_blockNumber") result = "0x12345";
+        else if (call.method === "eth_getCode") result = options.code ?? "0x6000";
+        else if (call.method === "eth_getBlockByNumber") result = { number: "0x12345", hash: `0x${"ab".repeat(32)}`, timestamp: "0x" + (time.getTime() / 1000 + (options.blockOffset ?? -2)).toString(16), ...options.block };
+        else {
+          assert.equal(call.method, "eth_call");
+          const { to, data } = call.params[0];
+          if (data.startsWith("0xd600539a")) { assert.equal(to, safeFactory); result = options.candidate ?? `0x${otherEvm.slice(2).padStart(64, "0")}`; }
+          else if (data === "0xa0e67e2b") result = options.owners ?? ownerArray(evm);
+          else if (data === "0xe75235b8") result = `0x${word(options.threshold ?? 1)}`;
+          else if (data === "0x313ce567") { assert.equal(to, pusdContract); result = `0x${word(options.decimals ?? 6)}`; }
+          else { assert.equal(to, pusdContract); assert.equal(data, `0x70a08231${otherEvm.slice(2).padStart(64, "0")}`); result = options.rawResponse ?? `0x${word(options.raw ?? 10200000)}`; }
+        }
+        return { jsonrpc: "2.0", id: call.id, result };
+      });
+      return Response.json(options.rpcRows ? options.rpcRows(rows) : rows);
+    }
+    if (url.hostname === "api.kraken.com" && url.searchParams.get("pair") === "USDCUSD") return options.quoteResponse ? options.quoteResponse() : Response.json(options.quote ?? { error: [], result: { USDCUSD: [["0.998", "1", time.getTime() / 1000 - 60]] } });
+  });
+}
+const runSafe = options => run({ provider: "tokenpocket", wallets: [polygon], polymarketSafeOwner: evm, ...safeFetch(options) });
+
+test("TokenPocket adds only verified single-owner Safe pUSD cash using an actual USDC/USD reference price", async () => {
+  const mock = safeFetch();
+  const result = await run({ provider: "tokenpocket", wallets: [polygon], polymarketSafeOwner: evm, ...mock });
+  assert.equal(result.externalAccountId, `wallets:${createHash("sha256").update(`137:${evm}`).digest("hex")}`);
+  assert.equal(result.observedAt, null); assert.equal(result.valuationComplete, false);
+  const cash = result.holdings.find(row => row.symbol === "pUSD");
+  assert.ok(cash); assert.equal(cash.rawQuantity, "10.2"); assert.equal(cash.quantity, "10.2");
+  assert.equal(cash.externalId, `token:${createHash("sha256").update(`137:${otherEvm}:${pusdContract}`).digest("hex")}`);
+  assert.equal(cash.amount, 10.2 * 0.998); assert.equal(cash.quoteSource, "Kraken USDC/USD · pUSD抵押权益参考");
+  assert.equal(cash.quoteObservedAt, "2026-10-24T12:29:00.000Z");
+  assert.equal(cash.balanceAddress, otherEvm); assert.equal(cash.cashObservedAt, "2026-10-24T12:29:58.000Z");
+  assert.equal(cash.cashRawBalance, "10200000"); assert.equal(cash.cashBlockNumber, "0x12345");
+  assert.equal(result.total, 1.2 + 10.2 * 0.998);
+  assert.equal(result.holdings[0].symbol, "POL"); assert.equal(result.holdings[0].amount, 1.2);
+  assert.equal(result.derivedWallets[0].owner, evm); assert.equal(result.derivedWallets[0].address, otherEvm);
+  assert.ok(result.warnings.some(line => /pUSD.*参考估值.*赎回/.test(line)));
+  const publicCalls = mock.calls.filter(call => new URL(call.url).origin !== "https://web3.okx.com");
+  const rpc = publicCalls.filter(call => call.url === polygonRpc);
+  assert.equal(rpc.length, 4);
+  for (const call of publicCalls) {
+    assert.equal(call.init.redirect, "error"); assert.ok(call.init.signal instanceof AbortSignal);
+    assert.ok(Object.keys(call.init.headers).every(header => !/authorization|ok-access|key/i.test(header)));
+    for (const secret of Object.values(credentials)) assert.equal(JSON.stringify(call).includes(secret), false);
+  }
+  for (const call of rpc) for (const request of JSON.parse(call.init.body)) {
+    assert.ok(["eth_chainId", "eth_blockNumber", "eth_getCode", "eth_getBlockByNumber", "eth_call"].includes(request.method));
+    if (!["eth_chainId", "eth_blockNumber"].includes(request.method)) assert.equal(request.params[1], request.method === "eth_getBlockByNumber" ? false : "0x12345");
+  }
+});
+
+test("Safe ownership, exact contract decimals, fixed block and RPC shape must all verify before any cash is returned", async () => {
+  for (const change of [{ chain: "0x1" }, { candidate: `0x${word(0)}` }, { candidate: "0x" }, { candidate: `0x${word(1)}${word(2)}` },
+    { owners: ownerArray(unknownEth) }, { owners: `0x${word(32)}${word(2)}${evm.slice(2).padStart(64, "0")}${unknownEth.slice(2).padStart(64, "0")}` },
+    { owners: `0x${word(0)}${word(1)}${evm.slice(2).padStart(64, "0")}` }, { threshold: 2 }, { decimals: 18 },
+    { rawResponse: "0x" }, { raw: BigInt(Number.MAX_SAFE_INTEGER) + 1n }, { block: { number: "0x12346" } }, { blockOffset: -121 }, { blockOffset: 11 },
+    { rpcRows: rows => [...rows, rows[0]] }, { rpcRows: rows => rows.map(row => ({ ...row, id: 1 })) },
+    { rpcRows: rows => rows.map(row => ({ ...row, error: { message: credentials.secret } })) }]) {
+    await assert.rejects(runSafe(change), error => error.statusCode >= 400 && !error.message.includes(credentials.secret));
+  }
+});
+
+test("Safe RPC payment, archive, redirect and transport errors fail once with no other node or trade request", async () => {
+  for (const rpcResponse of [() => new Response(credentials.secret, { status: 402 }), () => new Response(credentials.secret, { status: 429 }),
+    () => new Response("upstream", { status: 302, headers: { location: "https://attacker.invalid" } }), () => new Response("not-json"),
+    init => Response.json(JSON.parse(init.body).map(call => ({ jsonrpc: "2.0", id: call.id, error: { code: -32602, message: "Archive requests require a personal token" } }))),
+    () => { throw Error(credentials.secret); }]) {
+    const mock = safeFetch({ rpcResponse });
+    await assert.rejects(run({ provider: "tokenpocket", wallets: [polygon], polymarketSafeOwner: evm, ...mock }), error => !error.message.includes(credentials.secret));
+    assert.equal(mock.calls.filter(call => call.url === polygonRpc).length, 1);
+    assert.equal(mock.calls.some(call => /drpc|sendTransaction|sendRawTransaction|order|swap/.test(call.url)), false);
+  }
+});
+
+test("Safe quote loss preserves precise pUSD units and canonical identity without provider-price or fixed-peg fallback", async () => {
+  const priced = await runSafe();
+  for (const options of [{ quote: { error: [], result: {} } }, { quote: { error: [], result: { USDCUSD: [["1", "1", time.getTime() / 1000 - 301]] } } },
+    { quote: { error: [], result: { USDCUSD: [["1", "1", time.getTime() / 1000 + 11]] } } },
+    { quoteResponse: () => new Response(credentials.secret, { status: 429 }) }]) {
+    const result = await runSafe(options), cash = result.unpricedAssets.find(row => row.symbol === "pUSD");
+    assert.equal(cash.quantity, "10.2"); assert.equal(cash.externalId, priced.holdings.find(row => row.symbol === "pUSD").externalId);
+    assert.equal(Object.hasOwn(cash, "amount"), false); assert.equal(result.total, 1.2); assert.equal(result.derivedWallets.length, 1);
+    assert.match(cash.reason, /参考报价.*暂不估值/); assert.equal(JSON.stringify(result).includes(credentials.secret), false);
+  }
+});
+
+test("a successfully proven zero Safe balance keeps its source claim while an undeployed candidate claims no ownership", async () => {
+  const emptyMock = safeFetch({ raw: 0 });
+  const empty = await run({ provider: "tokenpocket", wallets: [polygon], polymarketSafeOwner: evm, ...emptyMock });
+  assert.equal(empty.holdings.some(row => row.symbol === "pUSD"), false); assert.equal(empty.derivedWallets.length, 1);
+  assert.equal(empty.derivedWallets[0].cashRawBalance, "0"); assert.equal(empty.total, 1.2);
+  assert.equal(emptyMock.calls.some(call => new URL(call.url).hostname === "api.kraken.com"), false);
+  const undeployedMock = safeFetch({ code: "0x" });
+  const undeployed = await run({ provider: "tokenpocket", wallets: [polygon], polymarketSafeOwner: evm, ...undeployedMock });
+  assert.deepEqual(undeployed.derivedWallets, []); assert.equal(undeployed.holdings.some(row => row.symbol === "pUSD"), false);
+  assert.equal(undeployedMock.calls.filter(call => call.url === polygonRpc).length, 3);
+  assert.ok(undeployed.coverage.some(line => /Safe.*未部署.*不推定/.test(line)));
+});
+
+test("Safe cash-only scope remains incomplete even when the EOA DeFi index is empty", async () => {
+  const result = await runSafe({ emptyDefi: true });
+  assert.equal(result.holdings.some(row => row.symbol === "pUSD"), true);
+  assert.equal(result.valuationComplete, false);
+  assert.ok(result.coverage.some(line => /Safe.*仅读取 pUSD 现金.*不含预测持仓/.test(line)));
+});
+
+test("Safe queries require one explicit bound owner and never expand existing wallet scope by default", async () => {
+  const legacy = safeFetch();
+  const result = await run({ provider: "tokenpocket", wallets: [polygon], ...legacy });
+  assert.equal(result.total, 1.2); assert.deepEqual(result.derivedWallets, []);
+  assert.equal(legacy.calls.some(call => call.url === polygonRpc), false);
+  for (const options of [{ polymarketSafeOwner: otherEvm }, { polymarketSafeOwner: evm, provider: "okxweb3" },
+    { polymarketSafeOwner: [evm] }, { polymarketSafeOwner: "bad" }]) {
+    let calls = 0;
+    await assert.rejects(run({ provider: "tokenpocket", wallets: [polygon], polymarketSafeOwner: evm, ...options, fetchImpl: async () => { calls++; throw Error(); } }), { statusCode: 400 });
+    assert.equal(calls, 0);
+  }
+});
+
+test("Safe reference quote freshness is checked at completion without extending the shared wallet deadline", async () => {
+  let current = time;
+  const mock = safeFetch({ quote: { error: [], result: { USDCUSD: [["0.998", "1", time.getTime() / 1000 - 290]] } } });
+  const fetchImpl = (url, init) => {
+    if (url.includes("pair=USDTUSD")) current = new Date(time.getTime() + 20_000);
+    return mock.fetchImpl(url, init);
+  };
+  const result = await run({ provider: "tokenpocket", wallets: [polygon, wallets[1]], polymarketSafeOwner: evm, fetchImpl, now: () => current });
+  assert.equal(result.holdings.some(row => row.symbol === "pUSD"), false);
+  assert.equal(result.unpricedAssets.find(row => row.symbol === "pUSD").quantity, "10.2");
+  current = time;
+  await assert.rejects(run({ provider: "tokenpocket", wallets: [polygon, wallets[1]], polymarketSafeOwner: evm, now: () => current,
+    fetchImpl: (url, init) => { if (url.includes("pair=USDTUSD")) current = new Date(time.getTime() + 46_000); return mock.fetchImpl(url, init); } }), /资产|响应/);
+});

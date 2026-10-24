@@ -9,6 +9,11 @@ const QUOTE = "https://api.kraken.com/0/public/Trades?pair=USDTUSD&count=1";
 const ZERO_MINT = "EmcxFTNVDqyLHp11NvwvLZ4D7LKGbG9i7B8RF7dwpump";
 const ZERO_QUOTE = `https://api.jup.ag/price/v3?ids=${ZERO_MINT}`;
 const SOLANA_RPC = "https://api.mainnet-beta.solana.com";
+// Official Polygon Safe factory ABI and collateral identity: docs.polymarket.com/resources/contracts.
+const POLYGON_RPC = "https://polygon.publicnode.com";
+const SAFE_FACTORY = "0xaacfeea03eb1561c4e67d661e40682bd20e3541b";
+const PUSD = "0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb";
+const USDC_QUOTE = "https://api.kraken.com/0/public/Trades?pair=USDCUSD&count=1";
 const MAX_BYTES = 1_000_000;
 const MAX_ASSETS = 999;
 const MAX_VALUE = 1_000_000_000_000;
@@ -114,7 +119,7 @@ function defiIsEmpty(data, at) {
     && (wallet.totalAssets === undefined || (typeof wallet.totalAssets === "string" && /^0(?:\.0+)?$/.test(wallet.totalAssets))));
 }
 
-export async function fetchWalletAssets({ provider, credentials, wallets, fetchImpl = fetch, now = () => new Date() }) {
+export async function fetchWalletAssets({ provider, credentials, wallets, polymarketSafeOwner = null, fetchImpl = fetch, now = () => new Date() }) {
   if (!Object.hasOwn(PROVIDER_NAMES, provider) || !credentials || [credentials.apiKey, credentials.secret, credentials.passphrase]
     .some((value) => typeof value !== "string" || !value.trim() || value.length > 500 || /[\u0000-\u001f\u007f]/.test(value))) {
     throw new WalletAssetsError("请填写有效的 OnchainOS Developer API Key、Secret 和 Passphrase", 400);
@@ -131,6 +136,8 @@ export async function fetchWalletAssets({ provider, credentials, wallets, fetchI
       return normalized;
     } catch { throw new WalletAssetsError("钱包地址、网络或重复绑定无效，请核对 Ethereum、Solana、Polygon、BNB Smart Chain 或 X Layer 地址", 400); }
   });
+  if (polymarketSafeOwner !== null && (provider !== "tokenpocket" || typeof polymarketSafeOwner !== "string"
+    || !bindings.some(wallet => wallet.chainIndex === "137" && wallet.address === polymarketSafeOwner))) throw new WalletAssetsError("Safe 读取范围必须明确选择已绑定的 TokenPocket Polygon owner", 400);
   const started = atTime(now);
   const deadline = AbortSignal.timeout(45_000);
   async function request(url, body) {
@@ -140,7 +147,9 @@ export async function fetchWalletAssets({ provider, credentials, wallets, fetchI
     const zeroQuote = url === ZERO_QUOTE && body === undefined;
     const zeroTime = url === SOLANA_RPC && body?.jsonrpc === "2.0" && body.id === 1 && body.method === "getBlockTime"
       && Object.keys(body).length === 4 && Array.isArray(body.params) && body.params.length === 1 && Number.isSafeInteger(body.params[0]) && body.params[0] > 0;
-    if (!onchain && !(url === QUOTE && body === undefined) && !zeroQuote && !zeroTime) throw invalid();
+    const polygonRead = url === POLYGON_RPC && Array.isArray(body) && body.length > 0 && body.length <= 5 && body.every(row => row?.jsonrpc === "2.0"
+      && ["eth_chainId", "eth_blockNumber", "eth_call", "eth_getCode", "eth_getBlockByNumber"].includes(row.method));
+    if (!onchain && !([QUOTE, USDC_QUOTE].includes(url) && body === undefined) && !zeroQuote && !zeroTime && !polygonRead) throw invalid();
     const method = body === undefined ? "GET" : "POST";
     const encoded = body === undefined ? "" : JSON.stringify(body);
     const timestamp = atTime(now).toISOString();
@@ -196,6 +205,69 @@ export async function fetchWalletAssets({ provider, credentials, wallets, fetchI
   }
   const rows = scopes.flatMap((scope) => scope.rows);
   if (rows.length > MAX_ASSETS) throw invalid();
+  const derivedWallets = [];
+  const safeCoverage = [];
+  if (polymarketSafeOwner !== null) {
+    async function rpc(calls) {
+      const payload = await request(POLYGON_RPC, calls.map(([method, params], index) => ({ jsonrpc: "2.0", id: index + 1, method, params })));
+      if (!Array.isArray(payload) || payload.length !== calls.length) throw invalid();
+      const byId = new Map();
+      for (const row of payload) {
+        if (row?.jsonrpc !== "2.0" || !Number.isInteger(row.id) || row.id < 1 || row.id > calls.length || byId.has(row.id)
+          || row.error !== undefined || row.result === undefined || row.result === null) throw invalid();
+        byId.set(row.id, row.result);
+      }
+      return calls.map((_, index) => byId.get(index + 1));
+    }
+    const hex = value => {
+      if (typeof value !== "string" || !/^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/.test(value) || value.length > 66) throw invalid();
+      return BigInt(value);
+    };
+    const uint = value => {
+      if (typeof value !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(value)) throw invalid();
+      return BigInt(value);
+    };
+    const [chain, block] = await rpc([["eth_chainId", []], ["eth_blockNumber", []]]);
+    if (hex(chain) !== 137n || hex(block) <= 0n || hex(block) > BigInt(Number.MAX_SAFE_INTEGER)) throw invalid();
+    for (const wallet of bindings.filter(row => row.chainIndex === "137" && row.address === polymarketSafeOwner)) {
+      const [encoded] = await rpc([["eth_call", [{ to: SAFE_FACTORY, data: `0xd600539a${wallet.address.slice(2).padStart(64, "0")}` }, block]]]);
+      if (typeof encoded !== "string" || !/^0x0{24}[0-9a-fA-F]{40}$/.test(encoded)) throw invalid();
+      const safe = address(`0x${encoded.slice(-40)}`, "137");
+      if ([wallet.address, SAFE_FACTORY, PUSD].includes(safe) || seenWallets.has(`137:${safe}`) || derivedWallets.some(row => row.address === safe)) throw invalid();
+      const [code] = await rpc([["eth_getCode", [safe, block]]]);
+      if (typeof code !== "string" || !/^0x(?:[0-9a-fA-F]{2})*$/.test(code)) throw invalid();
+      if (code === "0x") { safeCoverage.push("Polymarket Safe 候选未部署，未证明归属或余额，不推定为零；不含该候选地址资产。"); continue; }
+      const [owners, threshold, decimals, raw, detail] = await rpc([
+        ["eth_call", [{ to: safe, data: "0xa0e67e2b" }, block]], ["eth_call", [{ to: safe, data: "0xe75235b8" }, block]],
+        ["eth_call", [{ to: PUSD, data: "0x313ce567" }, block]],
+        ["eth_call", [{ to: PUSD, data: `0x70a08231${safe.slice(2).padStart(64, "0")}` }, block]], ["eth_getBlockByNumber", [block, false]],
+      ]);
+      const expectedOwners = `0x${(32n).toString(16).padStart(64, "0")}${(1n).toString(16).padStart(64, "0")}${wallet.address.slice(2).padStart(64, "0")}`;
+      if (typeof owners !== "string" || owners.toLowerCase() !== expectedOwners || uint(threshold) !== 1n || uint(decimals) !== 6n
+        || uint(raw) > BigInt(Number.MAX_SAFE_INTEGER) || !detail || hex(detail.number) !== hex(block)
+        || typeof detail.hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(detail.hash)) throw invalid();
+      const observed = Number(hex(detail.timestamp)) * 1000, at = atTime(now).getTime();
+      if (!Number.isSafeInteger(observed) || observed > at + 10_000 || at - observed > 120_000) throw invalid();
+      const balance = uint(raw), quantity = `${balance / 1_000_000n}.${String(balance % 1_000_000n).padStart(6, "0")}`.replace(/\.?0+$/, "");
+      const proof = { protocol: "polymarket-safe-pusd", chainIndex: "137", owner: wallet.address, address: safe,
+        cashRawBalance: balance.toString(), cashBlockNumber: block, cashObservedAt: new Date(observed).toISOString() };
+      derivedWallets.push(proof);
+      safeCoverage.push(`Polymarket Safe：同一 Polygon 区块 ${block} 重新核实唯一 owner 与 threshold 1，仅读取 pUSD 现金；余额区块时点 ${proof.cashObservedAt}；不含预测持仓、其他代币或协议。`);
+      if (balance > 0n) rows.push({ chainIndex: "137", address: safe, contract: PUSD, symbol: "pUSD", name: "pUSD · USDC抵押权益参考", quantity, risk: false, proof });
+    }
+    if (rows.length > MAX_ASSETS) throw invalid();
+  }
+  let pusdPrice = null;
+  if (rows.some(row => row.proof)) {
+    try {
+      const payload = await request(USDC_QUOTE), trades = payload?.result?.USDCUSD;
+      const keys = payload?.result && Object.keys(payload.result).filter(key => key !== "last");
+      if (!Array.isArray(payload?.error) || payload.error.length || keys?.length !== 1 || keys[0] !== "USDCUSD" || !Array.isArray(trades) || trades.length !== 1) throw invalid();
+      const trade = trades[0], value = price(trade?.[0]), observed = typeof trade?.[2] === "number" ? trade[2] * 1000 : NaN, at = atTime(now).getTime();
+      if (!value || !Number.isFinite(observed) || observed > at + 10_000 || at - observed > 300_000) throw invalid();
+      pusdPrice = { value, observedAt: new Date(observed).toISOString() };
+    } catch { /* Keep exact pUSD units; neither its name nor the collateral design proves a dollar peg. */ }
+  }
   let usdtPrice = null;
   if (rows.some((row) => row.contract && row.contract === USDT[row.chainIndex] && !row.risk)) {
     try {
@@ -235,48 +307,53 @@ export async function fetchWalletAssets({ provider, credentials, wallets, fetchI
       zeroReason = `ZERO 的 Jupiter 报价或 Solana 时点查询失败${error instanceof WalletAssetsError && [401, 402, 403, 429].includes(error.statusCode) ? `（HTTP ${error.statusCode}）` : "或响应无效"}，本次不重试，保留数量暂不估值`;
     }
   }
+  if (pusdPrice && atTime(now).getTime() - Date.parse(pusdPrice.observedAt) > 300_000) pusdPrice = null;
   const holdings = [];
   const unpricedAssets = [];
   for (const row of rows) {
     const native = row.contract === "";
     const tether = !native && row.contract === USDT[row.chainIndex];
     const zero = row.chainIndex === "501" && row.contract === ZERO_MINT;
+    const pusd = Boolean(row.proof);
     const sourcePriced = SOURCE_PRICED[`${row.chainIndex}:${row.contract}`];
-    const known = native || tether || sourcePriced || zero;
-    const usdPrice = row.risk || !known ? null : tether ? usdtPrice?.value : zero ? zeroPrice?.value : row.tokenPrice;
+    const known = native || tether || sourcePriced || zero || pusd;
+    const usdPrice = row.risk || !known ? null : tether ? usdtPrice?.value : zero ? zeroPrice?.value : pusd ? pusdPrice?.value : row.tokenPrice;
     const externalId = `token:${digest(`${row.chainIndex}:${row.address}:${row.contract || "native"}`)}`;
     if (!usdPrice) {
       unpricedAssets.push({ externalId, chainIndex: row.chainIndex, contract: row.contract, symbol: row.symbol, name: row.name, quantity: row.quantity,
-        reason: zero ? row.risk ? "ZERO 被提供商标记风险，保留数量暂不估值" : zeroReason : !known || row.risk ? "代币身份、风险或报价时点尚未核实，未采用提供商估值" : "缺少可核实的有效 USD 报价，未按固定美元价格估值" });
+        reason: pusd ? `pUSD 未取得 5 分钟内 USDC/USD 参考报价，暂不估值；已核实 Safe 余额区块 ${row.proof.cashBlockNumber}，时点 ${row.proof.cashObservedAt}` : zero ? row.risk ? "ZERO 被提供商标记风险，保留数量暂不估值" : zeroReason : !known || row.risk ? "代币身份、风险或报价时点尚未核实，未采用提供商估值" : "缺少可核实的有效 USD 报价，未按固定美元价格估值" });
       continue;
     }
     const amount = Number(row.quantity) * usdPrice;
     if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_VALUE) throw invalid();
-    const symbol = native ? CHAINS[row.chainIndex].symbol : tether ? "USDT" : zero ? "ZERO" : sourcePriced.symbol;
+    const symbol = native ? CHAINS[row.chainIndex].symbol : tether ? "USDT" : zero ? "ZERO" : pusd ? "pUSD" : sourcePriced.symbol;
     holdings.push({ externalId,
-      chainIndex: row.chainIndex, contract: row.contract, name: `${sourcePriced?.name || symbol}（${CHAINS[row.chainIndex].name}）`, category: tether ? "稳定币" : sourcePriced?.category || "加密资产",
+      chainIndex: row.chainIndex, contract: row.contract, name: `${pusd ? row.name : sourcePriced?.name || symbol}（${CHAINS[row.chainIndex].name}）`, category: tether || pusd ? "稳定币" : sourcePriced?.category || "加密资产",
       currency: "USD", amount, quantity: row.quantity, rawQuantity: row.quantity, symbol,
-      ...(zero ? { quoteObservedAt: zeroPrice.observedAt, quoteSource: "Jupiter Price V3" } : {}) });
+      ...(zero ? { quoteObservedAt: zeroPrice.observedAt, quoteSource: "Jupiter Price V3" } : {}),
+      ...(pusd ? { quoteObservedAt: pusdPrice.observedAt, quoteSource: "Kraken USDC/USD · pUSD抵押权益参考", balanceAddress: row.address,
+        cashRawBalance: row.proof.cashRawBalance, cashBlockNumber: row.proof.cashBlockNumber, cashObservedAt: row.proof.cashObservedAt } : {}) });
   }
   const fetched = atTime(now);
   const total = holdings.reduce((sum, row) => sum + row.amount, 0);
   if (!Number.isFinite(total) || total > MAX_VALUE || fetched.getTime() < started.getTime() || fetched.getTime() - started.getTime() > 45_000) throw invalid();
   const pendingDefi = scopes.filter((scope) => !scope.defiClear);
   return {
-    provider, currency: "USD", total, holdings, unpricedAssets, breakdownComplete: true,
-    valuationComplete: unpricedAssets.length === 0 && pendingDefi.length === 0,
+    provider, currency: "USD", total, holdings, unpricedAssets, derivedWallets, breakdownComplete: true,
+    valuationComplete: unpricedAssets.length === 0 && pendingDefi.length === 0 && polymarketSafeOwner === null,
     externalAccountId: `wallets:${digest([...seenWallets].sort().join("|"))}`,
     accountLabel: `${PROVIDER_NAMES[provider]} · ${bindings.map((wallet) => CHAINS[wallet.chainIndex].name).join(" / ")}`,
     asOf: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(fetched),
     fetchedAt: fetched.toISOString(), observedAt: null, timeBasis: "retrieved",
     coverage: ["指定链和公开地址的原生币与提供商完整返回的 ERC20 / SPL / Token2022 代币；风险与空投过滤已关闭。",
       "不含 NFT、压缩 NFT、其他地址或其他链；未解码的质押、借款和待领取权益不视为零。",
-      ...scopes.map((scope) => `${CHAINS[scope.wallet.chainIndex].name}：${scope.defiClear ? "DeFi 查询明确返回近期空协议列表" : "DeFi 协议资产或覆盖范围待核实"}。`)],
+      ...scopes.map((scope) => `${CHAINS[scope.wallet.chainIndex].name}：${scope.defiClear ? "DeFi 查询明确返回近期空协议列表" : "DeFi 协议资产或覆盖范围待核实"}。`), ...safeCoverage],
     warnings: ["总额仅为已核实币种的已定价小计；缺价资产保留准确数量，未用零金额占位。",
       "代币余额与原生币来源报价未提供精确资产或报价时点，页面标记为获取时间，不代表同一实时区块。",
       "只按链与合约识别资产；未知代币即使返回价格也暂不估值，名称和风险标记不构成身份确认。",
       ...(usdtPrice ? [`USDT 使用 Kraken USDT / USD 最近成交价；报价时点 ${usdtPrice.observedAt}，不假设固定 1 美元。`] : []),
       ...(zeroPrice ? [`ZERO 使用精确 Solana mint 的 Jupiter Price V3 实际 USD 参考价；价格时点 ${zeroPrice.observedAt}，不等于余额时点；仅接受 5 分钟内报价，不保证成交或变现净额。`] : []),
+      ...(derivedWallets.length ? ["pUSD 为 USDC 抵押权益，按单位数量及 5 分钟内 Kraken USDC/USD 成交价参考估值；不是 pUSD 的直接成交价，当前抵押储备和赎回能力未核实，不代表可变现净额。"] : []),
       ...(rows.some((row) => row.chainIndex === "56" && row.contract === USDT["56"]) ? ["BSC USDT 为 Binance-Peg 合约；美元估值使用 USDT / USD 参考成交价，不核实其链上赎回或跨链溢折价。"] : []),
       ...(holdings.some((row) => row.symbol === "USDT0") ? ["USDT0 使用提供商返回的实际 USD 报价，不按固定 1 美元估值；源未提供精确报价时点，标记为获取时间。"] : []),
       ...(holdings.some((row) => row.symbol === "SPYon") ? ["SPYon 为 Ondo 代币化 ETF，按实际代币数量和提供商每代币 USD 价格估值，不转换为券商股数，也不使用固定份额乘数；源未提供精确报价时点。"] : []),

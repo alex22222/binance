@@ -57,6 +57,69 @@ function walletList(value) {
 
 const walletIdentity = (wallets) => `wallets:${digest(wallets.map((row) => `${row.chainIndex}:${row.address}`).sort().join("|"))}`;
 const exactQuantity = (value) => typeof value === "string" && value.length <= 120 && /^\d+(?:\.\d+)?$/.test(value) && Number.isFinite(Number(value));
+const PUSD = "0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb";
+
+function safeOwner(value, wallets, provider) {
+  if (value === undefined || value === null) return null;
+  if (provider !== "tokenpocket" || typeof value !== "string") throw syncError("Safe 范围仅支持已绑定的 TokenPocket Polygon owner。");
+  const owner = walletAddress(value, "137");
+  if (!wallets.some(wallet => wallet.chainIndex === "137" && wallet.address === owner)) throw syncError("Safe owner 必须属于已绑定的 Polygon 地址。");
+  return owner;
+}
+
+function derivedWalletList(value = [], wallets) {
+  if (!Array.isArray(value) || value.length > 10) throw syncError("派生 Safe 来源无法核验，保留原有资产。", 502);
+  const seen = new Set();
+  return value.map(row => {
+    if (!row || row.protocol !== "polymarket-safe-pusd" || row.chainIndex !== "137"
+      || !wallets.some(wallet => wallet.chainIndex === "137" && wallet.address === row.owner)
+      || typeof row.address !== "string" || !/^0x[a-f0-9]{40}$/.test(row.address) || /^0x0{40}$/.test(row.address) || row.address === row.owner
+      || wallets.some(wallet => wallet.chainIndex === "137" && wallet.address === row.address) || seen.has(row.address)
+      || typeof row.cashRawBalance !== "string" || !/^(?:0|[1-9]\d{0,15})$/.test(row.cashRawBalance) || BigInt(row.cashRawBalance) > BigInt(Number.MAX_SAFE_INTEGER)
+      || typeof row.cashBlockNumber !== "string" || !/^0x[1-9a-f][0-9a-f]{0,12}$/.test(row.cashBlockNumber)
+      || typeof row.cashObservedAt !== "string" || !Number.isFinite(Date.parse(row.cashObservedAt)) || new Date(row.cashObservedAt).toISOString() !== row.cashObservedAt) throw syncError("派生 Safe 来源无法核验，保留原有资产。", 502);
+    seen.add(row.address);
+    return { protocol: row.protocol, chainIndex: row.chainIndex, owner: row.owner, address: row.address,
+      cashRawBalance: row.cashRawBalance, cashBlockNumber: row.cashBlockNumber, cashObservedAt: row.cashObservedAt };
+  });
+}
+
+const cashIdentity = claim => `token:${digest(`137:${claim.address}:${PUSD}`)}`;
+function matchesCashQuantity(quantity, claim) {
+  if (typeof quantity !== "string" || !/^\d{1,16}(?:\.\d{1,6})?$/.test(quantity)) return false;
+  const [whole, fraction = ""] = quantity.split(".");
+  return BigInt(whole + fraction.padEnd(6, "0")) === BigInt(claim.cashRawBalance);
+}
+
+function derivedCashSources(result, wallets, owner) {
+  const claims = derivedWalletList(result.derivedWallets, wallets);
+  if (claims.some(row => row.owner !== owner) || owner === null && claims.length) throw syncError("Safe 来源与确认的读取范围不符。", 502);
+  const unknown = unpricedSummary(result.unpricedAssets);
+  for (const claim of claims) {
+    const age = Date.parse(result.fetchedAt) - Date.parse(claim.cashObservedAt);
+    if (age < -10_000 || age > 120_000) throw syncError("Safe 余额区块时点无法核验，保留原有资产。", 502);
+    const rows = [...result.holdings, ...unknown].filter(row => row.externalId === cashIdentity(claim));
+    if (rows.length !== (claim.cashRawBalance === "0" ? 0 : 1) || rows.some(row => !matchesCashQuantity(row.rawQuantity ?? row.quantity, claim))) throw syncError("Safe 现金数量与来源证明不符，保留原有资产。", 502);
+    for (const row of unknown.filter(row => row.externalId === cashIdentity(claim))) if (row.chainIndex !== "137" || row.contract !== PUSD || row.symbol !== "pUSD") throw syncError("Safe 未估值现金身份无法核验。", 502);
+  }
+  for (const row of result.holdings) if (["balanceAddress", "cashRawBalance", "cashBlockNumber", "cashObservedAt"].some(key => row[key] !== undefined)
+    || claims.some(claim => cashIdentity(claim) === row.externalId)) {
+    const claim = claims.find(item => item.address === row.balanceAddress);
+    if (!claim || row.externalId !== cashIdentity(claim) || row.symbol !== "pUSD" || row.category !== "稳定币" || row.currency !== "USD"
+      || row.cashRawBalance !== claim.cashRawBalance || row.cashBlockNumber !== claim.cashBlockNumber || row.cashObservedAt !== claim.cashObservedAt
+      || row.quoteSource !== "Kraken USDC/USD · pUSD抵押权益参考" || !matchesCashQuantity(row.rawQuantity, claim)) throw syncError("Safe 现金元数据无法核验，保留原有资产。", 502);
+  }
+  return claims;
+}
+
+function retainDerivedWalletSources(current, value, claims, targetAccountId) {
+  if (value.appliedDerivedWallets === undefined) return;
+  const account = current.portfolio.accounts.find(row => row.id === targetAccountId);
+  if (!account || !current.portfolio.entries.some(row => row.accountId === targetAccountId && row.kind === (account.basis === "holdings" ? "holding" : "total"))) return;
+  for (const old of derivedWalletList(value.appliedDerivedWallets, walletList(value.appliedWallets || value.wallets))) {
+    if (!claims.some(row => row.protocol === old.protocol && row.address === old.address && row.owner === old.owner)) throw syncError("已计入的 Safe 来源本次未重新核实，保留上次有效资产。", 502);
+  }
+}
 
 function unpricedSummary(value = []) {
   if (!Array.isArray(value) || value.length > 999) throw syncError("钱包未估值资产无法核验。", 502);
@@ -88,27 +151,50 @@ function walletBindings(data) {
   if (!Array.isArray(data.walletBindings) || data.walletBindings.length > 100) throw syncError("钱包来源绑定无法核验，请检查同步配置。", 500);
   return data.walletBindings.map((row) => {
     if (!row || !walletProvider(row.provider) || typeof row.targetAccountId !== "string") throw syncError("钱包来源绑定无法核验，请检查同步配置。", 500);
-    return { provider: row.provider, targetAccountId: row.targetAccountId, wallets: walletList(row.wallets) };
+    const wallets = walletList(row.wallets);
+    return { provider: row.provider, targetAccountId: row.targetAccountId, wallets, ...(row.derivedWallets !== undefined ? { derivedWallets: derivedWalletList(row.derivedWallets, wallets) } : {}) };
   });
+}
+
+function rememberWalletScope(data, provider, targetAccountId, wallets, derivedWallets) {
+  const row = { provider, targetAccountId, wallets, derivedWallets };
+  const identity = item => JSON.stringify([item.provider, item.targetAccountId, walletIdentity(item.wallets), (item.derivedWallets || []).map(claim => `${claim.owner}:${claim.address}`).sort()]);
+  // Derived reservations are durable before ledger writes; disconnect/rebind must
+  // not replace a crash-pending Safe claim with older applied EOA-only metadata.
+  const next = [...walletBindings(data).filter(item => (item.targetAccountId !== targetAccountId || item.derivedWallets?.length) && identity(item) !== identity(row)), row];
+  if (next.length > 100) throw syncError("钱包来源记录超过上限，请先核对历史绑定。", 409);
+  data.walletBindings = next;
 }
 
 function rememberWalletBinding(data, provider, value) {
   if (!walletProvider(provider) || !value?.lastAppliedAt) return;
   const wallets = walletList(value.appliedWallets || value.wallets);
-  const targetAccountId = value.targetAccountId || PROVIDERS[provider].id;
-  data.walletBindings = [...walletBindings(data).filter((row) => row.targetAccountId !== targetAccountId), { provider, targetAccountId, wallets }];
+  rememberWalletScope(data, provider, value.targetAccountId || PROVIDERS[provider].id, wallets, derivedWalletList(value.appliedDerivedWallets, wallets));
 }
 
-function uniqueWalletSource(data, current, provider, wallets, targetAccountId) {
+function configuredWalletBindings(data) {
+  return Object.entries(data.providers).filter(([name, value]) => walletProvider(name) && value.wallets).map(([provider, value]) => {
+    const wallets = walletList(value.wallets);
+    return { provider, targetAccountId: value.targetAccountId || PROVIDERS[provider].id, wallets, derivedWallets: derivedWalletList(value.preview?.derivedWallets, wallets), configured: true };
+  });
+}
+const sourceWallets = row => [...row.wallets, ...(row.derivedWallets || [])];
+const countedSource = (current, target) => {
+  const account = current.portfolio.accounts.find(row => row.id === target);
+  return account && account.platform !== "待确认" && account.reviewStatus !== "pending" && current.portfolio.entries.some(row => row.accountId === target && row.kind === (account.basis === "holdings" ? "holding" : "total"));
+};
+const configuredPredictions = data => Object.entries(data.providers).filter(([name, value]) => predictionProvider(name) && value.address).map(([provider, value]) => ({ provider, address: value.address, targetAccountId: value.targetAccountId || PROVIDERS[provider].id, configured: true }));
+
+function uniqueWalletSource(data, current, provider, wallets, targetAccountId, derivedWallets = []) {
   if (provider === "okxweb3" && targetAccountId === (data.providers.okx?.targetAccountId || PROVIDERS.okx.id)) throw syncError("OKX 交易所账户不能作为 Web3 钱包同步目标。", 409);
-  const keys = new Set(wallets.map((row) => `${row.chainIndex}:${row.address}`));
-  const configured = Object.entries(data.providers).filter(([name, value]) => walletProvider(name) && name !== provider && value.wallets).map(([name, value]) => ({ provider: name, targetAccountId: value.targetAccountId || PROVIDERS[name].id, wallets: walletList(value.wallets), configured: true }));
+  const keys = new Set(sourceWallets({ wallets, derivedWallets }).map((row) => `${row.chainIndex}:${row.address}`));
+  const configured = configuredWalletBindings(data);
   for (const row of [...configured, ...walletBindings(data)]) {
-    if (row.provider === provider && row.targetAccountId === targetAccountId || !row.wallets.some((wallet) => keys.has(`${wallet.chainIndex}:${wallet.address}`))) continue;
-    const account = current.portfolio.accounts.find((item) => item.id === row.targetAccountId);
-    const counted = account && account.reviewStatus !== "pending" && current.portfolio.entries.some((entry) => entry.accountId === account.id && entry.kind === (account.basis === "holdings" ? "holding" : "total"));
-    if (row.configured || counted) throw syncError("同一链和钱包地址已绑定其他账户，不能通过不同钱包平台重复计入；请先核对原账户。", 409);
+    if (row.provider === provider && row.targetAccountId === targetAccountId || !sourceWallets(row).some((wallet) => keys.has(`${wallet.chainIndex}:${wallet.address}`))) continue;
+    if (row.configured || countedSource(current, row.targetAccountId)) throw syncError("同一链和钱包地址已绑定其他账户，不能通过不同钱包平台重复计入；请先核对原账户。", 409);
   }
+  for (const row of [...configuredPredictions(data), ...predictionBindings(data)]) if (keys.has(`137:${row.address.toLowerCase()}`)
+    && (row.configured || countedSource(current, row.targetAccountId))) throw syncError("同一 Polygon 来源已绑定预测市场账户，不能通过钱包或 Safe 重复计入。", 409);
 }
 
 function separateExchangeTarget(data, provider, targetAccountId) {
@@ -116,9 +202,9 @@ function separateExchangeTarget(data, provider, targetAccountId) {
     || walletBindings(data).some((row) => row.provider === "okxweb3" && row.targetAccountId === targetAccountId))) throw syncError("已绑定的 Web3 钱包账户不能作为 OKX 交易所同步目标。", 409);
 }
 
-async function walletAssets(provider, credentials, wallets, api, now) {
+async function walletAssets(provider, credentials, wallets, api, now, polymarketSafeOwner = null) {
   const startedAt = Date.now();
-  const result = await api.fetchWalletAssets({ provider, credentials, wallets, now: () => new Date(now.getTime() + Date.now() - startedAt) });
+  const result = await api.fetchWalletAssets({ provider, credentials, wallets, polymarketSafeOwner, now: () => new Date(now.getTime() + Date.now() - startedAt) });
   if (result.externalAccountId !== walletIdentity(wallets)) throw syncError("返回的钱包来源与已绑定地址不符。", 502);
   return result;
 }
@@ -164,13 +250,13 @@ function rememberPredictionBinding(data, provider, value) {
 }
 
 function uniquePredictionSource(data, current, provider, address, targetAccountId) {
-  const configured = Object.entries(data.providers).filter(([name, value]) => predictionProvider(name) && name !== provider && value.address).map(([name, value]) => ({ provider: name, address: value.address, targetAccountId: value.targetAccountId || PROVIDERS[name].id, configured: true }));
+  const configured = configuredPredictions(data);
   for (const row of [...configured, ...predictionBindings(data)]) {
     if (row.provider === provider && row.targetAccountId === targetAccountId || row.address.toLowerCase() !== address) continue;
-    const account = current.portfolio.accounts.find((item) => item.id === row.targetAccountId);
-    const counted = account && account.platform !== "待确认" && account.reviewStatus !== "pending" && current.portfolio.entries.some((entry) => entry.accountId === account.id && entry.kind === (account.basis === "holdings" ? "holding" : "total"));
-    if (row.configured || counted) throw syncError("同一 Polygon 资金来源已绑定其他账户，不能通过 Polymarket 或 Future 重复计入；请先核对原账户。", 409);
+    if (row.configured || countedSource(current, row.targetAccountId)) throw syncError("同一 Polygon 资金来源已绑定其他账户，不能通过 Polymarket 或 Future 重复计入；请先核对原账户。", 409);
   }
+  for (const row of [...configuredWalletBindings(data), ...walletBindings(data)]) if (sourceWallets(row).some(wallet => wallet.chainIndex === "137" && wallet.address === address)
+    && (row.configured || countedSource(current, row.targetAccountId))) throw syncError("同一 Polygon 来源已绑定钱包或 Safe 账户，不能通过预测市场重复计入。", 409);
 }
 
 async function predictionAssets(provider, address, api, now) {
@@ -261,7 +347,9 @@ function status(data, now = new Date()) {
       lastError: value.lastError || null,
       accountLabel: value.accountLabel || null,
       ...(value.preview ? { preview: value.preview } : {}),
-      ...(walletProvider(name) ? { usesExistingCredentials: value.credentialRef === "okxweb3", wallets: value.wallets ? walletList(value.wallets) : [], lastUnpricedAssets: unpricedSummary(value.lastUnpricedAssets), lastValuationComplete: typeof value.lastValuationComplete === "boolean" ? value.lastValuationComplete : null } : {}),
+      ...(walletProvider(name) ? { usesExistingCredentials: value.credentialRef === "okxweb3", wallets: value.wallets ? walletList(value.wallets) : [],
+        polymarketSafeEnabled: Boolean(value.polymarketSafeOwner), lastProtocolBalances: derivedWalletList(value.appliedDerivedWallets, value.appliedWallets || value.wallets || []).map(({ protocol, cashRawBalance, cashBlockNumber, cashObservedAt }) => ({ protocol, cashRawBalance, cashBlockNumber, cashObservedAt })),
+        lastUnpricedAssets: unpricedSummary(value.lastUnpricedAssets), lastValuationComplete: typeof value.lastValuationComplete === "boolean" ? value.lastValuationComplete : null } : {}),
       ...(name === "futu" ? { accounts: value.accounts || [], selectedAccountId: value.externalAccountId || null } : {})
     };
   }
@@ -303,13 +391,14 @@ function fingerprint(portfolio, accountId) {
   return digest(JSON.stringify({ account: normalized, entries: portfolio.entries.filter((item) => item.accountId === accountId) }));
 }
 
-function makePreview(result, provider, revision, now, targetAccountId) {
+function makePreview(result, provider, revision, now, targetAccountId, wallets, polymarketSafeOwner = null) {
   if (result.provider !== provider || !CURRENCIES.includes(result.currency) || !Number.isFinite(result.total) || result.total < 0 || result.total > 1e12
     || typeof result.externalAccountId !== "string" || !result.externalAccountId || result.externalAccountId.length > 200
     || !Array.isArray(result.holdings) || result.holdings.length > 1000
     || !/^\d{4}-\d{2}-\d{2}$/.test(result.asOf) || !Number.isFinite(Date.parse(result.fetchedAt))
     || (result.observedAt !== undefined && result.observedAt !== null && (typeof result.observedAt !== "string" || !Number.isFinite(Date.parse(result.observedAt)) || Date.parse(result.observedAt) > now.getTime() + 300_000))
     || (result.timeBasis !== undefined && !["retrieved", "source", "statement"].includes(result.timeBasis))) throw syncError("平台返回的资产数据不完整，未更新原有资产。", 502);
+  const derivedWallets = walletProvider(provider) ? derivedCashSources(result, wallets, polymarketSafeOwner) : [];
   const holdings = result.holdings.map((row, index) => {
     if (typeof row.name !== "string" || !row.name.trim() || row.name.length > 180 || !CATEGORIES.includes(row.category) || !CURRENCIES.includes(row.currency)
       || !Number.isFinite(row.amount) || row.amount < 0 || row.amount > 1e12) throw syncError("持仓明细无法核验，未更新原有资产。", 502);
@@ -324,6 +413,7 @@ function makePreview(result, provider, revision, now, targetAccountId) {
       ...(row.sourceCurrency !== undefined ? { sourceCurrency: row.sourceCurrency, sourceAmount: row.sourceAmount } : {}),
       ...(row.rawQuantity !== undefined ? { rawQuantity: row.rawQuantity } : {}),
       ...(quoted ? { quoteSource: row.quoteSource, quoteObservedAt: row.quoteObservedAt } : {}),
+      ...(row.balanceAddress ? { balanceAddress: row.balanceAddress, cashRawBalance: row.cashRawBalance, cashBlockNumber: row.cashBlockNumber, cashObservedAt: row.cashObservedAt } : {}),
       ...(row.quantity !== undefined ? { quantity: String(row.quantity).slice(0, 80) } : {}) };
   });
   const sum = holdings.reduce((value, row) => value + (row.currency === result.currency ? row.amount : 0), 0);
@@ -341,7 +431,7 @@ function makePreview(result, provider, revision, now, targetAccountId) {
   return { id: randomUUID(), provider, currency: result.currency, total: result.total, asOf: result.asOf, fetchedAt: result.fetchedAt,
     observedAt: result.observedAt || null, timeBasis: result.observedAt ? result.timeBasis || "source" : "retrieved",
     ...(result.valuation !== undefined ? { valuation: valuationSummary(result.valuation) } : {}),
-    ...(walletProvider(provider) ? { unpricedAssets, valuationComplete: result.valuationComplete } : {}),
+    ...(walletProvider(provider) ? { unpricedAssets, valuationComplete: result.valuationComplete, derivedWallets, polymarketSafeOwner } : {}),
     accountLabel: String(result.accountLabel || PROVIDERS[provider].name).slice(0, 150), externalAccountId: result.externalAccountId,
     holdings, coverage: (result.coverage || []).filter((value) => typeof value === "string").map((value) => value.slice(0, 500)).slice(0, 20), warnings,
     targetAccountId, revision, countedBasis, expiresAt: new Date(now.getTime() + 20 * 60_000).toISOString() };
@@ -358,7 +448,8 @@ async function fetched(data, provider, stateDir, api, now, accountId, persist, r
   } else if (walletProvider(provider)) {
     const credentials = walletCredentials(data, value);
     if (!credentials) throw syncError("请先填写并验证 OnchainOS Developer 开发者凭据。");
-    result = await walletAssets(provider, credentials, walletList(value.wallets), api, now);
+    const wallets = walletList(value.wallets);
+    result = await walletAssets(provider, credentials, wallets, api, now, safeOwner(value.polymarketSafeOwner, wallets, provider));
   } else if (predictionProvider(provider)) {
     if (!value.address) throw syncError("请先配置公开资金地址。");
     result = await predictionAssets(provider, value.address, api, now);
@@ -384,7 +475,12 @@ async function fetched(data, provider, stateDir, api, now, accountId, persist, r
   separateExchangeTarget(data, provider, targetAccountId);
   if (predictionProvider(provider)) uniquePredictionSource(data, current, provider, value.address.toLowerCase(), targetAccountId);
   if (walletProvider(provider)) uniqueWalletSource(data, current, provider, walletList(value.wallets), targetAccountId);
-  const preview = makePreview(result, provider, current.revision, now, targetAccountId);
+  const wallets = walletProvider(provider) ? walletList(value.wallets) : undefined;
+  const preview = makePreview(result, provider, current.revision, now, targetAccountId, wallets, walletProvider(provider) ? safeOwner(value.polymarketSafeOwner, wallets, provider) : null);
+  if (walletProvider(provider)) {
+    uniqueWalletSource(data, current, provider, walletList(value.wallets), targetAccountId, preview.derivedWallets);
+    retainDerivedWalletSources(current, value, preview.derivedWallets, targetAccountId);
+  }
   retainPricedWalletAssets(current, preview);
   value.preview = preview;
   value.targetAccountId = targetAccountId;
@@ -418,12 +514,13 @@ function updatedPortfolio(current, preview) {
     category: row.category, currency: row.currency, amount: row.amount,
     note: [`读取时间 ${preview.fetchedAt}${sourceTime}`, row.symbol ? `代码 ${row.symbol}` : "", row.rawQuantity !== undefined || row.quantity !== undefined ? `数量 ${row.rawQuantity ?? row.quantity}${row.symbol ? ` ${row.symbol}` : ""}；金额为市值` : "",
       row.sourceAmount !== undefined ? `原币估值 ${row.sourceAmount} ${row.sourceCurrency}` : "",
-      row.quoteSource ? `价格来源 ${row.quoteSource}；价格时点 ${row.quoteObservedAt}；价格时点不代表余额时点` : ""].filter(Boolean).join("；") + quoteNote }));
+      row.quoteSource ? `价格来源 ${row.quoteSource}；价格时点 ${row.quoteObservedAt}；价格时点不代表余额时点` : "",
+      row.balanceAddress ? `Safe现金；pUSD原始单位 ${row.cashRawBalance}（6位精度）；区块 ${row.cashBlockNumber}；余额时点 ${row.cashObservedAt}；USDC抵押权益参考估值，当前储备和赎回能力未核实` : ""].filter(Boolean).join("；") + quoteNote }));
   return validatePortfolio({ ...current.portfolio, accounts: [...current.portfolio.accounts.filter((item) => item.id !== preview.targetAccountId), account],
     entries: [...current.portfolio.entries.filter((item) => item.accountId !== preview.targetAccountId), ...entries] });
 }
 
-async function applyPreview({ stateDir, data, provider, previewId, revision, now, automatic = false }) {
+async function applyPreview({ stateDir, data, provider, previewId, revision, now, persist, automatic = false }) {
   const value = data.providers[provider];
   const preview = value?.preview;
   if (!preview || preview.id !== previewId || Date.parse(preview.expiresAt) < now.getTime()) throw syncError("预览已失效，请重新拉取后核对。", 409);
@@ -434,7 +531,11 @@ async function applyPreview({ stateDir, data, provider, previewId, revision, now
   if (walletProvider(provider)) {
     const wallets = walletList(value.wallets);
     if (preview.externalAccountId !== walletIdentity(wallets)) throw syncError("钱包绑定已变化，请重新拉取预览。", 409);
-    uniqueWalletSource(data, current, provider, wallets, preview.targetAccountId);
+    const owner = safeOwner(value.polymarketSafeOwner, wallets, provider);
+    if ((preview.polymarketSafeOwner ?? null) !== owner) throw syncError("Safe 读取范围已变化，请重新核对预览。", 409);
+    const claims = derivedCashSources(preview, wallets, owner);
+    uniqueWalletSource(data, current, provider, wallets, preview.targetAccountId, claims);
+    retainDerivedWalletSources(current, value, claims, preview.targetAccountId);
   }
   if (automatic && fingerprint(current.portfolio, preview.targetAccountId) !== value.appliedFingerprint) {
     value.enabled = false;
@@ -443,6 +544,10 @@ async function applyPreview({ stateDir, data, provider, previewId, revision, now
   if (current.revision !== revision || preview.revision !== revision) throw syncError("资产版本已更新，请重新拉取预览。", 409);
   retainPricedWalletAssets(current, preview);
   const portfolio = updatedPortfolio(current, preview);
+  if (walletProvider(provider) && preview.derivedWallets?.length) {
+    rememberWalletScope(data, provider, preview.targetAccountId, walletList(value.wallets), derivedWalletList(preview.derivedWallets, walletList(value.wallets)));
+    await persist(data);
+  }
   if (!automatic && current.portfolio.entries.length) {
     const valued = await valuePersonalAssetState(current, { stateDir });
     await createPersonalAssetsSnapshot({ stateDir, revision, valuation: { rates: valued.portfolio.rates, fx: valued.fx } });
@@ -463,6 +568,7 @@ async function applyPreview({ stateDir, data, provider, previewId, revision, now
     value.lastUnpricedAssets = preview.unpricedAssets;
     value.lastValuationComplete = preview.valuationComplete;
     value.appliedWallets = walletList(value.wallets);
+    value.appliedDerivedWallets = derivedWalletList(preview.derivedWallets, value.appliedWallets);
     rememberWalletBinding(data, provider, value);
   }
   value.appliedFingerprint = fingerprint(assets.portfolio, preview.targetAccountId);
@@ -486,15 +592,17 @@ export async function performAssetSyncAction({ stateDir, provider, action, body 
       } else delete data.providers[provider];
       if (provider === "futu") delete data.oauth;
     } else if (walletProvider(provider) && ["bind", "connect"].includes(action)) {
-      if (action === "bind" && Object.keys(body).some((key) => !["wallets", "targetAccountId"].includes(key))) throw syncError("此操作只保存公开钱包绑定，不接受凭据或密钥。");
+      if (action === "bind" && Object.keys(body).some((key) => !["wallets", "targetAccountId", "polymarketSafeOwner"].includes(key))) throw syncError("此操作只保存公开钱包绑定，不接受凭据或密钥。");
       const previous = data.providers[provider] || {};
       const wallets = walletList(body.wallets ?? previous.wallets);
+      const owner = safeOwner(Object.hasOwn(body, "polymarketSafeOwner") ? body.polymarketSafeOwner : previous.polymarketSafeOwner, wallets, provider);
       const before = await readPersonalAssets({ stateDir });
       const targetAccountId = targetAccount(before, provider, body.targetAccountId, previous);
       uniqueWalletSource(data, before, provider, wallets, targetAccountId);
       rememberWalletBinding(data, provider, previous);
       if (action === "bind") {
-        const value = { ...previous, wallets, targetAccountId, enabled: false, lastError: null };
+        if (owner !== (previous.polymarketSafeOwner ?? null)) retainDerivedWalletSources(before, previous, [], targetAccountId);
+        const value = { ...previous, wallets, polymarketSafeOwner: owner, targetAccountId, enabled: false, lastError: null };
         delete value.preview;
         data.providers[provider] = value;
       } else {
@@ -511,13 +619,15 @@ export async function performAssetSyncAction({ stateDir, provider, action, body 
             credentials[key] = body[key].trim();
           }
         }
-        const result = await walletAssets(provider, credentials, wallets, api, now);
+        const result = await walletAssets(provider, credentials, wallets, api, now, owner);
         const current = await readPersonalAssets({ stateDir });
         targetAccount(current, provider, targetAccountId, previous);
         uniqueWalletSource(data, current, provider, wallets, targetAccountId);
-        const preview = makePreview(result, provider, current.revision, now, targetAccountId);
+        const preview = makePreview(result, provider, current.revision, now, targetAccountId, wallets, owner);
+        uniqueWalletSource(data, current, provider, wallets, targetAccountId, preview.derivedWallets);
+        retainDerivedWalletSources(current, previous, preview.derivedWallets, targetAccountId);
         retainPricedWalletAssets(current, preview);
-        const value = { ...previous, wallets, targetAccountId, enabled: false, preview, lastAttemptAt: now.toISOString(),
+        const value = { ...previous, wallets, polymarketSafeOwner: owner, targetAccountId, enabled: false, preview, lastAttemptAt: now.toISOString(),
           lastFetchedAt: preview.fetchedAt, accountLabel: preview.accountLabel, lastError: null,
           ...(!previous.lastAppliedAt ? { observedAt: preview.observedAt, timeBasis: preview.timeBasis } : {}) };
         delete value.credentials; delete value.credentialRef;
@@ -585,7 +695,7 @@ export async function performAssetSyncAction({ stateDir, provider, action, body 
       }
       if (changedAccount) data.providers.futu.enabled = false;
     } else if (action === "apply") {
-      assets = await applyPreview({ stateDir, data, provider, previewId: body.previewId, revision: body.revision, now });
+      assets = await applyPreview({ stateDir, data, provider, previewId: body.previewId, revision: body.revision, now, persist });
     } else throw syncError("不支持这个同步操作。", 404);
     await persist(data);
     return assets ? { sync: status(data, now), assets } : status(data, now);
@@ -627,7 +737,7 @@ export async function runAssetSyncCycle({ stateDir, api = adapters, now = new Da
         targetAccount(current, provider, undefined, value);
         const preview = await fetched(data, provider, stateDir, api, now, value.externalAccountId, persist);
         if (!sameExternal(provider, preview.externalAccountId, value.externalAccountId)) { value.enabled = false; throw syncError("平台账户标识已变化，请重新核对授权。", 409); }
-        await applyPreview({ stateDir, data, provider, previewId: preview.id, revision: preview.revision, now, automatic: true });
+        await applyPreview({ stateDir, data, provider, previewId: preview.id, revision: preview.revision, now, persist, automatic: true });
         result.applied += 1;
       } catch (error) {
         value.lastError = error.statusCode === 409 ? error.message : failureText;
