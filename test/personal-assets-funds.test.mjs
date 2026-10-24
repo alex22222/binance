@@ -74,6 +74,38 @@ test("screenshot stock quantities revalue only the existing holding and preserve
   const prior = JSON.parse(await readFile(join(stateDir,"personal-assets-snapshots",next.snapshots[0].id+".json"),"utf8")); assert.deepEqual(prior.portfolio.entries[2],stock);
 });
 
+function usSource(symbol, change = () => {}) {
+  const product = symbol === "usSPY" ? ["标普500指数ETF-SPDR", "SPY.AM", "State Street Spdr S&P 500 Etf", "GP-ETF"] : ["SpaceX", "SPCX.OQ", "Space Exploration Technologies Corp.", "GP"];
+  const fields = Array(73).fill(""); fields[0] = "200"; fields[1] = "NAME"; fields[2] = product[1]; fields[3] = "147.49"; fields[30] = "2026-10-23 16:00:01"; fields[35] = "USD"; fields[46] = product[2]; fields[56] = product[3]; change(fields);
+  const name = symbol === "usSPY" ? Buffer.from("b1eac6d5353030d6b8cafd4554462d53504452", "hex") : Buffer.from(product[0]);
+  const text = fields.join("~").split("NAME");
+  const body = Buffer.concat([Buffer.from(`v_${symbol}="` + text[0]), name, Buffer.from(text[1] + '\";\n')]);
+  return async (url, init) => { assert.equal(url, "https://qt.gtimg.cn/q=" + symbol); assert.equal(init.redirect, "error"); return new Response(body); };
+}
+
+test("US quotes distinguish current issuer, ETF and ADR products and keep an unverified source timezone explicit", async () => {
+  const quote = await fetchAssetHoldingQuote({ symbol: "usSPCX", fetchImpl: usSource("usSPCX"), now });
+  assert.equal(quote.currency, "USD"); assert.equal(quote.price, "147.49"); assert.equal(quote.nav, undefined); assert.equal(quote.date, "2026-10-23");
+  assert.equal(quote.observedAt, null); assert.equal(quote.sourceTime, "2026-10-23 16:00:01"); assert.equal(quote.timeBasis, "provider-timezone-unverified");
+  const spy = await fetchAssetHoldingQuote({ symbol: "usSPY", fetchImpl: usSource("usSPY"), now }); assert.equal(spy.category, "股票ETF");
+  for (const change of [f => { f[2] = "SPCX.AM"; }, f => { f[35] = "CNY"; }, f => { f[46] = "The SPAC and New Issue ETF"; }, f => { f[56] = "GP-ETF"; },
+    f => { f[30] = "2026-10-25 16:00:01"; }, f => { f[30] = "2026-10-23 16:00:99"; }, f => { f[30] = "2026-10-01 16:00:00"; }]) {
+    await assert.rejects(fetchAssetHoldingQuote({ symbol: "usSPCX", fetchImpl: usSource("usSPCX", change), now }));
+  }
+});
+
+test("US shares accept manually confirmed fractional quantities while an ETF cannot use a stock category", async t => {
+  const stateDir = await fixture(t); const current = await readPersonalAssets({ stateDir });
+  current.portfolio.entries.push({ id: "us-one", accountId: "account-1", kind: "holding", name: "SpaceX（SPCX）", category: "股票", currency: "USD", amount: 100, asOf: "2026-10-24", source: "manual" });
+  await savePersonalAssets({ stateDir, revision: current.revision, portfolio: current.portfolio });
+  const next = await configureAssetFund({ stateDir, entryId: "us-one", symbol: "usSPCX", quantity: "0.5", confirmedOn: "2026-10-24", revision: 2, fetchImpl: usSource("usSPCX"), now });
+  assert.equal(next.portfolio.entries[2].amount, 73.745); assert.equal(next.portfolio.entries[2].currency, "USD"); assert.match(next.portfolio.entries[2].note, /时区未核实/);
+  const status = await readAssetFundStatus({ stateDir, now }); assert.equal(status.bindings[0].quantityBasis, "manual"); assert.equal(status.bindings[0].sourceTime, "2026-10-23 16:00:01");
+  const original = next.portfolio.entries[2]; original.name = "SPDR 标普500 ETF（SPY）";
+  await savePersonalAssets({ stateDir, revision: next.revision, portfolio: next.portfolio });
+  await assert.rejects(configureAssetFund({ stateDir, entryId: "us-one", symbol: "usSPY", quantity: "2", confirmedOn: "2026-10-24", revision: next.revision + 1, fetchImpl: usSource("usSPY"), now }), /证券类型/);
+});
+
 test("fund checking respects the twice-daily schedule and normal intervals are not marked delayed", async t => {
   const stateDir = await fixture(t); await bind(stateDir);
   let called = false;

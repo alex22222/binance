@@ -117,6 +117,15 @@ test("A-share valuation distinguishes screenshot quantities, source quote time a
   ui.run("hidden=true;render()"); assert.doesNotMatch(ui.get("asset-content").innerHTML,/19\.14|2026-10-23T08:14/);
 });
 
+test("US position valuation retains the provider clock without inventing its timezone", async () => {
+  const initial = stateWith([entry({ id: "us-one", kind: "holding", name: "SpaceX（SPCX）", category: "股票" })]);
+  initial.portfolio.accounts[0].basis = "holdings";
+  initial.funds = { status: "available", bindings: [{ entryId: "us-one", accountId: "account-1", symbol: "usSPCX", name: "SpaceX（SPCX）", currency: "USD", quantity: "10", quantityBasis: "manual", confirmedOn: "2026-10-24", price: "147.49", priceDate: "2026-10-23", sourceTime: "2026-10-23 16:00:01", timeBasis: "provider-timezone-unverified", priceBasis: "market-quote", source: "腾讯证券行情", url: "https://gu.qq.com/usSPCX/gp", enabled: true }] };
+  const ui = await view(initial);
+  assert.match(ui.get("asset-content").innerHTML, /源返回行情时间 2026-10-23 16:00:01（源时区未核实）/);
+  ui.run('openFund("us-one")'); assert.match(ui.get("dialog-body").innerHTML, /step="any"/);
+});
+
 test("a new platform without an account opens its own account form instead of another platform's asset entry", async () => {
   const initial = stateWith();
   initial.portfolio.accounts = initial.portfolio.accounts.filter((account) => !["民生银行", "TokenPocket"].includes(account.platform));

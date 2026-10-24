@@ -11,9 +11,18 @@ const CATALOG = {
   HK0000478872: { name: "高腾微财货币基金（A 港元累积）", currency: "HKD", source: "高腾国际资产管理", url: "https://www.gaotengasset.com/zh-HK/product-services" },
   US9229083632: { name: "Vanguard 标普500 ETF（VOO）", currency: "USD", source: "Vanguard（发行人）", priceBasis: "market-close", url: "https://investor.vanguard.com/investment-products/etfs/profile/voo" },
 };
-const STOCKS = Object.fromEntries([
-  ["sz000534", "万泽股份"], ["sz002617", "露笑科技"], ["sh600704", "物产中大"], ["sh601012", "隆基绿能"], ["sh601216", "君正集团"],
-].map(([symbol, name]) => [symbol, { name, currency: "CNY", source: "腾讯证券行情", priceBasis: "market-quote", url: `https://gu.qq.com/${symbol}/gp` }]));
+const STOCKS = {
+  ...Object.fromEntries([
+    ["sz000534", "万泽股份"], ["sz002617", "露笑科技"], ["sh600704", "物产中大"], ["sh601012", "隆基绿能"], ["sh601216", "君正集团"],
+  ].map(([symbol, name]) => [symbol, { name, currency: "CNY", source: "腾讯证券行情", priceBasis: "market-quote", url: `https://gu.qq.com/${symbol}/gp` }])),
+  ...Object.fromEntries([
+    ["usSPCX", "SpaceX（SPCX）", "SpaceX", "SPCX.OQ", "Space Exploration Technologies Corp.", "股票"],
+    ["usSPY", "SPDR 标普500 ETF（SPY）", "标普500指数ETF-SPDR", "SPY.AM", "State Street Spdr S&P 500 Etf", "股票ETF"],
+    ["usPONY", "小马智行（PONY）", "小马智行", "PONY.OQ", "Pony Ai Inc", "股票"],
+    ["usTEM", "Tempus AI（TEM）", "Tempus AI", "TEM.OQ", "Tempus Ai, Inc.", "股票"],
+    ["usSFTBY", "软银集团 ADR（SFTBY）", "软银", "SFTBY.PS", "Softbank Group Corp", "股票"],
+  ].map(([symbol, name, quoteName, quoteCode, issuer, category]) => [symbol, { name, quoteName, quoteCode, issuer, category, currency: "USD", source: "腾讯证券行情", priceBasis: "market-quote", url: `https://gu.qq.com/${symbol}/gp` }])),
+};
 const instrument = row => row.symbol === undefined ? CATALOG[row.isin] : STOCKS[row.symbol];
 const validInstrument = row => row.symbol === undefined ? typeof row.isin === "string" && Object.hasOwn(CATALOG, row.isin) : row.isin === undefined && typeof row.symbol === "string" && Object.hasOwn(STOCKS, row.symbol);
 const INTERVAL = 12 * 60 * 60_000;
@@ -42,14 +51,25 @@ export async function fetchAssetHoldingQuote({ isin, symbol, fetchImpl = fetch, 
     const text = await publicText(`https://qt.gtimg.cn/q=${symbol}`, null, fetchImpl, "gb18030");
     const match = text.match(new RegExp(`^v_${symbol}="([^"\\r\\n]*)";\\s*$`));
     const fields = match?.[1].split("~");
-    if (!fields || fields.length < 62 || fields.length > 120 || fields[1] !== STOCKS[symbol].name || fields[2] !== symbol.slice(2) || fields[61] !== "GP-A"
-      || !/^\d{1,9}(?:\.\d{1,4})?$/.test(fields[3]) || Number(fields[3]) <= 0 || !/^\d{14}$/.test(fields[30])) throw Error();
-    const at = fields[30]; const date = `${at.slice(0,4)}-${at.slice(4,6)}-${at.slice(6,8)}`;
-    const observed = new Date(`${date}T${at.slice(8,10)}:${at.slice(10,12)}:${at.slice(12,14)}+08:00`);
-    if (!validDate(date) || Number(at.slice(8,10)) > 23 || Number(at.slice(10,12)) > 59 || Number(at.slice(12,14)) > 59
-      || !Number.isFinite(observed.getTime()) || observed.getTime() > now.getTime() + 300_000 || now.getTime() - observed.getTime() > 7 * 86_400_000) throw Error();
-    return { symbol, ...STOCKS[symbol], price: fields[3], date, observedAt: observed.toISOString(), fetchedAt: now.toISOString() };
-  } catch (error) { if (error.fundError) throw error; throw fail("A 股身份、未复权报价或行情日期无法核实，保留上次有效估值。"); }
+    const metadata = STOCKS[symbol]; const us = metadata.currency === "USD";
+    if (!fields || fields.length < 62 || fields.length > 120 || fields[1] !== (metadata.quoteName || metadata.name) || fields[2] !== (metadata.quoteCode || symbol.slice(2))
+      || (us ? fields[0] !== "200" || fields[35] !== "USD" || fields[46] !== metadata.issuer || fields[56] !== (metadata.category === "股票ETF" ? "GP-ETF" : "GP") : fields[61] !== "GP-A")
+      || !/^\d{1,9}(?:\.\d{1,6})?$/.test(fields[3]) || Number(fields[3]) <= 0) throw Error();
+    const at = fields[30]; let date; let observedAt = null;
+    if (us) {
+      if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(at) || Number(at.slice(11,13)) > 23 || Number(at.slice(14,16)) > 59 || Number(at.slice(17,19)) > 59) throw Error();
+      date = at.slice(0,10);
+      if (!validDate(date) || date > day(now) || Date.parse(day(now)) - Date.parse(date) > 7 * 86_400_000) throw Error();
+    } else {
+      if (!/^\d{14}$/.test(at)) throw Error();
+      date = `${at.slice(0,4)}-${at.slice(4,6)}-${at.slice(6,8)}`;
+      const observed = new Date(`${date}T${at.slice(8,10)}:${at.slice(10,12)}:${at.slice(12,14)}+08:00`);
+      if (!validDate(date) || Number(at.slice(8,10)) > 23 || Number(at.slice(10,12)) > 59 || Number(at.slice(12,14)) > 59
+        || !Number.isFinite(observed.getTime()) || observed.getTime() > now.getTime() + 300_000 || now.getTime() - observed.getTime() > 7 * 86_400_000) throw Error();
+      observedAt = observed.toISOString();
+    }
+    return { symbol, ...metadata, price: fields[3], date, observedAt, ...(us ? { sourceTime: at, timeBasis: "provider-timezone-unverified" } : {}), fetchedAt: now.toISOString() };
+  } catch (error) { if (error.fundError) throw error; throw fail("证券身份、未复权报价或行情日期无法核实，保留上次有效估值。"); }
 }
 
 export async function fetchAssetFundNav({ isin, fetchImpl = fetch, now = new Date() }) {
@@ -107,7 +127,7 @@ async function readConfig(path) {
     if (config.schemaVersion !== 1 || !Array.isArray(config.bindings) || config.bindings.length > 100) throw Error();
     for (const row of config.bindings) {
       if (!row || typeof row.entryId !== "string" || ids.has(row.entryId) || !validInstrument(row) || !validQuantity(row.quantity)
-        || row.symbol !== undefined && (!Number.isInteger(Number(row.quantity)) || !["manual", "screenshot"].includes(row.quantityBasis))
+        || row.symbol !== undefined && (STOCKS[row.symbol].currency === "CNY" && !Number.isInteger(Number(row.quantity)) || !["manual", "screenshot"].includes(row.quantityBasis))
         || !validDate(row.confirmedOn) || typeof row.enabled !== "boolean" || !/^[a-f0-9]{64}$/.test(row.fingerprint)) throw Error();
       ids.add(row.entryId);
     }
@@ -140,7 +160,7 @@ function revalued(entry, binding, quote) {
   if (!Number.isFinite(amount) || amount < 0 || amount > 1e12) throw fail("持有数量与报价乘积超出支持范围。", 400);
   return { ...entry, name: quote.name, currency: quote.currency, amount, asOf: quote.date, asOfBasis: "statement", source: "api",
     note: quote.priceBasis === "market-quote"
-      ? `按未复权市价重估，非券商账户同步；证券代码 ${binding.symbol}；股数 ${binding.quantity}（${binding.quantityBasis === "screenshot" ? "截图数量录入日" : "用户确认日"} ${binding.confirmedOn}${binding.quantityBasis === "screenshot" ? "，截图持股时点未核实" : ""}）；行情价格 ${quote.price} CNY，源行情时间 ${quote.observedAt}；来源 ${quote.source}。只更新市值，现金与股数不自动变化；买卖、送转或拆并股后请更新，未将旧截图盈亏当成最新盈亏。`
+      ? `按未复权市价重估，非券商账户同步；证券代码 ${binding.symbol}；股数 ${binding.quantity}（${binding.quantityBasis === "screenshot" ? "截图数量录入日" : "用户确认日"} ${binding.confirmedOn}${binding.quantityBasis === "screenshot" ? "，截图持股时点未核实" : ""}）；行情价格 ${quote.price} ${quote.currency}，源行情时间 ${quote.observedAt || `${quote.sourceTime}（源时区未核实）`}；来源 ${quote.source}。只更新市值，现金与股数不自动变化；买卖、送转或拆并股后请更新，未将旧截图盈亏当成最新盈亏。`
       : quote.priceBasis === "market-close"
       ? `发行人公布市场收盘价重估，非银行账户同步；ISIN ${binding.isin}；长期持有股数 ${binding.quantity}（用户确认日 ${binding.confirmedOn}，不是到期日）；市场收盘价 ${quote.nav} ${quote.currency}，价格日 ${quote.date}；来源 ${quote.source}。股数不自动变化，买卖或拆并股后请更新；不是盘中实时价格。`
       : `官方净值重估，非银行账户同步；ISIN ${binding.isin}；长期持有份额 ${binding.quantity}（用户确认日 ${binding.confirmedOn}，不是到期日）；净值 ${quote.nav} ${quote.currency}，净值日 ${quote.date}；来源 ${quote.source}。份额不自动变化，申购赎回后请更新。` };
@@ -150,7 +170,7 @@ function status(config, state, now) {
     const quote = binding.quote;
     let changed = true; try { changed = target(state, binding.entryId).fingerprint !== binding.fingerprint; } catch {}
     return { entryId: binding.entryId, accountId: binding.accountId, ...(binding.symbol === undefined ? { isin: binding.isin, nav: quote?.nav || null, navDate: quote?.date || null }
-      : { symbol: binding.symbol, quantityBasis: binding.quantityBasis, price: quote?.price || null, priceDate: quote?.date || null, observedAt: quote?.observedAt || null }), ...instrument(binding), quantity: binding.quantity, confirmedOn: binding.confirmedOn,
+      : { symbol: binding.symbol, quantityBasis: binding.quantityBasis, price: quote?.price || null, priceDate: quote?.date || null, observedAt: quote?.observedAt || null, sourceTime: quote?.sourceTime || null, timeBasis: quote?.timeBasis || null }), ...instrument(binding), quantity: binding.quantity, confirmedOn: binding.confirmedOn,
       enabled: binding.enabled && !changed, lastAttemptAt: binding.lastAttemptAt || null, lastFetchedAt: binding.lastFetchedAt || null, lastAppliedAt: binding.lastAppliedAt || null,
       delayed: !binding.lastFetchedAt || now - Date.parse(binding.lastFetchedAt) > INTERVAL * 2 || Boolean(quote?.date && Date.parse(day(now)) - Date.parse(quote.date) > 4 * 86_400_000),
       lastError: changed ? "持仓已手动修改或被其他来源更新，自动估值已暂停，请重新确认数量。" : binding.lastError || null };
@@ -160,12 +180,12 @@ export async function readAssetFundStatus({ stateDir, state, now = new Date() })
 
 export async function configureAssetFund({ stateDir, entryId, isin, symbol, quantity, quantityBasis = "manual", confirmedOn, revision, fetchImpl = fetch, now = new Date() }) {
   if (!validInstrument({ isin, symbol }) || !validQuantity(quantity) || !validDate(confirmedOn) || confirmedOn > day(now)
-    || symbol !== undefined && (!Number.isInteger(Number(quantity)) || !["manual", "screenshot"].includes(quantityBasis))) throw fail("请核对证券标识、非负数量及数量日期。", 400);
+    || symbol !== undefined && (STOCKS[symbol].currency === "CNY" && !Number.isInteger(Number(quantity)) || !["manual", "screenshot"].includes(quantityBasis))) throw fail("请核对证券标识、非负数量及数量日期。", 400);
   return locked(stateDir, async (config, persist) => {
     const current = await readPersonalAssets({ stateDir }); if (current.revision !== revision) throw fail("资产版本已更新，请重新载入后核对。", 409);
     const original = target(current, entryId);
     const metadata = instrument({ isin, symbol });
-    if (symbol !== undefined ? original.entry.category !== "股票" || original.entry.name !== metadata.name
+    if (symbol !== undefined ? original.entry.category !== (metadata.category || "股票") || original.entry.name !== metadata.name
       : (metadata.priceBasis === "market-close") !== (original.entry.category === "股票ETF") || original.entry.category === "股票") throw fail("证券类型或名称与所选报价不匹配，请核对原持仓。", 400);
     const quote = await fetchAssetHoldingQuote({ isin, symbol, fetchImpl, now });
     const binding = { entryId, accountId: original.account.id, ...(symbol === undefined ? { isin } : { symbol, quantityBasis }), quantity, confirmedOn, enabled: true };

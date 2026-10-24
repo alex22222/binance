@@ -158,3 +158,10 @@ node --test --test-timeout=30000 test/*.test.mjs
 A 股与原有基金/ETF 绑定共用受限的 `personal-assets-funds.json` 存储及锁，保留原持仓 ID、原币和账户口径。首次启用前快照保留原截图，逐次自动更新保留滚动备份。任何手动修改持仓或账户口径都会暂停对应估值，重新确认后再开启。
 
 只读采集任务的超时上限为 6 分钟，覆盖多条公开报价与已授权账户的独立超时预算，避免单一来源慢响应使后续来源没有机会完成；不增加每天两次的运行频率。
+
+
+## 盈立美股按确认股数自动重估
+
+当前支持已确认的 SPCX、SPY、PONY、TEM、SFTBY，按用户填写的美股／ADR 股数使用腾讯证券美元行情更新，支持碎股。逐一核对报价代码（含市场后缀）、产品名称、发行人、USD 及 GP／GP-ETF 类别，避免将重复使用的 SPCX 代码误配为旧 ETF。身份核对资料：[SpaceX 投资者关系](https://ir.spacex.com/faqs-and-contact/)、[SPY 发行人](https://www.ssga.com/us/en/intermediary/etfs/state-street-spdr-sp-500-etf-trust-spy)、[Tempus AI](https://investors.tempus.com/resources/investor-faqs)、[Pony AI](https://ir.pony.ai/ir-resources/investor-faqs)、[SFTBY OTC Markets](https://www.otcmarkets.com/stock/SFTBY/quote)。SPY 分类为股票 ETF，其余为股票。
+
+美元行情保留源返回的日期及时间字符串，源时区未核实，不擅自转换为 UTC；页面明确标示。沿用每天北京时间 09:00、21:00 的读取频率和失败保留上次估值机制。股数为人工确认，券商现金仍显示原有来源及日期，不能声称已取得盈立账户最新余额、成本或盈亏。将原证券汇总拆为五笔时先保存完整快照，原汇总从计入明细中替换，避免与五笔证券重复相加；账户统计口径、原币及原现金记录保持原值。
