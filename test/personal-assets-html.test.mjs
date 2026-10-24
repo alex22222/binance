@@ -1399,6 +1399,20 @@ test("bubble platform navigation opens its accounts without writes and privacy r
   assert.match(privateAtlas, /气泡大小与金额已隐藏/);
 });
 
+test("pointer-focusable bubbles retain accessible names without hidden ancestors", async () => {
+  const ui = await view(displayState());
+  const html = ui.run("platformAtlas(summarize(portfolio()))");
+  const plots = [...html.matchAll(/<div class="atlas-plot[^>]*>/g)].map(match => match[0]);
+  assert.equal(plots.length, 2);
+  for (const plot of plots) {
+    assert.doesNotMatch(plot, /aria-hidden/);
+    assert.match(plot, /role="group" aria-label="平台资产气泡"/);
+  }
+  const bubbles = [...html.matchAll(/<button[^>]*data-bubble-platform=[^>]*>/g)].map(match => match[0]);
+  assert.ok(bubbles.length > 0);
+  for (const bubble of bubbles) assert.match(bubble, /aria-label="[^\"]+ · 折合 CNY [^\"]+ · [^\"]+ · [^\"]+ · 查看账户"/);
+});
+
 test("pending, missing-FX and unknown-only platforms never get invented monetary bubbles", async () => {
   const initial = categorizedState();
   const ui = await view(initial);
