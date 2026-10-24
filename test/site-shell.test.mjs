@@ -18,6 +18,23 @@ test("the shared header marks only the active page and needs no image", () => {
   assert.doesNotMatch(html + SITE_CSS, /<img|url\(/);
 });
 
+test("navigation leads with personal assets and names the Binance wallet without changing its route", () => {
+  const html = siteHeader("/");
+  const links = [...html.matchAll(/<a href="([^"]+)"(?: aria-current="page")?>([^<]+)<\/a>/g)]
+    .map(([, href, label]) => [href, label]);
+  assert.deepEqual(links.slice(0, 2), [["/assets", "个人资产"], ["/", "币安Agent Wallet"]]);
+  assert.match(html, /<a href="\/" aria-current="page">币安Agent Wallet<\/a>/);
+  assert.match(html, /class="site-name">Agentic Wallet<\/span>/);
+});
+
+test("polymarket is a plain external navigation link, not an embedded or authenticated integration", () => {
+  const html = siteHeader("/assets");
+  assert.ok(html.includes('<a href="https://polyhermes.107-191-42-75.sslip.io/future-btc5m-bridge">polymarket</a>'));
+  assert.equal(html.match(/>polymarket<\/a>/g)?.length, 1);
+  assert.doesNotMatch(html, /<iframe|<script|onclick=|data-token|Authorization/i);
+  assert.deepEqual([...html.matchAll(/aria-current="page">([^<]+)</g)].map(([, label]) => label), ["个人资产"]);
+});
+
 test("every dashboard page uses the shared shell with the right section highlighted", () => {
   const pages = [
     ["/", liveDashboardHtml()],

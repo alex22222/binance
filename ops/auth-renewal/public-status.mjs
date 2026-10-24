@@ -64,47 +64,7 @@ export async function readPublicStatus({ path = publicStatusPath, nowMs, read = 
 }
 
 export function withAuthorizationBanner(html) {
-  const banner = `<section id="buy-authorization-banner" role="status" aria-live="polite" data-tone="unknown" style="margin:16px;padding:14px 18px;border:1px solid #687486;border-radius:10px;background:#141a23;color:#eef2f7">
-  <strong>买入权限：<span id="buy-authorization-label">未核实</span></strong>
-  <p id="buy-authorization-details">授权状态当前未核实</p>
-  <small>授权有效不代表通过全部交易风控或已成交；本模块只读，不执行续签或交易。</small>
-</section>
-<script>
-(() => {
-  const classify = ${publicStatus.toString()};
-  const banner = document.getElementById("buy-authorization-banner");
-  const label = document.getElementById("buy-authorization-label");
-  const details = document.getElementById("buy-authorization-details");
-  const beijing = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
-  let latest = null;
-  function render() {
-    const status = classify(latest);
-    banner.dataset.tone = status.tone;
-    banner.style && (banner.style.borderColor = {green:"#31b67a",amber:"#e7b34c",red:"#e56565",unknown:"#687486"}[status.tone]);
-    label.textContent = status.label;
-    details.textContent = status.renewalNotice + (status.checkedAt ?
-      " · 策略：" + status.strategyId + " · 租约截止（北京）：" + beijing.format(new Date(status.leaseExpiresAt)) +
-      " · 总截止（北京）：" + beijing.format(new Date(status.hardDeadline)) : "");
-  }
-  async function refresh() {
-    try {
-      const response = await fetch("/api/buy-authorization-status", {
-        method: "GET", credentials: "same-origin", mode: "same-origin", cache: "no-store", redirect: "error",
-        signal: AbortSignal.timeout(10_000)
-      });
-      if (!response.ok || !String(response.headers.get("content-type")).startsWith("application/json")) throw new Error("Status unavailable");
-      latest = await response.json();
-    } catch {
-      latest = null;
-    }
-    render();
-  }
-  render();
-  void refresh();
-  setInterval(refresh, 60_000);
-  setInterval(render, 1_000);
-})();
-</script>`;
-  // The hook calls this only for the authenticated GET / response.
-  return html.replace(/<body\b[^>]*>/i, opening => opening + banner);
+  // Keep the existing Dashboard hook compatible without injecting a banner.
+  // The authenticated status API and renewal/trading controls are unchanged.
+  return html;
 }

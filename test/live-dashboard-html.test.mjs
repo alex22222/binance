@@ -136,7 +136,7 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.match(html, />策略<\/a>/);
   assert.match(html, /href="\/reviews"/);
   assert.match(html, />复盘<\/a>/);
-  assert.match(html, /<nav class="site-nav" aria-label="主导航"><a href="\/" aria-current="page">仪表盘<\/a>.*<a href="\/gmgn\/">GMGN<\/a><\/nav>/);
+  assert.match(html, /<nav class="site-nav" aria-label="主导航"><a href="\/assets">个人资产<\/a><a href="\/" aria-current="page">币安Agent Wallet<\/a>.*<a href="\/gmgn\/">GMGN<\/a><a href="https:\/\/polyhermes\.107-191-42-75\.sslip\.io\/future-btc5m-bridge">polymarket<\/a><\/nav>/);
   assert.doesNotMatch(html, /id="strategyComparison"/);
   assert.doesNotMatch(html, /function renderStrategies\(data\)/);
 });

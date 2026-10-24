@@ -4,13 +4,14 @@
 // so the header also renders under CSPs that block images.
 
 export const SITE_NAV = Object.freeze([
-  ["/", "仪表盘"],
   ["/assets", "个人资产"],
+  ["/", "币安Agent Wallet"],
   ["/strategies", "策略"],
   ["/reviews", "复盘"],
   ["/fund-manager", "基金经理"],
   ["/btc-radar", "BTC 风控"],
-  ["/gmgn/", "GMGN"]
+  ["/gmgn/", "GMGN"],
+  ["https://polyhermes.107-191-42-75.sslip.io/future-btc5m-bridge", "polymarket"]
 ]);
 
 // `actions` is page-owned trusted markup shown on the right of the bar.

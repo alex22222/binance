@@ -6,7 +6,6 @@ import { copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, write
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { runInNewContext } from "node:vm";
 import test from "node:test";
 import { publicStatus, readPublicStatus, withAuthorizationBanner } from "../ops/auth-renewal/public-status.mjs";
 import { initialize, load, transformDashboardSource } from "../ops/auth-renewal/dashboard-hook.mjs";
@@ -139,58 +138,12 @@ test("hook verifies exact source hash and makes only two single replacements aft
   assert.equal(String(loaded.source), transformed);
 });
 
-function browser(html, initial, nowMs = NOW) {
-  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-  const elements = new Map();
-  const element = id => {
-    if (!elements.has(id)) elements.set(id, { textContent: "", dataset: {} });
-    return elements.get(id);
-  };
-  let time = nowMs;
-  let fetchResult = initial;
-  const intervals = [];
-  const calls = [];
-  const document = { getElementById: element };
-  const context = { document, Date: class extends Date { static now() { return time; } }, Intl,
-    AbortSignal, setInterval: (callback, delay) => intervals.push({ callback, delay }),
-    fetch: async (url, options) => {
-      calls.push({ url, options });
-      if (fetchResult instanceof Error) throw fetchResult;
-      return { ok: true, headers: { get: () => "application/json" }, json: async () => fetchResult };
-    } };
-  runInNewContext(script, context);
-  return { element, intervals, calls, tick: async (delay = 1000) => {
-    for (const entry of intervals.filter(entry => entry.delay === delay)) await entry.callback();
-  }, setTime: value => { time = value; }, setResult: value => { fetchResult = value; } };
-}
-
-test("banner uses textContent, same-origin authenticated minute polling, Beijing deadlines and no stale green", async () => {
-  const html = withAuthorizationBanner("<html><body><main>Home</main></body></html>");
-  assert.ok(html.indexOf('id="buy-authorization-banner"') < html.indexOf("<main>"));
-  assert.doesNotMatch(html, /innerHTML|insertAdjacentHTML|document\.write/);
-  assert.match(html, /授权有效不代表通过全部交易风控或已成交/);
-  const ui = browser(html, status());
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(ui.element("buy-authorization-banner").dataset.tone, "green");
-  assert.equal(ui.calls[0].url, "/api/buy-authorization-status");
-  assert.equal(ui.calls[0].options.credentials, "same-origin");
-  assert.equal(ui.calls[0].options.redirect, "error");
-  assert.equal(ui.calls[0].options.cache, "no-store");
-  assert.match(ui.element("buy-authorization-details").textContent, /北京|北京时间/);
-  assert.match(ui.element("buy-authorization-details").textContent, /11\/21|11-21/);
-  ui.setTime(NOW + 180_001);
-  await ui.tick();
-  assert.equal(ui.element("buy-authorization-label").textContent, "未核实");
-  ui.setTime(NOW);
-  ui.setResult(status({ leaseExpiresAt: iso(NOW + 1) }));
-  await ui.tick(60_000);
-  ui.setTime(NOW + 1);
-  await ui.tick();
-  assert.equal(ui.element("buy-authorization-label").textContent, "已阻断");
-  ui.setResult(Error("network"));
-  await ui.tick(60_000);
-  assert.equal(ui.element("buy-authorization-label").textContent, "未核实");
-  assert.equal(ui.element("buy-authorization-banner").dataset.tone, "unknown");
+test("the existing home wrapper leaves the page unchanged without a permission banner or polling", () => {
+  for (const source of ["<html><body><main>Home</main></body></html>", '<body class="dashboard"><header>Menu</header></body>']) {
+    const html = withAuthorizationBanner(source);
+    assert.equal(html, source);
+    assert.doesNotMatch(html, /buy-authorization-banner|买入权限|<script|\/api\/buy-authorization-status|setInterval/);
+  }
 });
 
 test("release validation requires root ownership, safe modes, self/hook/status hashes and pinned manifest", async t => {
@@ -231,7 +184,7 @@ test("release validation requires root ownership, safe modes, self/hook/status h
   await assert.rejects(verifyDashboardRelease(root, { metadata }), /manifest|missing/i);
 });
 
-test("child-process HTTP fixture preserves auth guard, changes only home and coexists with BTC loader", { timeout: 15_000 }, async t => {
+test("child-process HTTP fixture preserves auth and status API without a home banner and coexists with BTC loader", { timeout: 15_000 }, async t => {
   const directory = await temporary(t);
   await mkdir(join(directory, "scripts"));
   await mkdir(join(directory, "src"));
@@ -293,7 +246,9 @@ await import(${JSON.stringify(pathToFileURL(serverPath).href)});`);
   }
   assert.equal((await fetch(origin + "/", { redirect: "manual" })).status, 303);
   assert.doesNotMatch(await fetch(origin + "/login").then(response => response.text()), /buy-authorization-banner/);
-  assert.match(await fetch(origin + "/", { headers }).then(response => response.text()), /buy-authorization-banner/);
+  const homepage = await fetch(origin + "/", { headers }).then(response => response.text());
+  assert.equal(homepage, "<html><body><main>Home</main></body></html>");
+  assert.doesNotMatch(homepage, /buy-authorization-banner|买入权限|\/api\/buy-authorization-status/);
   assert.equal(await fetch(origin + "/btc-radar", { headers }).then(response => response.text()), "released-radar");
   assert.equal(await fetch(origin + "/strategies", { headers }).then(response => response.text()), "released-radar");
   assert.equal(await readFile(serverPath, "utf8"), source, "load hook must leave disk source intact");
