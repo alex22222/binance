@@ -133,7 +133,7 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
       if (!request.headers.origin) throw requestError("请从资产页面提交。", 403);
       requireAllowedOrigin(request);
       const body = await readAssetBody(request);
-      const assets = await configureAssetFund({ stateDir, entryId: body.entryId, isin: body.isin, quantity: body.quantity, confirmedOn: body.confirmedOn, revision: body.revision });
+      const assets = await configureAssetFund({ stateDir, entryId: body.entryId, isin: body.isin, symbol: body.symbol, quantity: body.quantity, quantityBasis: body.quantityBasis, confirmedOn: body.confirmedOn, revision: body.revision });
       json(response, await assetView(assets, { stateDir }));
       return true;
     }

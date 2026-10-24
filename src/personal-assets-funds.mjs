@@ -11,6 +11,11 @@ const CATALOG = {
   HK0000478872: { name: "高腾微财货币基金（A 港元累积）", currency: "HKD", source: "高腾国际资产管理", url: "https://www.gaotengasset.com/zh-HK/product-services" },
   US9229083632: { name: "Vanguard 标普500 ETF（VOO）", currency: "USD", source: "Vanguard（发行人）", priceBasis: "market-close", url: "https://investor.vanguard.com/investment-products/etfs/profile/voo" },
 };
+const STOCKS = Object.fromEntries([
+  ["sz000534", "万泽股份"], ["sz002617", "露笑科技"], ["sh600704", "物产中大"], ["sh601012", "隆基绿能"], ["sh601216", "君正集团"],
+].map(([symbol, name]) => [symbol, { name, currency: "CNY", source: "腾讯证券行情", priceBasis: "market-quote", url: `https://gu.qq.com/${symbol}/gp` }]));
+const instrument = row => row.symbol === undefined ? CATALOG[row.isin] : STOCKS[row.symbol];
+const validInstrument = row => row.symbol === undefined ? typeof row.isin === "string" && Object.hasOwn(CATALOG, row.isin) : row.isin === undefined && typeof row.symbol === "string" && Object.hasOwn(STOCKS, row.symbol);
 const INTERVAL = 12 * 60 * 60_000;
 const fail = (message, statusCode = 502) => Object.assign(new Error(message), { statusCode, fundError: true });
 const day = at => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(at);
@@ -19,15 +24,32 @@ const validQuantity = value => typeof value === "string" && /^\d{1,12}(?:\.\d{1,
 const hash = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const filePath = stateDir => join(resolve(stateDir), "personal-assets-funds.json");
 
-async function publicText(url, body, fetchImpl) {
+async function publicText(url, body, fetchImpl, encoding = "utf8") {
   const response = await fetchImpl(url, { method: body ? "POST" : "GET", redirect: "error", signal: AbortSignal.timeout(8000),
-    headers: { Accept: body ? "application/json" : "text/html", ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
-  if (!response.ok || !response.body || Number(response.headers.get("content-length")) > 1_000_000) { await response.body?.cancel(); throw fail("基金管理人接口暂不可用，保留上次有效估值。"); }
+    headers: { Accept: body ? "application/json" : "text/html", ...(body ? { "Content-Type": "application/json" } : {}), ...(encoding === "gb18030" ? { Referer: "https://gu.qq.com/" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  if (!response.ok || !response.body || Number(response.headers.get("content-length")) > 1_000_000) { await response.body?.cancel(); throw fail("报价来源接口暂不可用，保留上次有效估值。"); }
   const reader = response.body.getReader(); const chunks = []; let size = 0;
   try {
-    while (true) { const { value, done } = await reader.read(); if (done) break; size += value.byteLength; if (size > 1_000_000) throw fail("基金报价响应过大，未更新估值。"); chunks.push(Buffer.from(value)); }
-    return Buffer.concat(chunks).toString("utf8");
+    while (true) { const { value, done } = await reader.read(); if (done) break; size += value.byteLength; if (size > 1_000_000) throw fail("报价响应过大，未更新估值。"); chunks.push(Buffer.from(value)); }
+    return encoding === "utf8" ? Buffer.concat(chunks).toString("utf8") : new TextDecoder(encoding, { fatal: true }).decode(Buffer.concat(chunks));
   } finally { await reader.cancel().catch(() => {}); }
+}
+
+export async function fetchAssetHoldingQuote({ isin, symbol, fetchImpl = fetch, now = new Date() }) {
+  if (!validInstrument({ isin, symbol })) throw fail("暂不支持此证券代码或基金份额，请核对。", 400);
+  if (symbol === undefined) return fetchAssetFundNav({ isin, fetchImpl, now });
+  try {
+    const text = await publicText(`https://qt.gtimg.cn/q=${symbol}`, null, fetchImpl, "gb18030");
+    const match = text.match(new RegExp(`^v_${symbol}="([^"\\r\\n]*)";\\s*$`));
+    const fields = match?.[1].split("~");
+    if (!fields || fields.length < 62 || fields.length > 120 || fields[1] !== STOCKS[symbol].name || fields[2] !== symbol.slice(2) || fields[61] !== "GP-A"
+      || !/^\d{1,9}(?:\.\d{1,4})?$/.test(fields[3]) || Number(fields[3]) <= 0 || !/^\d{14}$/.test(fields[30])) throw Error();
+    const at = fields[30]; const date = `${at.slice(0,4)}-${at.slice(4,6)}-${at.slice(6,8)}`;
+    const observed = new Date(`${date}T${at.slice(8,10)}:${at.slice(10,12)}:${at.slice(12,14)}+08:00`);
+    if (!validDate(date) || Number(at.slice(8,10)) > 23 || Number(at.slice(10,12)) > 59 || Number(at.slice(12,14)) > 59
+      || !Number.isFinite(observed.getTime()) || observed.getTime() > now.getTime() + 300_000 || now.getTime() - observed.getTime() > 7 * 86_400_000) throw Error();
+    return { symbol, ...STOCKS[symbol], price: fields[3], date, observedAt: observed.toISOString(), fetchedAt: now.toISOString() };
+  } catch (error) { if (error.fundError) throw error; throw fail("A 股身份、未复权报价或行情日期无法核实，保留上次有效估值。"); }
 }
 
 export async function fetchAssetFundNav({ isin, fetchImpl = fetch, now = new Date() }) {
@@ -84,12 +106,13 @@ async function readConfig(path) {
     const config = JSON.parse(await file.readFile("utf8")); const ids = new Set();
     if (config.schemaVersion !== 1 || !Array.isArray(config.bindings) || config.bindings.length > 100) throw Error();
     for (const row of config.bindings) {
-      if (!row || typeof row.entryId !== "string" || ids.has(row.entryId) || !Object.hasOwn(CATALOG, row.isin) || !validQuantity(row.quantity)
+      if (!row || typeof row.entryId !== "string" || ids.has(row.entryId) || !validInstrument(row) || !validQuantity(row.quantity)
+        || row.symbol !== undefined && (!Number.isInteger(Number(row.quantity)) || !["manual", "screenshot"].includes(row.quantityBasis))
         || !validDate(row.confirmedOn) || typeof row.enabled !== "boolean" || !/^[a-f0-9]{64}$/.test(row.fingerprint)) throw Error();
       ids.add(row.entryId);
     }
     return config;
-  } catch (error) { if (error.code === "ENOENT") return { schemaVersion: 1, bindings: [] }; throw fail("基金重估配置无法读取，已保存资产未被改动。", 500); }
+  } catch (error) { if (error.code === "ENOENT") return { schemaVersion: 1, bindings: [] }; throw fail("持仓重估配置无法读取，已保存资产未被改动。", 500); }
   finally { await file?.close(); }
 }
 async function writePrivate(path, data) {
@@ -99,24 +122,26 @@ async function writePrivate(path, data) {
 }
 async function locked(stateDir, action) {
   const directory = resolve(stateDir); await mkdir(directory, { recursive: true, mode: 0o700 }); const info = await lstat(directory);
-  if (!info.isDirectory() || info.isSymbolicLink() || (info.mode & 0o022)) throw fail("基金存储目录不安全。", 500);
+  if (!info.isDirectory() || info.isSymbolicLink() || (info.mode & 0o022)) throw fail("持仓估值存储目录不安全。", 500);
   const path = filePath(stateDir); let lock;
   try { lock = await open(path + ".lock", "wx", 0o600); }
-  catch (error) { if (error.code === "EEXIST") throw fail("基金重估正在进行，请稍后重试。", 409); throw error; }
+  catch (error) { if (error.code === "EEXIST") throw fail("持仓重估正在进行，请稍后重试。", 409); throw error; }
   try { const config = await readConfig(path); return await action(config, () => writePrivate(path, config)); }
   finally { await lock.close(); await unlink(path + ".lock"); }
 }
 function target(state, entryId) {
   const entry = state.portfolio.entries.find(row => row.id === entryId);
   const account = entry && state.portfolio.accounts.find(row => row.id === entry.accountId);
-  if (!entry || entry.kind !== "holding" || !["货币基金", "基金", "股票ETF"].includes(entry.category) || account?.basis !== "holdings" || account.reviewStatus === "pending" || account.platform === "待确认") throw fail("请选择已确认账户中按持仓计入的基金或 ETF 记录。", 409);
+  if (!entry || entry.kind !== "holding" || !["货币基金", "基金", "股票ETF", "股票"].includes(entry.category) || account?.basis !== "holdings" || account.reviewStatus === "pending" || account.platform === "待确认") throw fail("请选择已确认账户中按持仓计入的基金、ETF 或股票记录。", 409);
   return { entry, account, fingerprint: hash({ entry, account }) };
 }
 function revalued(entry, binding, quote) {
-  const amount = Number((Number(binding.quantity) * Number(quote.nav)).toFixed(8));
-  if (!Number.isFinite(amount) || amount < 0 || amount > 1e12) throw fail("基金份额与净值乘积超出支持范围。", 400);
+  const amount = Number((Number(binding.quantity) * Number(quote.price ?? quote.nav)).toFixed(8));
+  if (!Number.isFinite(amount) || amount < 0 || amount > 1e12) throw fail("持有数量与报价乘积超出支持范围。", 400);
   return { ...entry, name: quote.name, currency: quote.currency, amount, asOf: quote.date, asOfBasis: "statement", source: "api",
-    note: quote.priceBasis === "market-close"
+    note: quote.priceBasis === "market-quote"
+      ? `按未复权市价重估，非券商账户同步；证券代码 ${binding.symbol}；股数 ${binding.quantity}（${binding.quantityBasis === "screenshot" ? "截图数量录入日" : "用户确认日"} ${binding.confirmedOn}${binding.quantityBasis === "screenshot" ? "，截图持股时点未核实" : ""}）；行情价格 ${quote.price} CNY，源行情时间 ${quote.observedAt}；来源 ${quote.source}。只更新市值，现金与股数不自动变化；买卖、送转或拆并股后请更新，未将旧截图盈亏当成最新盈亏。`
+      : quote.priceBasis === "market-close"
       ? `发行人公布市场收盘价重估，非银行账户同步；ISIN ${binding.isin}；长期持有股数 ${binding.quantity}（用户确认日 ${binding.confirmedOn}，不是到期日）；市场收盘价 ${quote.nav} ${quote.currency}，价格日 ${quote.date}；来源 ${quote.source}。股数不自动变化，买卖或拆并股后请更新；不是盘中实时价格。`
       : `官方净值重估，非银行账户同步；ISIN ${binding.isin}；长期持有份额 ${binding.quantity}（用户确认日 ${binding.confirmedOn}，不是到期日）；净值 ${quote.nav} ${quote.currency}，净值日 ${quote.date}；来源 ${quote.source}。份额不自动变化，申购赎回后请更新。` };
 }
@@ -124,23 +149,26 @@ function status(config, state, now) {
   return { status: "available", bindings: config.bindings.map(binding => {
     const quote = binding.quote;
     let changed = true; try { changed = target(state, binding.entryId).fingerprint !== binding.fingerprint; } catch {}
-    return { entryId: binding.entryId, accountId: binding.accountId, isin: binding.isin, ...CATALOG[binding.isin], quantity: binding.quantity, confirmedOn: binding.confirmedOn,
+    return { entryId: binding.entryId, accountId: binding.accountId, ...(binding.symbol === undefined ? { isin: binding.isin, nav: quote?.nav || null, navDate: quote?.date || null }
+      : { symbol: binding.symbol, quantityBasis: binding.quantityBasis, price: quote?.price || null, priceDate: quote?.date || null, observedAt: quote?.observedAt || null }), ...instrument(binding), quantity: binding.quantity, confirmedOn: binding.confirmedOn,
       enabled: binding.enabled && !changed, lastAttemptAt: binding.lastAttemptAt || null, lastFetchedAt: binding.lastFetchedAt || null, lastAppliedAt: binding.lastAppliedAt || null,
-      nav: quote?.nav || null, navDate: quote?.date || null,
       delayed: !binding.lastFetchedAt || now - Date.parse(binding.lastFetchedAt) > INTERVAL * 2 || Boolean(quote?.date && Date.parse(day(now)) - Date.parse(quote.date) > 4 * 86_400_000),
-      lastError: changed ? "持仓已手动修改或被其他来源更新，自动净值重估已暂停，请重新确认份额。" : binding.lastError || null };
+      lastError: changed ? "持仓已手动修改或被其他来源更新，自动估值已暂停，请重新确认数量。" : binding.lastError || null };
   }) };
 }
 export async function readAssetFundStatus({ stateDir, state, now = new Date() }) { return status(await readConfig(filePath(stateDir)), state || await readPersonalAssets({ stateDir }), now); }
 
-export async function configureAssetFund({ stateDir, entryId, isin, quantity, confirmedOn, revision, fetchImpl = fetch, now = new Date() }) {
-  if (!Object.hasOwn(CATALOG, isin) || !validQuantity(quantity) || !validDate(confirmedOn) || confirmedOn > day(now)) throw fail("请核对基金 ISIN、非负份额及确认日期。", 400);
+export async function configureAssetFund({ stateDir, entryId, isin, symbol, quantity, quantityBasis = "manual", confirmedOn, revision, fetchImpl = fetch, now = new Date() }) {
+  if (!validInstrument({ isin, symbol }) || !validQuantity(quantity) || !validDate(confirmedOn) || confirmedOn > day(now)
+    || symbol !== undefined && (!Number.isInteger(Number(quantity)) || !["manual", "screenshot"].includes(quantityBasis))) throw fail("请核对证券标识、非负数量及数量日期。", 400);
   return locked(stateDir, async (config, persist) => {
     const current = await readPersonalAssets({ stateDir }); if (current.revision !== revision) throw fail("资产版本已更新，请重新载入后核对。", 409);
     const original = target(current, entryId);
-    if ((CATALOG[isin].priceBasis === "market-close") !== (original.entry.category === "股票ETF")) throw fail("基金或 ETF 类型与所选报价不匹配，请核对原持仓。", 400);
-    const quote = await fetchAssetFundNav({ isin, fetchImpl, now });
-    const binding = { entryId, accountId: original.account.id, isin, quantity, confirmedOn, enabled: true };
+    const metadata = instrument({ isin, symbol });
+    if (symbol !== undefined ? original.entry.category !== "股票" || original.entry.name !== metadata.name
+      : (metadata.priceBasis === "market-close") !== (original.entry.category === "股票ETF") || original.entry.category === "股票") throw fail("证券类型或名称与所选报价不匹配，请核对原持仓。", 400);
+    const quote = await fetchAssetHoldingQuote({ isin, symbol, fetchImpl, now });
+    const binding = { entryId, accountId: original.account.id, ...(symbol === undefined ? { isin } : { symbol, quantityBasis }), quantity, confirmedOn, enabled: true };
     const entry = revalued(original.entry, binding, quote);
     const valued = await valuePersonalAssetState(current, { stateDir });
     await createPersonalAssetsSnapshot({ stateDir, revision, valuation: { rates: valued.portfolio.rates, fx: valued.fx } });
@@ -161,8 +189,8 @@ export async function runAssetFundCycle({ stateDir, fetchImpl = fetch, now = new
       try {
         let current = await readPersonalAssets({ stateDir });
         if (target(current, binding.entryId).fingerprint !== binding.fingerprint) { binding.enabled = false; throw fail("持仓已修改，自动重估暂停，请重新确认份额。", 409); }
-        const quote = await fetchAssetFundNav({ isin: binding.isin, fetchImpl, now });
-        if (binding.quote?.date > quote.date) throw fail("官方净值日期发生倒退，保留上次有效估值。");
+        const quote = await fetchAssetHoldingQuote({ isin: binding.isin, symbol: binding.symbol, fetchImpl, now });
+        if (binding.quote?.date > quote.date) throw fail("报价日期发生倒退，保留上次有效估值。");
         for (let attempt = 0; attempt < 3; attempt++) {
           current = await readPersonalAssets({ stateDir }); const selected = target(current, binding.entryId);
           if (selected.fingerprint !== binding.fingerprint) { binding.enabled = false; throw fail("持仓已修改，自动重估暂停，请重新确认份额。", 409); }
@@ -175,7 +203,7 @@ export async function runAssetFundCycle({ stateDir, fetchImpl = fetch, now = new
           } catch (error) { if (error.statusCode !== 409 || attempt === 2) throw error; }
         }
         binding.quote = quote; binding.lastFetchedAt = quote.fetchedAt; binding.lastError = null;
-      } catch (error) { binding.lastError = error.fundError ? error.message : "基金重估失败，保留上次有效数据。"; result.failed++; }
+      } catch (error) { binding.lastError = error.fundError ? error.message : "持仓重估失败，保留上次有效数据。"; result.failed++; }
       await persist();
     }
     return result;

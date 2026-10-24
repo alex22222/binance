@@ -21,7 +21,10 @@ test("AI inputs contain aggregated coverage and freshness, never names, notes, a
  const data=assetReviewInput(input);const encoded=JSON.stringify(data);
  assert.equal(data.baseCurrency,"CNY");assert.equal(data.total,100);assert.equal(data.unpricedAssets,1);
  for(const value of [key,"secret account","secret note","secret holding","0x111","private address","secret fund","2.34567891","HK0000857299"])assert.equal(encoded.includes(value),false);
- assert.equal(data.fundRevaluations.quantityBasis,"manually-confirmed-not-automatic-account-sync");
+ assert.equal(data.fundRevaluations.quantityBasis,"manually-entered-or-screenshot-not-account-sync");
+ input.funds.bindings.push({symbol:"sz000534",name:"secret stock",quantity:"1234567",quantityBasis:"screenshot",confirmedOn:"2026-10-24",priceDate:"2026-10-23",priceBasis:"market-quote"});
+ const updated=assetReviewInput(input);assert.equal(updated.fundRevaluations.positions[1].quantityBasis,"screenshot");assert.equal(updated.fundRevaluations.positions[1].priceDate,"2026-10-23");
+ for(const value of ["secret stock","sz000534","1234567"])assert.equal(JSON.stringify(updated).includes(value),false);
  assert.ok(data.byCategory.some(row=>row.name==="组合资产"));
 });
 test("missing AI configuration is explicit and performs no external request",async t=>{

@@ -88,7 +88,7 @@ test("fund NAV updates keep confirmation distinct from expiry, hide quantities a
   initial.portfolio.accounts[0].basis = "holdings";
   initial.funds = { status: "available", bindings: [{ entryId: "fund-one", accountId: "account-1", isin: "HK0000857299", name: "Synthetic public fund", currency: "USD", quantity: "2.345678", confirmedOn: "2020-01-01", nav: "12.123456", navDate: "2026-10-23", source: "Official manager", url: "https://hk.taikangasset.cn/hk/product_service/productService.html", enabled: true, delayed: false, lastFetchedAt: "2026-10-24T12:00:00Z" }] };
   const ui = await view(initial);
-  assert.match(ui.get("asset-content").innerHTML, /基金与 ETF 自动估值|确认日期不是到期日/);
+  assert.match(ui.get("asset-content").innerHTML, /基金、ETF 与股票自动估值|确认日期不是到期日/);
   assert.match(ui.get("asset-content").innerHTML, /2\.345678/);
   assert.match(ui.run("entryDateBasis(portfolio().entries[0])"), /净值日期/);
   ui.run("hidden = true; render()");
@@ -100,6 +100,21 @@ test("fund NAV updates keep confirmation distinct from expiry, hide quantities a
   ui.run("closeDialog(); state.funds.bindings[0].priceBasis = 'market-close'; render()");
   assert.match(ui.get("asset-content").innerHTML, /市场收盘价.*非盘中实时/);
   assert.match(ui.run("entryDateBasis(portfolio().entries[0])"), /市场收盘价日期/);
+});
+
+test("A-share valuation distinguishes screenshot quantities, source quote time and the broker account", async () => {
+  const initial = stateWith([entry({ id: "stock-one", kind: "holding", name: "万泽股份", category: "股票" })]);
+  initial.portfolio.accounts[0].basis = "holdings";
+  initial.funds = { status: "available", bindings: [{ entryId: "stock-one", accountId: "account-1", symbol: "sz000534", name: "万泽股份", currency: "CNY", quantity: "100", quantityBasis: "screenshot", confirmedOn: "2026-10-24", price: "19.14", priceDate: "2026-10-23", observedAt: "2026-10-23T08:14:21Z", priceBasis: "market-quote", source: "腾讯证券行情", url: "https://gu.qq.com/sz000534/gp", enabled: true }] };
+  const ui = await view(initial);
+  assert.match(ui.get("asset-content").innerHTML, /截图数量录入日[\s\S]*截图持股时点未核实[\s\S]*未复权行情价 19\.14 CNY[\s\S]*源返回行情时间/);
+  assert.match(ui.run("entryDateBasis(portfolio().entries[0])"), /行情日期.*股数来自截图/);
+  ui.run('openFund("stock-one")'); assert.match(ui.get("dialog-description").textContent,/sz000534/); assert.match(ui.get("dialog-body").innerHTML,/持有股数/);
+  ui.get("fund-quantity").value="200";ui.get("fund-confirmed").value="2026-10-24";
+  await ui.run("configureFund()");
+  const body = JSON.parse(ui.requests.find(row=>row.url==="/api/assets/funds/configure").options.body);
+  assert.equal(body.symbol,"sz000534");assert.equal(body.isin,undefined);assert.equal(body.quantity,"200");assert.equal(body.quantityBasis,"manual");
+  ui.run("hidden=true;render()"); assert.doesNotMatch(ui.get("asset-content").innerHTML,/19\.14|2026-10-23T08:14/);
 });
 
 test("a new platform without an account opens its own account form instead of another platform's asset entry", async () => {

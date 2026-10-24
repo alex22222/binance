@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { emptyPortfolio, readPersonalAssets, savePersonalAssets } from "../src/personal-assets.mjs";
-import { configureAssetFund, fetchAssetFundNav, readAssetFundStatus, runAssetFundCycle } from "../src/personal-assets-funds.mjs";
+import { configureAssetFund, fetchAssetFundNav, fetchAssetHoldingQuote, readAssetFundStatus, runAssetFundCycle } from "../src/personal-assets-funds.mjs";
 
 process.env.PERSONAL_ASSETS_FX_DISABLED = "1";
 
@@ -31,6 +31,48 @@ async function fixture(t) {
   await savePersonalAssets({ stateDir, portfolio, revision: 0 }); return stateDir;
 }
 const bind = (stateDir, more = {}) => configureAssetFund({ stateDir, entryId: "fund-one", isin, quantity: "2.5", confirmedOn: "2026-10-24", revision: 1, fetchImpl: source(), now, ...more });
+
+function stockSource(change = () => {}, suffix = "") {
+  const fields = Array(88).fill(""); fields[1] = "NAME"; fields[2] = "000534"; fields[3] = "19.14"; fields[30] = "20261023161421"; fields[61] = "GP-A";
+  change(fields);
+  // GB18030 bytes for 万泽股份 exercise the provider's real wire encoding.
+  const body = Buffer.concat([Buffer.from('v_sz000534="' + fields.join("~").split("NAME")[0]), Buffer.from("cdf2d4f3b9c9b7dd", "hex"), Buffer.from(fields.join("~").split("NAME")[1] + '";' + suffix)]);
+  return async (url, init) => { assert.equal(url, "https://qt.gtimg.cn/q=sz000534"); assert.equal(init.method, "GET"); assert.equal(init.redirect, "error"); assert.equal(init.headers.Referer, "https://gu.qq.com/"); return new Response(body); };
+}
+
+test("A-share quotes identify exchange, code, Chinese name and source timestamp without calling a broker", async () => {
+  const quote = await fetchAssetHoldingQuote({ symbol: "sz000534", fetchImpl: stockSource(), now });
+  assert.equal(quote.symbol, "sz000534"); assert.equal(quote.currency, "CNY"); assert.equal(quote.price, "19.14"); assert.equal(quote.nav, undefined);
+  assert.equal(quote.observedAt, "2026-10-23T08:14:21.000Z"); assert.equal(quote.date, "2026-10-23"); assert.equal(quote.priceBasis, "market-quote");
+  for (const change of [f => { f[2] = "000535"; }, f => { f[3] = "0"; }, f => { f[3] = "NaN"; }, f => { f[30] = "20261025090000"; },
+    f => { f[30] = "20260230150000"; }, f => { f[30] = "20261023161499"; }, f => { f[61] = "GP-B"; }]) {
+    await assert.rejects(fetchAssetHoldingQuote({ symbol: "sz000534", fetchImpl: stockSource(change), now }), /身份|报价|日期/);
+  }
+  let called = false;
+  await assert.rejects(fetchAssetHoldingQuote({ symbol: "sz999999", fetchImpl: async () => { called = true; }, now })); assert.equal(called, false);
+  await assert.rejects(fetchAssetHoldingQuote({ isin, symbol: "sz000534", fetchImpl: stockSource(), now }));
+  for (const symbol of [null, ["sz000534"], {}, "https://other.example/stock"]) await assert.rejects(fetchAssetHoldingQuote({ symbol, now }));
+  for (const fetchImpl of [stockSource(() => {}, 'v_sz000534="duplicate";'), async () => new Response('v_sz000534="unexpected name";'),
+    async () => new Response("blocked", { status: 302 })]) await assert.rejects(fetchAssetHoldingQuote({ symbol: "sz000534", fetchImpl, now }));
+});
+
+test("screenshot stock quantities revalue only the existing holding and preserve cash, PnL and old snapshots", async t => {
+  const stateDir = await fixture(t); const current = await readPersonalAssets({ stateDir });
+  const stock = { id: "stock-one", accountId: "account-1", kind: "holding", name: "万泽股份", category: "股票", currency: "CNY", amount: 1900, asOf: "2026-10-24", source: "screenshot", asOfBasis: "imported" };
+  current.portfolio.entries.push(stock, { ...stock, id: "cash-one", name: "可用现金", category: "现金", amount: 0.32 }); current.portfolio.stockPnl = [{ accountId: "account-1", amount: -30, currency: "CNY", asOf: "2026-10-24", source: "screenshot" }];
+  await savePersonalAssets({ stateDir, portfolio: current.portfolio, revision: current.revision });
+  const options = { stateDir, entryId: "stock-one", symbol: "sz000534", quantity: "100", quantityBasis: "screenshot", confirmedOn: "2026-10-24", revision: 2, fetchImpl: stockSource(), now };
+  for (const more of [{ quantity: "1.5" }, { isin }, { entryId: "other-stock" }]) await assert.rejects(configureAssetFund({ ...options, ...more }));
+  const next = await configureAssetFund(options); assert.equal(next.portfolio.entries[2].amount, 1914);
+  assert.deepEqual(next.portfolio.entries.filter(row=>row.id!==stock.id), current.portfolio.entries.filter(row=>row.id!==stock.id)); assert.deepEqual(next.portfolio.stockPnl, current.portfolio.stockPnl);
+  assert.match(next.portfolio.entries[2].note, /截图数量|持股时点未核实/); assert.match(next.portfolio.entries[2].note, /非券商账户同步/);
+  const saved = await readAssetFundStatus({ stateDir, now }); assert.equal(saved.bindings[0].symbol, "sz000534"); assert.equal(saved.bindings[0].isin, undefined);
+  assert.equal(saved.bindings[0].quantityBasis, "screenshot"); assert.equal(saved.bindings[0].price, "19.14");
+  const ledger = await readFile(join(stateDir,"personal-assets.json"),"utf8");
+  assert.deepEqual(await runAssetFundCycle({ stateDir, now: new Date("2026-10-25T01:00:00Z"), fetchImpl: async () => { throw Error("network down"); } }), { attempted:1, applied:0, failed:1 });
+  assert.equal(await readFile(join(stateDir,"personal-assets.json"),"utf8"), ledger);
+  const prior = JSON.parse(await readFile(join(stateDir,"personal-assets-snapshots",next.snapshots[0].id+".json"),"utf8")); assert.deepEqual(prior.portfolio.entries[2],stock);
+});
 
 test("fund checking respects the twice-daily schedule and normal intervals are not marked delayed", async t => {
   const stateDir = await fixture(t); await bind(stateDir);

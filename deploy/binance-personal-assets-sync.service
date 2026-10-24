@@ -15,4 +15,4 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/opt/binance-agentic-stock-bot/state
-TimeoutStartSec=120
+TimeoutStartSec=6min
