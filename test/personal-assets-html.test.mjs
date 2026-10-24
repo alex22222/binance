@@ -88,7 +88,7 @@ test("fund NAV updates keep confirmation distinct from expiry, hide quantities a
   initial.portfolio.accounts[0].basis = "holdings";
   initial.funds = { status: "available", bindings: [{ entryId: "fund-one", accountId: "account-1", isin: "HK0000857299", name: "Synthetic public fund", currency: "USD", quantity: "2.345678", confirmedOn: "2020-01-01", nav: "12.123456", navDate: "2026-10-23", source: "Official manager", url: "https://hk.taikangasset.cn/hk/product_service/productService.html", enabled: true, delayed: false, lastFetchedAt: "2026-10-24T12:00:00Z" }] };
   const ui = await view(initial);
-  assert.match(ui.get("asset-content").innerHTML, /基金自动净值重估|确认日期不是到期日/);
+  assert.match(ui.get("asset-content").innerHTML, /基金与 ETF 自动估值|确认日期不是到期日/);
   assert.match(ui.get("asset-content").innerHTML, /2\.345678/);
   assert.match(ui.run("entryDateBasis(portfolio().entries[0])"), /净值日期/);
   ui.run("hidden = true; render()");
@@ -97,6 +97,9 @@ test("fund NAV updates keep confirmation distinct from expiry, hide quantities a
   assert.equal(ui.run("modal"), "fund");
   assert.match(ui.get("dialog-body").innerHTML, /不是到期日/);
   assert.match(ui.get("dialog-body").innerHTML, /value="2\.345678"/);
+  ui.run("closeDialog(); state.funds.bindings[0].priceBasis = 'market-close'; render()");
+  assert.match(ui.get("asset-content").innerHTML, /市场收盘价.*非盘中实时/);
+  assert.match(ui.run("entryDateBasis(portfolio().entries[0])"), /市场收盘价日期/);
 });
 
 test("a new platform without an account opens its own account form instead of another platform's asset entry", async () => {

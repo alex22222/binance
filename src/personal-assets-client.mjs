@@ -96,7 +96,7 @@ function currencyTotals(entries) {
 }
 function originalCurrencyTotals() { return currencyTotals(portfolio().accounts.filter((account) => !pendingAccount(account)).flatMap(selectedEntries)); }
 function visibleNote(note) { return !hidden && note ? `<p class="muted small" style="margin:6px 0;white-space:normal;overflow-wrap:anywhere">${escape(note)}</p>` : ""; }
-function entryDateBasis(entry) { return state?.funds?.bindings?.some(row => row.entryId === entry.id) ? "净值日期 · 份额手动确认" : entry.asOfBasis === "imported" ? entry.source === "api" ? "读取日期 · 源未提供资产时点" : "导入日期 · 截图日期未核实" : "资产日期"; }
+function entryDateBasis(entry) { const fund = state?.funds?.bindings?.find(row => row.entryId === entry.id); return fund ? fund.priceBasis === "market-close" ? "市场收盘价日期 · 股数手动确认" : "净值日期 · 份额手动确认" : entry.asOfBasis === "imported" ? entry.source === "api" ? "读取日期 · 源未提供资产时点" : "导入日期 · 截图日期未核实" : "资产日期"; }
 function accountSyncDetails(account) { return Object.entries(state?.sync?.providers || {}).find(([, details]) => details.targetAccountId === account.id); }
 function accountHasRecords(account) {
   const details = accountSyncDetails(account)?.[1];
@@ -141,13 +141,13 @@ function fundValuationPanel(accountId) {
   if (state?.funds?.status === "unavailable") return '<div class="notice error">基金重估状态暂不可用，沿用已保存估值。</div>';
   const bindings = (state?.funds?.bindings || []).filter(row => !accountId || row.accountId === accountId);
   if (!bindings.length) return "";
-  return `<section class="panel" aria-label="基金自动净值重估" style="margin-bottom:20px"><h3>基金自动净值重估</h3><p class="muted small">长期持有份额持续用于估值；确认日期不是到期日。每 15 分钟检查管理人最新已公布净值，净值日可能早于今天。仅更新这些基金，不代表整个银行账户或持有份额已自动同步。</p>${bindings.map(row => `<div class="notice"><div class="section-head"><strong>${escape(row.name)}</strong><span class="pill">${!row.enabled ? "已暂停" : row.lastError ? "更新失败 · 保留上次估值" : row.delayed ? "更新延迟" : "净值自动更新"}</span></div>${hidden ? '<p class="muted small">隐私模式已隐藏份额、净值和时间详情。</p>' : `<p class="small">份额 ${escape(row.quantity)} · 确认日 ${escape(row.confirmedOn)}（不是到期日）<br>最新入账净值 ${escape(row.nav || "待获取")} ${escape(row.currency)} · 净值日 ${escape(row.navDate || "待获取")}<br>最近成功读取 ${escape(dateTime(row.lastFetchedAt))} · 最近估值入账 ${escape(dateTime(row.lastAppliedAt))}<br>最近尝试 ${escape(dateTime(row.lastAttemptAt))}</p><p class="muted small">来源：<a href="${escape(row.url)}" target="_blank" rel="noopener noreferrer">${escape(row.source)}</a> · ${escape(row.isin)}</p>${row.lastError ? `<p class="small">${escape(row.lastError)}</p>` : ""}<button class="button small" data-action="fund-edit" data-id="${escape(row.entryId)}">更新 / 重新确认份额</button>`}</div>`).join("")}</section>`;
+  return `<section class="panel" aria-label="基金与 ETF 自动估值" style="margin-bottom:20px"><h3>基金与 ETF 自动估值</h3><p class="muted small">长期持有份额持续用于估值；确认日期不是到期日。每 15 分钟检查管理人最新公布的净值或市场收盘价，报价日可能早于今天。不代表整个银行账户或持有数量已自动同步。</p>${bindings.map(row => `<div class="notice"><div class="section-head"><strong>${escape(row.name)}</strong><span class="pill">${!row.enabled ? "已暂停" : row.lastError ? "更新失败 · 保留上次估值" : row.delayed ? "更新延迟" : "报价自动更新"}</span></div>${hidden ? '<p class="muted small">隐私模式已隐藏数量、报价和时间详情。</p>' : `<p class="small">${row.priceBasis === "market-close" ? "股数" : "份额"} ${escape(row.quantity)} · 确认日 ${escape(row.confirmedOn)}（不是到期日）<br>${row.priceBasis === "market-close" ? "市场收盘价" : "最新入账净值"} ${escape(row.nav || "待获取")} ${escape(row.currency)} · ${row.priceBasis === "market-close" ? "价格日" : "净值日"} ${escape(row.navDate || "待获取")}${row.priceBasis === "market-close" ? "（非盘中实时）" : ""}<br>最近成功读取 ${escape(dateTime(row.lastFetchedAt))} · 最近估值入账 ${escape(dateTime(row.lastAppliedAt))}<br>最近尝试 ${escape(dateTime(row.lastAttemptAt))}</p><p class="muted small">来源：<a href="${escape(row.url)}" target="_blank" rel="noopener noreferrer">${escape(row.source)}</a> · ${escape(row.isin)}</p>${row.lastError ? `<p class="small">${escape(row.lastError)}</p>` : ""}<button class="button small" data-action="fund-edit" data-id="${escape(row.entryId)}">更新 / 重新确认份额</button>`}</div>`).join("")}</section>`;
 }
 function openFund(entryId) {
   const binding = state?.funds?.bindings?.find(row => row.entryId === entryId);
   if (!binding || hidden) return;
   fundEditingId = entryId; modal = "fund";
-  setDialog("确认长期持有份额", `${binding.name} · ${binding.isin}`, `<form id="fund-form"><p class="muted small">保存后按官方最新净值更新这条已有持仓，不新增重复资产。份额持续有效，日期仅记录本次确认时间。</p><div class="field"><label for="fund-quantity">持有份额</label><input id="fund-quantity" type="number" min="0" step="any" required value="${escape(binding.quantity)}"></div><div class="field"><label for="fund-confirmed">份额确认日期（不是到期日）</label><input id="fund-confirmed" type="date" max="${currentDate()}" required value="${currentDate()}"></div></form>`, '<button class="button" data-action="close-dialog">取消</button><button class="button primary" type="submit" form="fund-form">保存份额并启用自动重估</button>');
+  setDialog("确认长期持有数量", `${binding.name} · ${binding.isin}`, `<form id="fund-form"><p class="muted small">保存后按${binding.priceBasis === "market-close" ? "发行人公布的市场收盘价" : "官方最新净值"}更新这条已有持仓，不新增重复资产。数量持续有效，日期仅记录本次确认时间。</p><div class="field"><label for="fund-quantity">${binding.priceBasis === "market-close" ? "持有股数" : "持有份额"}</label><input id="fund-quantity" type="number" min="0" step="any" required value="${escape(binding.quantity)}"></div><div class="field"><label for="fund-confirmed">数量确认日期（不是到期日）</label><input id="fund-confirmed" type="date" max="${currentDate()}" required value="${currentDate()}"></div></form>`, '<button class="button" data-action="close-dialog">取消</button><button class="button primary" type="submit" form="fund-form">保存数量并启用自动估值</button>');
 }
 async function configureFund() {
   const binding = state?.funds?.bindings?.find(row => row.entryId === fundEditingId);
@@ -155,7 +155,7 @@ async function configureFund() {
   saving = true; syncBusy();
   try {
     const response = await fetch("/api/assets/funds/configure", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ entryId: binding.entryId, isin: binding.isin, quantity: $("fund-quantity").value, confirmedOn: $("fund-confirmed").value, revision: state.revision }) });
-    state = await readResponse(response); saving = false; closeDialog(); render(); notify("份额已确认，官方净值自动重估已开启");
+    state = await readResponse(response); saving = false; closeDialog(); render(); notify("数量已确认，官方报价自动估值已开启");
   } catch (error) { showError(errorText(error)); }
   finally { saving = false; syncBusy(); }
 }

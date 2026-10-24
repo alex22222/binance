@@ -8,6 +8,7 @@ import { valuePersonalAssetState } from "./personal-assets-fx.mjs";
 const CATALOG = {
   HK0000857299: { name: "泰康开泰美元货币（A Acc）", currency: "USD", source: "泰康资产管理（香港）", url: "https://hk.taikangasset.cn/hk/product_service/productService.html" },
   HK0000478872: { name: "高腾微财货币基金（A 港元累积）", currency: "HKD", source: "高腾国际资产管理", url: "https://www.gaotengasset.com/zh-HK/product-services" },
+  US9229083632: { name: "Vanguard 标普500 ETF（VOO）", currency: "USD", source: "Vanguard（发行人）", priceBasis: "market-close", url: "https://investor.vanguard.com/investment-products/etfs/profile/voo" },
 };
 const INTERVAL = 15 * 60_000;
 const fail = (message, statusCode = 502) => Object.assign(new Error(message), { statusCode, fundError: true });
@@ -39,6 +40,21 @@ export async function fetchAssetFundNav({ isin, fetchImpl = fetch, now = new Dat
       const rows = quotes.data.filter(row => row.fundCode === "20220530" && row.classType === "ausdacc");
       if (rows.length !== 1 || rows[0].className !== "A類-美元-累積" || rows[0].currencyCode !== "美元") throw Error();
       nav = rows[0].netAssets; date = rows[0].date;
+    } else if (isin === "US9229083632") {
+      const html = await publicText(CATALOG[isin].url, null, fetchImpl);
+      const blocks = [...html.matchAll(/\bdata-vgn-funds-profile="([^"]+)"/g)];
+      if (blocks.length !== 1) throw Error();
+      const entities = { "&#34;": '"', "&quot;": '"', "&amp;": "&", "&#39;": "'", "&lt;": "<", "&gt;": ">" };
+      const data = JSON.parse(blocks[0][1].replace(/&#34;|&quot;|&amp;|&#39;|&lt;|&gt;/g, entity => entities[entity]));
+      const overview = data.overview; const dashboard = data.dashboard; const price = data.price;
+      if (overview?.cusip !== "922908363" || overview.fundId !== "0968" || overview.iovTickerSymbol !== "VOO.P"
+        || dashboard?.ticker !== "VOO" || dashboard.fundId !== "0968" || dashboard.fundFullName !== "Vanguard S&P 500 ETF" || data.fundFlags?.isEtf !== true
+        || overview.marketPrice !== dashboard.marketPrice || overview.marketPrice !== price?.marketPrice
+        || overview.marketPriceAsOfDate !== dashboard.marketPriceAsOfDate || overview.marketPriceAsOfDate !== price.marketPriceAsOfDate
+        || typeof overview.marketPrice !== "string" || !/^\$(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,9})?$/.test(overview.marketPrice)
+        || typeof overview.marketPriceAsOfDate !== "string" || !/^\d{2}\/\d{2}\/\d{4}$/.test(overview.marketPriceAsOfDate)) throw Error();
+      nav = overview.marketPrice.slice(1).replaceAll(",", "");
+      const [month, day, year] = overview.marketPriceAsOfDate.split("/"); date = `${year}-${month}-${day}`;
     } else {
       const html = await publicText(CATALOG[isin].url, null, fetchImpl);
       // Parse the site's JSON hydration data without evaluating any page script.
@@ -54,9 +70,9 @@ export async function fetchAssetFundNav({ isin, fetchImpl = fetch, now = new Dat
       nav = rows[0].fundNav; date = rows[0].navDate;
     }
     if (typeof nav !== "string" || !/^\d{1,9}(?:\.\d{1,9})?$/.test(nav) || Number(nav) <= 0 || !validDate(date) || date > day(now)) throw Error();
-    if (Date.parse(day(now)) - Date.parse(date) > 7 * 86_400_000) throw fail("官方净值超过七天未更新，保留上次有效估值。");
+    if (Date.parse(day(now)) - Date.parse(date) > 7 * 86_400_000) throw fail("官方净值或价格超过七天未更新，保留上次有效估值。");
     return { isin, ...CATALOG[isin], nav, date, fetchedAt: now.toISOString() };
-  } catch (error) { if (error.fundError) throw error; throw fail("官方基金身份、份额类别或净值无法核实，保留上次有效估值。"); }
+  } catch (error) { if (error.fundError) throw error; throw fail("官方基金或 ETF 身份、份额类别或报价无法核实，保留上次有效估值。"); }
 }
 
 async function readConfig(path) {
@@ -92,14 +108,16 @@ async function locked(stateDir, action) {
 function target(state, entryId) {
   const entry = state.portfolio.entries.find(row => row.id === entryId);
   const account = entry && state.portfolio.accounts.find(row => row.id === entry.accountId);
-  if (!entry || entry.kind !== "holding" || !["货币基金", "基金"].includes(entry.category) || account?.basis !== "holdings" || account.reviewStatus === "pending" || account.platform === "待确认") throw fail("请选择已确认账户中按持仓计入的基金记录。", 409);
+  if (!entry || entry.kind !== "holding" || !["货币基金", "基金", "股票ETF"].includes(entry.category) || account?.basis !== "holdings" || account.reviewStatus === "pending" || account.platform === "待确认") throw fail("请选择已确认账户中按持仓计入的基金或 ETF 记录。", 409);
   return { entry, account, fingerprint: hash({ entry, account }) };
 }
 function revalued(entry, binding, quote) {
   const amount = Number((Number(binding.quantity) * Number(quote.nav)).toFixed(8));
   if (!Number.isFinite(amount) || amount < 0 || amount > 1e12) throw fail("基金份额与净值乘积超出支持范围。", 400);
   return { ...entry, name: quote.name, currency: quote.currency, amount, asOf: quote.date, asOfBasis: "statement", source: "api",
-    note: `官方净值重估，非银行账户同步；ISIN ${binding.isin}；长期持有份额 ${binding.quantity}（用户确认日 ${binding.confirmedOn}，不是到期日）；净值 ${quote.nav} ${quote.currency}，净值日 ${quote.date}；来源 ${quote.source}。份额不自动变化，申购赎回后请更新。` };
+    note: quote.priceBasis === "market-close"
+      ? `发行人公布市场收盘价重估，非银行账户同步；ISIN ${binding.isin}；长期持有股数 ${binding.quantity}（用户确认日 ${binding.confirmedOn}，不是到期日）；市场收盘价 ${quote.nav} ${quote.currency}，价格日 ${quote.date}；来源 ${quote.source}。股数不自动变化，买卖或拆并股后请更新；不是盘中实时价格。`
+      : `官方净值重估，非银行账户同步；ISIN ${binding.isin}；长期持有份额 ${binding.quantity}（用户确认日 ${binding.confirmedOn}，不是到期日）；净值 ${quote.nav} ${quote.currency}，净值日 ${quote.date}；来源 ${quote.source}。份额不自动变化，申购赎回后请更新。` };
 }
 function status(config, state, now) {
   return { status: "available", bindings: config.bindings.map(binding => {
@@ -119,6 +137,7 @@ export async function configureAssetFund({ stateDir, entryId, isin, quantity, co
   return locked(stateDir, async (config, persist) => {
     const current = await readPersonalAssets({ stateDir }); if (current.revision !== revision) throw fail("资产版本已更新，请重新载入后核对。", 409);
     const original = target(current, entryId);
+    if ((CATALOG[isin].priceBasis === "market-close") !== (original.entry.category === "股票ETF")) throw fail("基金或 ETF 类型与所选报价不匹配，请核对原持仓。", 400);
     const quote = await fetchAssetFundNav({ isin, fetchImpl, now });
     const binding = { entryId, accountId: original.account.id, isin, quantity, confirmedOn, enabled: true };
     const entry = revalued(original.entry, binding, quote);

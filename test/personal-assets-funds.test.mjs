@@ -32,6 +32,36 @@ async function fixture(t) {
 }
 const bind = (stateDir, more = {}) => configureAssetFund({ stateDir, entryId: "fund-one", isin, quantity: "2.5", confirmedOn: "2026-10-24", revision: 1, fetchImpl: source(), now, ...more });
 
+function etfSource(change = () => {}) {
+  const data = { overview: { cusip: "922908363", fundId: "0968", iovTickerSymbol: "VOO.P", marketPrice: "$123.45", marketPriceAsOfDate: "10/23/2026", navPrice: "$120.00" },
+    dashboard: { ticker: "VOO", fundId: "0968", fundFullName: "Vanguard S&P 500 ETF", marketPrice: "$123.45", marketPriceAsOfDate: "10/23/2026" },
+    price: { marketPrice: "$123.45", marketPriceAsOfDate: "10/23/2026" }, fundFlags: { isEtf: true } };
+  change(data);
+  return async (url, init) => {
+    assert.equal(url, "https://investor.vanguard.com/investment-products/etfs/profile/voo"); assert.equal(init.method, "GET"); assert.equal(init.redirect, "error");
+    return new Response(`<div data-vgn-funds-profile="${JSON.stringify(data).replaceAll('"', "&#34;").replaceAll("&P", "&amp;P")}"></div>`);
+  };
+}
+
+test("VOO uses issuer-published market close rather than NAV, preserving price date and ETF identity", async t => {
+  const quote = await fetchAssetFundNav({ isin: "US9229083632", fetchImpl: etfSource(), now });
+  assert.equal(quote.nav, "123.45"); assert.equal(quote.priceBasis, "market-close"); assert.equal(quote.date, "2026-10-23"); assert.equal(quote.currency, "USD");
+  const stateDir = await fixture(t);
+  const before = await readPersonalAssets({ stateDir });
+  const next = await bind(stateDir, { entryId: "other-stock", isin: "US9229083632", quantity: "4.125", fetchImpl: etfSource() });
+  assert.equal(next.portfolio.entries[1].amount, 509.23125); assert.equal(next.portfolio.entries[1].category, "股票ETF");
+  assert.match(next.portfolio.entries[1].note, /市场收盘价|不是盘中实时/); assert.deepEqual(next.portfolio.entries[0], before.portfolio.entries[0]);
+});
+
+test("VOO refuses missing market price, foreign identities and inconsistent dates without substituting NAV", async () => {
+  for (const change of [d => { delete d.overview.marketPrice; }, d => { d.overview.cusip = "wrong"; }, d => { d.dashboard.ticker = "VTI"; },
+    d => { d.dashboard.fundId = "1234"; }, d => { d.fundFlags.isEtf = false; }, d => { d.price.marketPrice = "$100.00"; },
+    d => { d.dashboard.marketPriceAsOfDate = "10/22/2026"; }, d => { d.overview.marketPriceAsOfDate = d.dashboard.marketPriceAsOfDate = d.price.marketPriceAsOfDate = "02/30/2026"; },
+    d => { d.overview.marketPrice = d.dashboard.marketPrice = d.price.marketPrice = "-$2.00"; }]) {
+    await assert.rejects(fetchAssetFundNav({ isin: "US9229083632", fetchImpl: etfSource(change), now }), /身份|报价/);
+  }
+});
+
 test("official NAV identifies exact fund, share class, currency and actual NAV date", async () => {
   const usd = await fetchAssetFundNav({ isin, fetchImpl: source(), now });
   assert.equal(usd.nav, "12.1"); assert.equal(usd.currency, "USD"); assert.equal(usd.date, "2026-10-23");
