@@ -17,9 +17,11 @@ function assets() {
 async function dir(t){const p=await mkdtemp(join(tmpdir(),"assets-ai-"));t.after(()=>rm(p,{recursive:true,force:true}));return p;}
 const response=(text="当前组合集中度需结合未同步账户核对。")=>Response.json({status:"completed",output:[{type:"reasoning"},{type:"message",role:"assistant",content:[{type:"output_text",text}]}]});
 test("AI inputs contain aggregated coverage and freshness, never names, notes, addresses, quantities or credentials",()=>{
- const data=assetReviewInput(assets());const encoded=JSON.stringify(data);
+ const input=assets();input.funds={status:"available",bindings:[{name:"secret fund",quantity:"2.34567891",isin:"HK0000857299",enabled:true,confirmedOn:"2020-01-01",navDate:"2026-10-23"}]};
+ const data=assetReviewInput(input);const encoded=JSON.stringify(data);
  assert.equal(data.baseCurrency,"CNY");assert.equal(data.total,100);assert.equal(data.unpricedAssets,1);
- for(const value of [key,"secret account","secret note","secret holding","0x111","private address"])assert.equal(encoded.includes(value),false);
+ for(const value of [key,"secret account","secret note","secret holding","0x111","private address","secret fund","2.34567891","HK0000857299"])assert.equal(encoded.includes(value),false);
+ assert.equal(data.fundRevaluations.quantityBasis,"manually-confirmed-not-automatic-account-sync");
  assert.ok(data.byCategory.some(row=>row.name==="组合资产"));
 });
 test("missing AI configuration is explicit and performs no external request",async t=>{

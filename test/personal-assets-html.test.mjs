@@ -83,6 +83,22 @@ test("loads the real API and shows all supported empty platforms without invente
   assert.doesNotMatch(ui.get("asset-content").innerHTML, /¥<\/small>0\.00/);
 });
 
+test("fund NAV updates keep confirmation distinct from expiry, hide quantities and allow reviewed correction", async () => {
+  const initial = stateWith([entry({ id: "fund-one", kind: "holding", category: "货币基金", source: "api" })]);
+  initial.portfolio.accounts[0].basis = "holdings";
+  initial.funds = { status: "available", bindings: [{ entryId: "fund-one", accountId: "account-1", isin: "HK0000857299", name: "Synthetic public fund", currency: "USD", quantity: "2.345678", confirmedOn: "2020-01-01", nav: "12.123456", navDate: "2026-10-23", source: "Official manager", url: "https://hk.taikangasset.cn/hk/product_service/productService.html", enabled: true, delayed: false, lastFetchedAt: "2026-10-24T12:00:00Z" }] };
+  const ui = await view(initial);
+  assert.match(ui.get("asset-content").innerHTML, /基金自动净值重估|确认日期不是到期日/);
+  assert.match(ui.get("asset-content").innerHTML, /2\.345678/);
+  assert.match(ui.run("entryDateBasis(portfolio().entries[0])"), /净值日期/);
+  ui.run("hidden = true; render()");
+  assert.doesNotMatch(ui.get("asset-content").innerHTML, /2\.345678|12\.123456/);
+  ui.run("hidden = false; openFund('fund-one')");
+  assert.equal(ui.run("modal"), "fund");
+  assert.match(ui.get("dialog-body").innerHTML, /不是到期日/);
+  assert.match(ui.get("dialog-body").innerHTML, /value="2\.345678"/);
+});
+
 test("a new platform without an account opens its own account form instead of another platform's asset entry", async () => {
   const initial = stateWith();
   initial.portfolio.accounts = initial.portfolio.accounts.filter((account) => !["民生银行", "TokenPocket"].includes(account.platform));

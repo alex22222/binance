@@ -22,6 +22,9 @@ export function assetReviewInput(assets) {
     unpricedAssets: providers.reduce((sum, p) => sum + (Array.isArray(p.lastUnpricedAssets) ? p.lastUnpricedAssets.length : 0), 0),
     incompleteSources: providers.filter(p => p.lastValuationComplete === false).length,
     fxStatus: assets.fx?.status || "unavailable", syncStatus: assets.sync?.status || "available",
+    fundRevaluations: { status: assets.funds?.status || "unavailable", quantityBasis: "manually-confirmed-not-automatic-account-sync",
+      positions: (assets.funds?.bindings || []).map(row => ({ enabled: row.enabled, failed: Boolean(row.lastError), delayed: row.delayed,
+        quantityConfirmedOn: row.confirmedOn, navDate: row.navDate, lastFetchedAt: timestamp(row.lastFetchedAt) })) },
     sourceCoverage: counts.map(account => {
       const source = providers.find(p => p.targetAccountId === account.id);
       return { platform: account.platform, automatic: Boolean(source?.connected && source.enabled && source.lastAppliedAt),

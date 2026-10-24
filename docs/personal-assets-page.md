@@ -88,7 +88,7 @@ state/personal-assets-imports/<batch>.json
 
 `PERSONAL_ASSETS_DIR` 可用于指定独立资产目录（例如隔离测试目录）。新建资产文件权限为 `0600`，新建专用目录为 `0700`；既有共享 state 目录权限不变。
 
-生产交易授权对整个 `src/*.mjs` 集合校验身份。生产资产模块、共享导航及 OCR 必须放在 `/opt/binance-agentic-personal-assets/releases/<id>/`，由仅在 Dashboard 启用的 `ops/personal-assets/dashboard-loader.mjs` 定向加载。不能将新增模块写入生产交易 `src/`。版本目录及代码由 root 拥有且不可被组或其他用户写入；入口加载器校验十五个代码哈希。
+生产交易授权对整个 `src/*.mjs` 集合校验身份。生产资产模块、共享导航及 OCR 必须放在 `/opt/binance-agentic-personal-assets/releases/<id>/`，由仅在 Dashboard 启用的 `ops/personal-assets/dashboard-loader.mjs` 定向加载。不能将新增模块写入生产交易 `src/`。版本目录及代码由 root 拥有且不可被组或其他用户写入；入口加载器校验十六个代码哈希。
 
 Dashboard systemd 配置使用 `deploy/binance-agentic-dashboard.assets.conf`，保留 BTC 与授权加载器。更新 Dashboard 入口时，需备份并同步现有授权 release 中的 `dashboardSourceHash`，保持源码校验开启；不能更改 `liveCodeHash`、授权策略或续签停止状态。
 
@@ -132,3 +132,13 @@ node --test --test-timeout=30000 test/*.test.mjs
 - 「AI 资产点评 → 配置 OpenAI」调用受登录、同源与 JSON 约束的 `/api/assets/ai/configure`。独立 OpenAI API Key 验证成功后仅存 `state/personal-assets-ai.json`（0600）；`personal-assets-ai-review.json` 只缓存文本和来源版本。Key 不进浏览器存储、备份导出、快照或日志。
 - 使用 [OpenAI Responses API](https://developers.openai.com/api/docs/guides/text)，模型 [gpt-5.4-mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini)，`store:false`，无工具调用。只发送平台、资产类型、报表币种的汇总金额和数据覆盖/时间；不发送账户名、持仓名、备注、钱包地址、截图或其他平台凭据。点评按 CNY，要求区分部分估值、未同步与陈旧数据，不把快照变化当收益，不生成交易指令。真实点评须在用户安全填写 Key 后验收。
 - 新增「币安Agentic Wallet」「OKX Agentic Wallet」平台选项，与交易所、Web3 账户分别记录；新增选项不自动登录或绑定外部钱包。
+
+## 长期持有基金的自动净值重估
+
+总览的「基金自动净值重估」及对应账户展示官方净值日、份额确认日、最近成功读取/入账时间和失败/延迟状态。份额确认日期不是到期日；长期持有数量持续有效，申购、赎回或数量变化后通过「更新 / 重新确认份额」保存新数量。这里的净值自动更新不代表银行账户现金、证券或基金份额已自动读取，不加入完整账户同步覆盖数。
+
+目前准确支持两种份额：泰康开泰美元货币 A 累积（HK0000857299，USD）和高腾微财货币 A 港元累积（HK0000478872，HKD）。泰康同时核对官方交易资料的 ISIN 与基金代码，再读取指定份额净值；高腾只解析[管理人产品页](https://www.gaotengasset.com/zh-HK/product-services)的 JSON 数据，不执行网页脚本。基金、份额、币种、日期或净值无法核实即保留上次有效金额，不采用其他类别顶替。
+
+绑定更新已有的一条基金持仓，不新增账户或重复资产；原记录和币种在首次重估前快照保留，现值使用基金原币净值乘已确认份额，再由现有汇率换算。状态及份额存于 `state/personal-assets-funds.json`（0600），每次改账先保留一份滚动备份。当前服务器 15 分钟定时器检查新净值，同一净值幂等；超过七天的净值不再用于更新、超过四天或读取超时明确标记延迟。节假日可能只有上一交易日净值。
+
+手动修改已绑定的持仓或账户后暂停自动覆盖，需重新核对份额。新净值变动不会重算旧快照；每日快照同时冻结基金来源状态。点评只接收基金更新覆盖及日期，不发送基金名称、ISIN 或份额数量。

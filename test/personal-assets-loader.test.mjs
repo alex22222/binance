@@ -9,7 +9,7 @@ import test from "node:test";
 import { verifyPersonalAssetsRelease } from "../ops/personal-assets/dashboard-loader.mjs";
 import { initialize, resolve as resolveAssetModule } from "../ops/personal-assets/dashboard-hooks.mjs";
 
-const modules = ["personal-assets-core.mjs", "personal-assets.mjs", "personal-assets-html.mjs", "personal-assets-client.mjs", "personal-assets-routes.mjs", "site-shell.mjs", "personal-assets-sync.mjs", "personal-assets-okx.mjs", "personal-assets-futu.mjs", "personal-assets-fx.mjs", "personal-assets-polymarket.mjs", "personal-assets-wallets.mjs", "personal-assets-ai.mjs"];
+const modules = ["personal-assets-core.mjs", "personal-assets.mjs", "personal-assets-html.mjs", "personal-assets-client.mjs", "personal-assets-routes.mjs", "site-shell.mjs", "personal-assets-sync.mjs", "personal-assets-okx.mjs", "personal-assets-futu.mjs", "personal-assets-fx.mjs", "personal-assets-polymarket.mjs", "personal-assets-wallets.mjs", "personal-assets-ai.mjs", "personal-assets-funds.mjs"];
 const codeFiles = ["dashboard-loader.mjs", "dashboard-hooks.mjs", ...modules.map((name) => `src/${name}`)];
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const urlDirectory = (path) => pathToFileURL(path + sep).href;
@@ -34,7 +34,7 @@ async function fixture(context) {
   return { root, manifest };
 }
 
-test("asset resolver maps only the thirteen approved modules and preserves outside imports", async () => {
+test("asset resolver maps only the fourteen approved modules and preserves outside imports", async () => {
   const source = "file:///original/src/";
   const release = "file:///release/src/";
   initialize({ source, release });
@@ -54,7 +54,7 @@ test("asset resolver maps only the thirteen approved modules and preserves outsi
   assert.equal((await resolveAssetModule("./site-shell.mjs", otherRelease, afterRadar)).url, release + "site-shell.mjs");
 });
 
-test("release verifies all fifteen code hashes and permits a root-owned current symlink", async (context) => {
+test("release verifies all sixteen code hashes and permits a root-owned current symlink", async (context) => {
   const { root } = await fixture(context);
   const verified = await verifyPersonalAssetsRelease(root, { metadata: rootMetadata });
   assert.equal(verified.root, root);

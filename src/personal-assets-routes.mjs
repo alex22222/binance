@@ -1,4 +1,5 @@
 import { readAssetAiStatus, reviewPersonalAssets, configureAssetAi } from "./personal-assets-ai.mjs";
+import { readAssetFundStatus, configureAssetFund } from "./personal-assets-funds.mjs";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -45,7 +46,8 @@ async function assetView(state, options) {
   const [valued, sync] = await Promise.all([valuePersonalAssetState(state, options), readAssetSyncStatus({ stateDir: options.stateDir }).catch(() => ({
     status: "unavailable", error: "同步状态暂不可用，请检查同步配置；已保存资产仍可查看。", providers: {},
   }))]);
-  return { ...valued, sync: { ...sync, providers: Object.fromEntries(Object.entries(sync.providers).map(([name, details]) => {
+  const funds = await readAssetFundStatus({ stateDir: options.stateDir, state }).catch(() => ({ status: "unavailable", bindings: [] }));
+  return { ...valued, funds, sync: { ...sync, providers: Object.fromEntries(Object.entries(sync.providers).map(([name, details]) => {
     const { preview, accounts, selectedAccountId, wallets, ...summary } = details;
     return [name, summary];
   })) } };
@@ -83,7 +85,7 @@ async function readAssetBody(request) {
 // Called only after the Dashboard's shared authentication gate.
 export async function handlePersonalAssetsRequest({ request, response, stateDir, requireAllowedOrigin }) {
   const path = new URL(request.url, "http://localhost").pathname;
-  const assetApi = ["/api/assets", "/api/assets/snapshots", "/api/assets/rates/refresh"].includes(path);
+  const assetApi = ["/api/assets", "/api/assets/snapshots", "/api/assets/rates/refresh", "/api/assets/funds/configure"].includes(path);
   const syncAction = path.match(/^\/api\/assets\/sync\/(okx|futu|polymarket|future|okxweb3|tokenpocket)\/(bind|connect|authorize|preview|apply|disconnect)$/);
   const aiApi = ["/api/assets/ai", "/api/assets/ai/review", "/api/assets/ai/configure"].includes(path);
   const syncApi = path === "/api/assets/sync" || path === "/api/assets/sync/futu/callback" || syncAction;
@@ -125,6 +127,14 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
     }
     if (request.method === "GET" && path === "/api/assets") {
       json(response, await assetView(await readPersonalAssets({ stateDir }), { stateDir }));
+      return true;
+    }
+    if (request.method === "POST" && path === "/api/assets/funds/configure") {
+      if (!request.headers.origin) throw requestError("请从资产页面提交。", 403);
+      requireAllowedOrigin(request);
+      const body = await readAssetBody(request);
+      const assets = await configureAssetFund({ stateDir, entryId: body.entryId, isin: body.isin, quantity: body.quantity, confirmedOn: body.confirmedOn, revision: body.revision });
+      json(response, await assetView(assets, { stateDir }));
       return true;
     }
     if (request.method === "POST" && path === "/api/assets/rates/refresh") {
@@ -178,7 +188,7 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
     json(response, { error: "不支持这个请求方法。" }, 405);
   } catch (error) {
     const status = error.statusCode || 500;
-    json(response, { error: status >= 500 && !error.assetAiError ? "个人资产暂时无法读取或保存，请稍后重试。" : error.message }, status);
+    json(response, { error: status >= 500 && !error.assetAiError && !error.fundError ? "个人资产暂时无法读取或保存，请稍后重试。" : error.message }, status);
   }
   return true;
 }

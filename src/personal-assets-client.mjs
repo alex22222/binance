@@ -61,6 +61,7 @@ const syncProviders = ["okx", "futu", "polymarket", "future", ...syncWalletProvi
 const syncNames = { okx: "OKX 交易所", futu: "富途", polymarket: "Polymarket", future: "Future", okxweb3: "OKX Web3 钱包", tokenpocket: "TokenPocket" };
 const syncPlatforms = { okx: "OKX", futu: "富途", polymarket: "Polymarket", future: "Future", okxweb3: "OKX", tokenpocket: "TokenPocket" };
 let syncCallbackHandled = false;
+let fundEditingId = null;
 let aiState = null;
 let aiLoading = false;
 let aiOpened = false;
@@ -95,7 +96,7 @@ function currencyTotals(entries) {
 }
 function originalCurrencyTotals() { return currencyTotals(portfolio().accounts.filter((account) => !pendingAccount(account)).flatMap(selectedEntries)); }
 function visibleNote(note) { return !hidden && note ? `<p class="muted small" style="margin:6px 0;white-space:normal;overflow-wrap:anywhere">${escape(note)}</p>` : ""; }
-function entryDateBasis(entry) { return entry.asOfBasis === "imported" ? entry.source === "api" ? "读取日期 · 源未提供资产时点" : "导入日期 · 截图日期未核实" : "资产日期"; }
+function entryDateBasis(entry) { return state?.funds?.bindings?.some(row => row.entryId === entry.id) ? "净值日期 · 份额手动确认" : entry.asOfBasis === "imported" ? entry.source === "api" ? "读取日期 · 源未提供资产时点" : "导入日期 · 截图日期未核实" : "资产日期"; }
 function accountSyncDetails(account) { return Object.entries(state?.sync?.providers || {}).find(([, details]) => details.targetAccountId === account.id); }
 function accountHasRecords(account) {
   const details = accountSyncDetails(account)?.[1];
@@ -131,9 +132,32 @@ function syncSourceNotes(details) {
 function accountSyncPanel(account) {
   const binding = accountSyncDetails(account);
   if (state?.sync?.status === "unavailable") return '<p class="notice error">同步状态暂不可用，当前连接与自动刷新状态未核实。以下沿用已保存资产。</p>';
+  if (!binding && state?.funds?.bindings?.some(row => row.accountId === account.id)) return fundValuationPanel(account.id);
   if (!binding) return `<p class="muted small">尚未接入自动同步 · ${portfolio().entries.some((entry) => entry.accountId === account.id && entry.source === "api") ? "保存的 API 估值，当前同步未绑定" : "按已录入的截图、CSV 或手动记录展示"}</p>`;
   const [provider, details] = binding;
   return `<div class="notice"><strong>${escape(syncNames[provider] || provider)} · ${syncStatusLabel(details)}</strong>${syncTimes(details)}${syncSourceNotes(details)}${details.lastError ? `<p>${hidden ? "显示金额后可查看同步错误详情。" : escape(details.lastError)}</p>` : ""}</div>`;
+}
+function fundValuationPanel(accountId) {
+  if (state?.funds?.status === "unavailable") return '<div class="notice error">基金重估状态暂不可用，沿用已保存估值。</div>';
+  const bindings = (state?.funds?.bindings || []).filter(row => !accountId || row.accountId === accountId);
+  if (!bindings.length) return "";
+  return `<section class="panel" aria-label="基金自动净值重估" style="margin-bottom:20px"><h3>基金自动净值重估</h3><p class="muted small">长期持有份额持续用于估值；确认日期不是到期日。每 15 分钟检查管理人最新已公布净值，净值日可能早于今天。仅更新这些基金，不代表整个银行账户或持有份额已自动同步。</p>${bindings.map(row => `<div class="notice"><div class="section-head"><strong>${escape(row.name)}</strong><span class="pill">${!row.enabled ? "已暂停" : row.lastError ? "更新失败 · 保留上次估值" : row.delayed ? "更新延迟" : "净值自动更新"}</span></div>${hidden ? '<p class="muted small">隐私模式已隐藏份额、净值和时间详情。</p>' : `<p class="small">份额 ${escape(row.quantity)} · 确认日 ${escape(row.confirmedOn)}（不是到期日）<br>最新入账净值 ${escape(row.nav || "待获取")} ${escape(row.currency)} · 净值日 ${escape(row.navDate || "待获取")}<br>最近成功读取 ${escape(dateTime(row.lastFetchedAt))} · 最近估值入账 ${escape(dateTime(row.lastAppliedAt))}<br>最近尝试 ${escape(dateTime(row.lastAttemptAt))}</p><p class="muted small">来源：<a href="${escape(row.url)}" target="_blank" rel="noopener noreferrer">${escape(row.source)}</a> · ${escape(row.isin)}</p>${row.lastError ? `<p class="small">${escape(row.lastError)}</p>` : ""}<button class="button small" data-action="fund-edit" data-id="${escape(row.entryId)}">更新 / 重新确认份额</button>`}</div>`).join("")}</section>`;
+}
+function openFund(entryId) {
+  const binding = state?.funds?.bindings?.find(row => row.entryId === entryId);
+  if (!binding || hidden) return;
+  fundEditingId = entryId; modal = "fund";
+  setDialog("确认长期持有份额", `${binding.name} · ${binding.isin}`, `<form id="fund-form"><p class="muted small">保存后按官方最新净值更新这条已有持仓，不新增重复资产。份额持续有效，日期仅记录本次确认时间。</p><div class="field"><label for="fund-quantity">持有份额</label><input id="fund-quantity" type="number" min="0" step="any" required value="${escape(binding.quantity)}"></div><div class="field"><label for="fund-confirmed">份额确认日期（不是到期日）</label><input id="fund-confirmed" type="date" max="${currentDate()}" required value="${currentDate()}"></div></form>`, '<button class="button" data-action="close-dialog">取消</button><button class="button primary" type="submit" form="fund-form">保存份额并启用自动重估</button>');
+}
+async function configureFund() {
+  const binding = state?.funds?.bindings?.find(row => row.entryId === fundEditingId);
+  if (!binding || saving) return;
+  saving = true; syncBusy();
+  try {
+    const response = await fetch("/api/assets/funds/configure", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ entryId: binding.entryId, isin: binding.isin, quantity: $("fund-quantity").value, confirmedOn: $("fund-confirmed").value, revision: state.revision }) });
+    state = await readResponse(response); saving = false; closeDialog(); render(); notify("份额已确认，官方净值自动重估已开启");
+  } catch (error) { showError(errorText(error)); }
+  finally { saving = false; syncBusy(); }
 }
 function syncCoveragePanel() {
   if (state?.sync?.status === "unavailable") return '<section class="notice error" aria-label="自动同步覆盖">同步状态暂不可用，自动同步覆盖当前未核实。已保存资产仍正常展示，请核对同步配置。</section>';
@@ -332,7 +356,7 @@ function renderOverview(summary) {
   const partial = partialValuationSources().length > 0;
   const initial = !active;
   return `<div class="metrics"><section class="panel metric total"><div class="row"><span class="metric-label">${partial || summary.missing.length || summary.pending.length ? "已核算资产 · 部分估值" : "已录入资产总额"}</span>${displayCurrencyControl()}</div><div class="metric-value"><small>${displayCurrency === "USD" ? "$" : displayCurrency === "HKD" ? "HK$" : "¥"}</small>${displayAmount(partial && !summary.included.length ? null : summary.total)}</div><div class="metric-foot">按最新可用汇率折算${partial ? " · 仅含已定价记录" : ""}</div><div class="metric-foot">${initial ? "尚未录入真实金额" : `${summary.included.length} 条计入 · ${summary.missing.length} 条缺汇率 · ${summary.pending.length} 条待确认`}</div></section><section class="panel metric"><div class="metric-label">已录入账户 / 全部账户</div><div class="metric-value">${active}<span class="muted"> / ${portfolio().accounts.length}</span></div><div class="metric-foot">已知平台与待确认账户，统一整理</div></section><section class="panel metric"><div class="metric-label">最近保存</div><div class="metric-value" style="font-size:19px">${escape(state.updatedAt ? dateTime(state.updatedAt) : "尚未录入")}</div><div class="metric-foot">最近已入账估值 · 非实时市值</div></section></div>
-  ${displayCurrency !== "CNY" && displayValue(1) === null ? `<div class="notice">${displayCurrency}/CNY 自动汇率暂不可用，总额待换算。可切回 CNY 查看人民币金额。</div>` : ""}${summary.missing.length ? `<div class="notice">${displayCurrency} 合计仅覆盖已完成换算的记录，其余资产见原币参考。缺汇率记录和待确认账户均未计入总额与分布。</div>` : ""}${partialValuationNotice()}${aiPanel()}${originalCurrencyPanel()}${syncCoveragePanel()}${assetTypesPanel(summary)}${pendingAccountsPanel()}
+  ${displayCurrency !== "CNY" && displayValue(1) === null ? `<div class="notice">${displayCurrency}/CNY 自动汇率暂不可用，总额待换算。可切回 CNY 查看人民币金额。</div>` : ""}${summary.missing.length ? `<div class="notice">${displayCurrency} 合计仅覆盖已完成换算的记录，其余资产见原币参考。缺汇率记录和待确认账户均未计入总额与分布。</div>` : ""}${partialValuationNotice()}${aiPanel()}${originalCurrencyPanel()}${syncCoveragePanel()}${fundValuationPanel()}${assetTypesPanel(summary)}${pendingAccountsPanel()}
   <div class="section-head"><div><h2>你的资产版图</h2><span class="muted small">币种自动按已存记录识别 · 原币分开列示 · 可逐条纠错</span></div><button class="button small" data-action="manual">＋ 录入资产</button></div>
   <div class="platform-grid">${PLATFORMS.map((platform, index) => platformCard(platform, index, summary)).join("")}<section class="panel platform-card"><div class="platform-top"><span class="platform-mark">＋</span><span class="platform-name">继续整理</span></div><p class="muted small" style="margin:0">同一平台可建立多个独立账户。</p><div class="platform-bottom"><button data-action="account">添加资产账户 →</button></div></section></div>
   <div class="columns"><section class="panel"><div class="section-head"><h2>平台分布</h2><span class="pill">按已核算 ${displayCurrency}</span></div>${distribution(summary.byPlatform, summary.total)}</section><section class="panel"><h2>资产观察</h2>${insights(summary)}</section></div>${initial ? '<div class="notice">从一个真实数字开始：可先录入账户总额，也可导入截图或 CSV。无需一次整理完所有平台。</div>' : ""}`;
@@ -851,6 +875,7 @@ document.addEventListener("click", async (event) => {
   else if (action === "reload") await load();
   else if (action === "ai-settings") openAiSettings();
   else if (action === "ai-review") await loadAi();
+  else if (action === "fund-edit") openFund(button.dataset.id);
   else if (action === "category" || action === "clear-category") {
     categoryFilter = action === "category" && CATEGORIES.includes(button.dataset.category) ? button.dataset.category : "all";
     page = "holdings";
@@ -944,10 +969,11 @@ document.addEventListener("change", async (event) => {
   }
 });
 document.addEventListener("submit", async (event) => {
-  if (!["ai-config-form", "entry-form", "account-form", "sync-okx-form", "sync-polymarket-form", "sync-future-form", "sync-okxweb3-form", "sync-tokenpocket-form"].includes(event.target.id)) return;
+  if (!["fund-form", "ai-config-form", "entry-form", "account-form", "sync-okx-form", "sync-polymarket-form", "sync-future-form", "sync-okxweb3-form", "sync-tokenpocket-form"].includes(event.target.id)) return;
   event.preventDefault();
   if (saving) return;
   if (event.target.id === "ai-config-form") await configureAi();
+  else if (event.target.id === "fund-form") await configureFund();
   else if (event.target.id === "entry-form") await saveEntry();
   else if (event.target.id === "account-form") await saveAccount();
   else if (event.target.id === "sync-okx-form") await connectOkx();

@@ -1,7 +1,7 @@
 const MODULES = [
   "personal-assets-core.mjs", "personal-assets.mjs", "personal-assets-html.mjs",
   "personal-assets-client.mjs", "personal-assets-routes.mjs", "site-shell.mjs",
-  "personal-assets-sync.mjs", "personal-assets-okx.mjs", "personal-assets-futu.mjs", "personal-assets-fx.mjs", "personal-assets-polymarket.mjs", "personal-assets-wallets.mjs", "personal-assets-ai.mjs"
+  "personal-assets-sync.mjs", "personal-assets-okx.mjs", "personal-assets-futu.mjs", "personal-assets-fx.mjs", "personal-assets-polymarket.mjs", "personal-assets-wallets.mjs", "personal-assets-ai.mjs", "personal-assets-funds.mjs"
 ];
 
 let source;

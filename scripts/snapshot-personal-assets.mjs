@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { readPersonalAssets, createPersonalAssetsSnapshot } from "../src/personal-assets.mjs";
 import { valuePersonalAssetState } from "../src/personal-assets-fx.mjs";
 import { readAssetSyncStatus } from "../src/personal-assets-sync.mjs";
+import { readAssetFundStatus } from "../src/personal-assets-funds.mjs";
 
 export async function runDailyPersonalAssetsSnapshot({ stateDir, now = new Date(), valueState = valuePersonalAssetState }) {
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -11,7 +12,8 @@ export async function runDailyPersonalAssetsSnapshot({ stateDir, now = new Date(
     if (!current.portfolio.entries.length) return { status: "no-recorded-assets", saved: false };
     const valued = await valueState(current, { stateDir });
     const sync = await readAssetSyncStatus({ stateDir }).catch(() => ({ status: "unavailable", providers: {} }));
-    const sourceCoverage = { status: sync.status || "available", providers: Object.fromEntries(Object.entries(sync.providers).map(([name, value]) => [name,
+    const funds = await readAssetFundStatus({ stateDir, state: current }).catch(() => ({ status: "unavailable", bindings: [] }));
+    const sourceCoverage = { funds, status: sync.status || "available", providers: Object.fromEntries(Object.entries(sync.providers).map(([name, value]) => [name,
       Object.fromEntries(["connected", "enabled", "targetAccountId", "lastFetchedAt", "lastAppliedAt", "observedAt", "lastError", "overdue", "lastCoverage", "lastWarnings", "lastUnpricedAssets", "lastValuationComplete"].filter(key => value[key] !== undefined).map(key => [key, value[key]]))])) };
     try {
       const result = await createPersonalAssetsSnapshot({ stateDir, revision: current.revision, daily: true, now, sourceCoverage,

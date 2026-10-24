@@ -39,7 +39,7 @@ test("personal assets share Dashboard authentication and persist isolated review
     const entry = await fetch(`${origin}/assets?view=overview`, { redirect: "manual" });
     assert.equal(entry.status, 303);
     assert.equal(entry.headers.get("location"), "/login");
-    for (const path of ["/api/assets", "/api/assets/rates/refresh", "/api/assets/sync", "/api/assets/sync/futu/callback", "/api/assets/ai", "/api/assets/ai/review", "/api/assets/ai/configure", "/assets/app.mjs", "/assets/core.mjs", "/assets/ocr/worker.min.js"]) {
+    for (const path of ["/api/assets/funds/configure", "/api/assets", "/api/assets/rates/refresh", "/api/assets/sync", "/api/assets/sync/futu/callback", "/api/assets/ai", "/api/assets/ai/review", "/api/assets/ai/configure", "/assets/app.mjs", "/assets/core.mjs", "/assets/ocr/worker.min.js"]) {
       assert.equal((await fetch(origin + path)).status, 401, path);
     }
     const page = await fetch(`${origin}/assets`, { headers });
@@ -70,6 +70,9 @@ test("personal assets share Dashboard authentication and persist isolated review
     assert.equal("wallets" in initial.sync.providers.okxweb3, false);
     assert.equal("wallets" in initial.sync.providers.tokenpocket, false);
     assert.deepEqual(Object.keys(initial.portfolio.rates), ["CNY"]);
+    assert.deepEqual(initial.funds, { status: "available", bindings: [] });
+    for (const extra of [{}, { Origin: "https://attacker.example" }]) assert.equal((await fetch(`${origin}/api/assets/funds/configure`, { method: "POST", headers: { ...headers, "Content-Type": "application/json", ...extra }, body: "{}" })).status, 403);
+    assert.equal((await fetch(`${origin}/api/assets/funds/configure`, { method: "POST", headers: { ...headers, Origin: origin, "Content-Type": "application/json" }, body: "{}" })).status, 400);
     const beforeRefresh = await readFile(statePath, "utf8");
     for (const action of ["review", "configure"]) {
       const path = `${origin}/api/assets/ai/${action}`;
