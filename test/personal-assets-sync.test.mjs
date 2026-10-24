@@ -906,6 +906,7 @@ test("a pre-ledger Safe reservation survives post-ledger persistence failure the
     await action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision });
     // Restore the actual durable pre-ledger config, as if final provider persistence failed.
     await writeFile(privateFile(stateDir), JSON.stringify(beforeLedger));
+    await assert.rejects(action(stateDir, "tokenpocket", "bind", { wallets: polygonWallet, targetAccountId: preview.targetAccountId, polymarketSafeOwner: null }), /Safe.*保留/);
     await action(stateDir, "tokenpocket", nextAction, nextAction === "bind" ? { wallets: polygonWallet, targetAccountId: preview.targetAccountId, polymarketSafeOwner: publicAddress } : {});
     const current = await readPersonalAssets({ stateDir }), target = current.portfolio.accounts.find(row => row.platform === "Polymarket").id;
     await assert.rejects(action(stateDir, "polymarket", "connect", { address: safeAddress, targetAccountId: target }, { api: predictionApi() }), { statusCode: 409 });

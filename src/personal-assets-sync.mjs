@@ -112,11 +112,17 @@ function derivedCashSources(result, wallets, owner) {
   return claims;
 }
 
-function retainDerivedWalletSources(current, value, claims, targetAccountId) {
-  if (value.appliedDerivedWallets === undefined) return;
+function retainDerivedWalletSources(current, value, claims, targetAccountId, data) {
   const account = current.portfolio.accounts.find(row => row.id === targetAccountId);
   if (!account || !current.portfolio.entries.some(row => row.accountId === targetAccountId && row.kind === (account.basis === "holdings" ? "holding" : "total"))) return;
-  for (const old of derivedWalletList(value.appliedDerivedWallets, walletList(value.appliedWallets || value.wallets))) {
+  const required = value.appliedDerivedWallets === undefined ? [] : derivedWalletList(value.appliedDerivedWallets, walletList(value.appliedWallets || value.wallets));
+  const entries = new Set(current.portfolio.entries.filter(row => row.accountId === targetAccountId && row.kind === "holding").map(row => row.id));
+  // A saved ledger can be newer than applied provider metadata after a crash.
+  // Recover only historical claims whose exact cash token is still in that ledger.
+  for (const binding of walletBindings(data).filter(row => row.targetAccountId === targetAccountId)) for (const old of binding.derivedWallets || []) {
+    for (let index = 0; index < 1000; index += 1) if (entries.has(`sync-${binding.provider}-${digest(cashIdentity(old) + ":" + index).slice(0, 24)}`)) { required.push(old); break; }
+  }
+  for (const old of required) {
     if (!claims.some(row => row.protocol === old.protocol && row.address === old.address && row.owner === old.owner)) throw syncError("已计入的 Safe 来源本次未重新核实，保留上次有效资产。", 502);
   }
 }
@@ -479,7 +485,7 @@ async function fetched(data, provider, stateDir, api, now, accountId, persist, r
   const preview = makePreview(result, provider, current.revision, now, targetAccountId, wallets, walletProvider(provider) ? safeOwner(value.polymarketSafeOwner, wallets, provider) : null);
   if (walletProvider(provider)) {
     uniqueWalletSource(data, current, provider, walletList(value.wallets), targetAccountId, preview.derivedWallets);
-    retainDerivedWalletSources(current, value, preview.derivedWallets, targetAccountId);
+    retainDerivedWalletSources(current, value, preview.derivedWallets, targetAccountId, data);
   }
   retainPricedWalletAssets(current, preview);
   value.preview = preview;
@@ -535,7 +541,7 @@ async function applyPreview({ stateDir, data, provider, previewId, revision, now
     if ((preview.polymarketSafeOwner ?? null) !== owner) throw syncError("Safe 读取范围已变化，请重新核对预览。", 409);
     const claims = derivedCashSources(preview, wallets, owner);
     uniqueWalletSource(data, current, provider, wallets, preview.targetAccountId, claims);
-    retainDerivedWalletSources(current, value, claims, preview.targetAccountId);
+    retainDerivedWalletSources(current, value, claims, preview.targetAccountId, data);
   }
   if (automatic && fingerprint(current.portfolio, preview.targetAccountId) !== value.appliedFingerprint) {
     value.enabled = false;
@@ -601,7 +607,7 @@ export async function performAssetSyncAction({ stateDir, provider, action, body 
       uniqueWalletSource(data, before, provider, wallets, targetAccountId);
       rememberWalletBinding(data, provider, previous);
       if (action === "bind") {
-        if (owner !== (previous.polymarketSafeOwner ?? null)) retainDerivedWalletSources(before, previous, [], targetAccountId);
+        if (owner !== (previous.polymarketSafeOwner ?? null)) retainDerivedWalletSources(before, previous, [], targetAccountId, data);
         const value = { ...previous, wallets, polymarketSafeOwner: owner, targetAccountId, enabled: false, lastError: null };
         delete value.preview;
         data.providers[provider] = value;
@@ -625,7 +631,7 @@ export async function performAssetSyncAction({ stateDir, provider, action, body 
         uniqueWalletSource(data, current, provider, wallets, targetAccountId);
         const preview = makePreview(result, provider, current.revision, now, targetAccountId, wallets, owner);
         uniqueWalletSource(data, current, provider, wallets, targetAccountId, preview.derivedWallets);
-        retainDerivedWalletSources(current, previous, preview.derivedWallets, targetAccountId);
+        retainDerivedWalletSources(current, previous, preview.derivedWallets, targetAccountId, data);
         retainPricedWalletAssets(current, preview);
         const value = { ...previous, wallets, polymarketSafeOwner: owner, targetAccountId, enabled: false, preview, lastAttemptAt: now.toISOString(),
           lastFetchedAt: preview.fetchedAt, accountLabel: preview.accountLabel, lastError: null,
