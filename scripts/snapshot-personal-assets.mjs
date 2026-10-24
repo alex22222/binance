@@ -1,3 +1,4 @@
+import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { readPersonalAssets, createPersonalAssetsSnapshot } from "../src/personal-assets.mjs";
@@ -19,7 +20,8 @@ export async function runDailyPersonalAssetsSnapshot({ stateDir, now = new Date(
     } catch (error) { if (error.statusCode !== 409 || attempt === 1) throw error; }
   }
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+const entryFile = process.argv[1] ? await realpath(resolve(process.argv[1])).catch(() => null) : null;
+if (entryFile && import.meta.url === pathToFileURL(entryFile).href) {
   try {
     const result = await runDailyPersonalAssetsSnapshot({ stateDir: resolve(process.env.PERSONAL_ASSETS_DIR || "state") });
     console.log(JSON.stringify({ task: "personal-assets-daily-snapshot", ...result }));

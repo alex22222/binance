@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runDailyPersonalAssetsSnapshot } from "../scripts/snapshot-personal-assets.mjs";
@@ -20,4 +22,20 @@ test("daily worker freezes valued amounts and safe source coverage and is idempo
 test("an empty account inventory is not saved as a zero-value daily snapshot",async t=>{
  const stateDir=await mkdtemp(join(tmpdir(),"assets-daily-empty-"));t.after(()=>rm(stateDir,{recursive:true,force:true}));
  assert.deepEqual(await runDailyPersonalAssetsSnapshot({stateDir}),{status:"no-recorded-assets",saved:false});
+});
+
+test("the daily CLI actually executes when systemd launches it through the current release symlink",async t=>{
+ const stateDir=await mkdtemp(join(tmpdir(),"assets-daily-cli-"));t.after(()=>rm(stateDir,{recursive:true,force:true}));
+ const portfolio=emptyPortfolio();portfolio.entries=[{id:"one",accountId:"account-1",kind:"total",name:"synthetic",category:"现金",currency:"CNY",amount:2,asOf:"2026-10-24",source:"manual"}];
+ await savePersonalAssets({stateDir,portfolio,revision:0});
+ const linked=join(stateDir,"current-daily.mjs");await symlink(new URL("../scripts/snapshot-personal-assets.mjs",import.meta.url),linked);
+ const {stdout}=await promisify(execFile)(process.execPath,[linked],{env:{...process.env,PERSONAL_ASSETS_DIR:stateDir,PERSONAL_ASSETS_FX_DISABLED:"1"}});
+ assert.match(stdout,/personal-assets-daily-snapshot/);
+ assert.equal((await readPersonalAssets({stateDir})).snapshots.length,1);
+});
+
+test("importing the daily helper from stdin does not execute the CLI or require a real argv filename",async()=>{
+ const moduleUrl=new URL("../scripts/snapshot-personal-assets.mjs",import.meta.url).href;
+ const {stdout}=await promisify(execFile)(process.execPath,["--input-type=module","-e",`process.argv[1]="-";await import(${JSON.stringify(moduleUrl)});console.log("helper imported")`]);
+ assert.equal(stdout.trim(),"helper imported");
 });
