@@ -69,9 +69,8 @@ export async function fetchOkxAssets({ credentials, fetchImpl = fetch, now = () 
     || [credentials.apiKey, credentials.secret, credentials.passphrase].some((value) => typeof value !== "string" || !value.length || value.length > 500 || /[\u0000-\u001f\u007f]/.test(value))) {
     throw new OkxAssetsError("请填写 OKX API Key、Secret、Passphrase，并选择账户所属区域", 400);
   }
-  const fetched = now();
-  if (!(fetched instanceof Date) || !Number.isFinite(fetched.getTime())) throw new OkxAssetsError("同步服务器时间无效", 500);
-  const fetchedAt = fetched.toISOString();
+  const started = now();
+  if (!(started instanceof Date) || !Number.isFinite(started.getTime())) throw new OkxAssetsError("同步服务器时间无效", 500);
   async function get(path) {
     if (!PATHS.has(path)) throw new OkxAssetsError("OKX 只读接口不在允许列表中", 500);
     const timestamp = now().toISOString();
@@ -106,6 +105,9 @@ export async function fetchOkxAssets({ credentials, fetchImpl = fetch, now = () 
   const [valuationRows, balanceRows] = await Promise.all([
     get("/api/v5/asset/asset-valuation?ccy=USD"), get("/api/v5/account/balance"),
   ]);
+  const fetched = now();
+  if (!(fetched instanceof Date) || !Number.isFinite(fetched.getTime())) throw new OkxAssetsError("同步服务器时间无效", 500);
+  const fetchedAt = fetched.toISOString();
   const valuation = oneRow(valuationRows);
   const balance = oneRow(balanceRows);
   const total = nonnegative(valuation.totalBal);

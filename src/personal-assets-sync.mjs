@@ -208,9 +208,14 @@ function separateExchangeTarget(data, provider, targetAccountId) {
     || walletBindings(data).some((row) => row.provider === "okxweb3" && row.targetAccountId === targetAccountId))) throw syncError("已绑定的 Web3 钱包账户不能作为 OKX 交易所同步目标。", 409);
 }
 
-async function walletAssets(provider, credentials, wallets, api, now, polymarketSafeOwner = null) {
-  const startedAt = Date.now();
-  const result = await api.fetchWalletAssets({ provider, credentials, wallets, polymarketSafeOwner, now: () => new Date(now.getTime() + Date.now() - startedAt) });
+// Preserve an injected reference date while network, lock and storage work advances.
+function advancingClock(reference) {
+  const started = performance.now();
+  return () => new Date(reference.getTime() + performance.now() - started);
+}
+
+async function walletAssets(provider, credentials, wallets, api, clock, polymarketSafeOwner = null) {
+  const result = await api.fetchWalletAssets({ provider, credentials, wallets, polymarketSafeOwner, now: clock });
   if (result.externalAccountId !== walletIdentity(wallets)) throw syncError("返回的钱包来源与已绑定地址不符。", 502);
   return result;
 }
@@ -265,9 +270,8 @@ function uniquePredictionSource(data, current, provider, address, targetAccountI
     && (row.configured || countedSource(current, row.targetAccountId))) throw syncError("同一 Polygon 来源已绑定钱包或 Safe 账户，不能通过预测市场重复计入。", 409);
 }
 
-async function predictionAssets(provider, address, api, now) {
-  const startedAt = Date.now();
-  const result = await api.fetchPolymarketAssets({ address, now: () => new Date(now.getTime() + Date.now() - startedAt) });
+async function predictionAssets(provider, address, api, clock) {
+  const result = await api.fetchPolymarketAssets({ address, now: clock });
   if (result.provider !== "polymarket") throw syncError("预测市场资产来源无法核验。", 502);
   return provider === "future" ? { ...result, provider: "future", accountLabel: "Future · Polygon 交易账户",
     holdings: result.holdings.map((row) => ({ ...row, name: row.name.replace(/^Polymarket/, "Future") })),
@@ -443,30 +447,31 @@ function makePreview(result, provider, revision, now, targetAccountId, wallets, 
     targetAccountId, revision, countedBasis, expiresAt: new Date(now.getTime() + 20 * 60_000).toISOString() };
 }
 
-async function fetched(data, provider, stateDir, api, now, accountId, persist, requestedTarget, allowAccountChange = false) {
+async function fetched(data, provider, stateDir, api, clock, accountId, persist, requestedTarget, allowAccountChange = false) {
+  const now = clock();
   const value = data.providers[provider];
   if (!value) throw syncError("请先授权此平台。");
   value.lastAttemptAt = now.toISOString();
   let result;
   if (provider === "okx") {
     if (!value.credentials) throw syncError("请先配置 OKX 只读密钥。");
-    result = await api.fetchOkxAssets({ credentials: value.credentials, now: () => now });
+    result = await api.fetchOkxAssets({ credentials: value.credentials, now: clock });
   } else if (walletProvider(provider)) {
     const credentials = walletCredentials(data, value);
     if (!credentials) throw syncError("请先填写并验证 OnchainOS Developer 开发者凭据。");
     const wallets = walletList(value.wallets);
-    result = await walletAssets(provider, credentials, wallets, api, now, safeOwner(value.polymarketSafeOwner, wallets, provider));
+    result = await walletAssets(provider, credentials, wallets, api, clock, safeOwner(value.polymarketSafeOwner, wallets, provider));
   } else if (predictionProvider(provider)) {
     if (!value.address) throw syncError("请先配置公开资金地址。");
-    result = await predictionAssets(provider, value.address, api, now);
+    result = await predictionAssets(provider, value.address, api, clock);
   } else {
     if (!value.tokens) throw syncError("请先完成富途只读授权。");
     if (!accountId || !value.accounts?.some((account) => account.id === accountId)) throw syncError("请选择已授权的真实证券账户。");
-    if (Date.parse(value.tokens.expiresAt) <= now.getTime() + 60_000) {
-      value.tokens = await api.refreshFutuToken({ clientId: data.futuClient.clientId, refreshToken: value.tokens.refreshToken, now: () => now });
+    if (Date.parse(value.tokens.expiresAt) <= clock().getTime() + 60_000) {
+      value.tokens = await api.refreshFutuToken({ clientId: data.futuClient.clientId, refreshToken: value.tokens.refreshToken, now: clock });
       await persist(data);
     }
-    result = await api.fetchFutuAssets({ accessToken: value.tokens.accessToken, accountId, now: () => now });
+    result = await api.fetchFutuAssets({ accessToken: value.tokens.accessToken, accountId, now: clock });
     if (result.externalAccountId !== accountId) throw syncError("富途返回的账户与所选账户不符。", 502);
   }
   const expectedExternalId = walletProvider(provider) ? walletIdentity(walletList(value.wallets)) : value.externalAccountId || value.preview?.externalAccountId || (predictionProvider(provider) ? value.address : null);
@@ -482,7 +487,7 @@ async function fetched(data, provider, stateDir, api, now, accountId, persist, r
   if (predictionProvider(provider)) uniquePredictionSource(data, current, provider, value.address.toLowerCase(), targetAccountId);
   if (walletProvider(provider)) uniqueWalletSource(data, current, provider, walletList(value.wallets), targetAccountId);
   const wallets = walletProvider(provider) ? walletList(value.wallets) : undefined;
-  const preview = makePreview(result, provider, current.revision, now, targetAccountId, wallets, walletProvider(provider) ? safeOwner(value.polymarketSafeOwner, wallets, provider) : null);
+  const preview = makePreview(result, provider, current.revision, clock(), targetAccountId, wallets, walletProvider(provider) ? safeOwner(value.polymarketSafeOwner, wallets, provider) : null);
   if (walletProvider(provider)) {
     uniqueWalletSource(data, current, provider, walletList(value.wallets), targetAccountId, preview.derivedWallets);
     retainDerivedWalletSources(current, value, preview.derivedWallets, targetAccountId, data);
@@ -526,7 +531,7 @@ function updatedPortfolio(current, preview) {
     entries: [...current.portfolio.entries.filter((item) => item.accountId !== preview.targetAccountId), ...entries] });
 }
 
-async function applyPreview({ stateDir, data, provider, previewId, revision, now, persist, automatic = false }) {
+async function applyPreview({ stateDir, data, provider, previewId, revision, now, clock = () => now, persist, automatic = false }) {
   const value = data.providers[provider];
   const preview = value?.preview;
   if (!preview || preview.id !== previewId || Date.parse(preview.expiresAt) < now.getTime()) throw syncError("预览已失效，请重新拉取后核对。", 409);
@@ -564,7 +569,7 @@ async function applyPreview({ stateDir, data, provider, previewId, revision, now
   value.enabled = true;
   value.targetAccountId = preview.targetAccountId;
   value.externalAccountId = preview.externalAccountId;
-  value.lastAppliedAt = now.toISOString();
+  value.lastAppliedAt = clock().toISOString();
   value.observedAt = preview.observedAt;
   value.timeBasis = preview.timeBasis;
   value.lastCoverage = preview.coverage;
@@ -583,7 +588,8 @@ async function applyPreview({ stateDir, data, provider, previewId, revision, now
   return assets;
 }
 
-export async function performAssetSyncAction({ stateDir, provider, action, body = {}, sessionBinding = "", api = adapters, now = new Date() }) {
+export async function performAssetSyncAction({ stateDir, provider, action, body = {}, sessionBinding = "", api = adapters, now, clock = now ? advancingClock(now) : () => new Date() }) {
+  now ??= clock();
   if (!Object.hasOwn(PROVIDERS, provider)) throw syncError("不支持此同步平台。", 404);
   return locked(stateDir, async (data, persist) => {
     let assets;
@@ -625,11 +631,11 @@ export async function performAssetSyncAction({ stateDir, provider, action, body 
             credentials[key] = body[key].trim();
           }
         }
-        const result = await walletAssets(provider, credentials, wallets, api, now, owner);
+        const result = await walletAssets(provider, credentials, wallets, api, clock, owner);
         const current = await readPersonalAssets({ stateDir });
         targetAccount(current, provider, targetAccountId, previous);
         uniqueWalletSource(data, current, provider, wallets, targetAccountId);
-        const preview = makePreview(result, provider, current.revision, now, targetAccountId, wallets, owner);
+        const preview = makePreview(result, provider, current.revision, clock(), targetAccountId, wallets, owner);
         uniqueWalletSource(data, current, provider, wallets, targetAccountId, preview.derivedWallets);
         retainDerivedWalletSources(current, previous, preview.derivedWallets, targetAccountId, data);
         retainPricedWalletAssets(current, preview);
@@ -652,12 +658,12 @@ export async function performAssetSyncAction({ stateDir, provider, action, body 
       const before = await readPersonalAssets({ stateDir });
       const targetAccountId = targetAccount(before, provider, body.targetAccountId, previous);
       separateExchangeTarget(data, provider, targetAccountId);
-      const result = await api.fetchOkxAssets({ credentials, now: () => now });
+      const result = await api.fetchOkxAssets({ credentials, now: clock });
       const expectedExternalId = previous.externalAccountId || previous.preview?.externalAccountId;
       if (expectedExternalId && !sameExternal(provider, expectedExternalId, result.externalAccountId)) throw syncError("OKX 真实账户与已绑定账户不同，请先核对并断开旧授权。", 409);
       const current = await readPersonalAssets({ stateDir });
       targetAccount(current, provider, targetAccountId, previous);
-      const preview = makePreview(result, provider, current.revision, now, targetAccountId);
+      const preview = makePreview(result, provider, current.revision, clock(), targetAccountId);
       data.providers.okx = { ...previous, credentials, targetAccountId, enabled: false, preview, lastAttemptAt: now.toISOString(),
         lastFetchedAt: preview.fetchedAt, accountLabel: preview.accountLabel, lastError: null,
         ...(!previous.lastAppliedAt ? { observedAt: preview.observedAt, timeBasis: preview.timeBasis } : {}) };
@@ -669,12 +675,12 @@ export async function performAssetSyncAction({ stateDir, provider, action, body 
       const before = await readPersonalAssets({ stateDir });
       const targetAccountId = targetAccount(before, provider, body.targetAccountId, previous);
       uniquePredictionSource(data, before, provider, address, targetAccountId);
-      const result = await predictionAssets(provider, address, api, now);
+      const result = await predictionAssets(provider, address, api, clock);
       if (!sameExternal(provider, result.externalAccountId, address)) throw syncError("返回的资金地址与所选地址不符。", 502);
       const current = await readPersonalAssets({ stateDir });
       targetAccount(current, provider, targetAccountId, previous);
       uniquePredictionSource(data, current, provider, address, targetAccountId);
-      const preview = makePreview(result, provider, current.revision, now, targetAccountId);
+      const preview = makePreview(result, provider, current.revision, clock(), targetAccountId);
       data.providers[provider] = { ...previous, address, targetAccountId, enabled: false, preview, lastAttemptAt: now.toISOString(),
         lastFetchedAt: preview.fetchedAt, accountLabel: preview.accountLabel, lastError: null,
         ...(!previous.lastAppliedAt ? { observedAt: preview.observedAt, timeBasis: preview.timeBasis } : {}) };
@@ -694,17 +700,17 @@ export async function performAssetSyncAction({ stateDir, provider, action, body 
       const accountId = body.accountId || data.providers.futu?.externalAccountId;
       const previousAccountId = data.providers.futu?.externalAccountId || data.providers.futu?.preview?.externalAccountId;
       const changedAccount = provider === "futu" && previousAccountId && accountId !== previousAccountId;
-      try { await fetched(data, provider, stateDir, api, now, accountId, persist, body.targetAccountId, Boolean(changedAccount)); }
+      try { await fetched(data, provider, stateDir, api, clock, accountId, persist, body.targetAccountId, Boolean(changedAccount)); }
       catch (error) {
         if (data.providers[provider]) { data.providers[provider].lastError = failureText; await persist(data); }
         throw error;
       }
       if (changedAccount) data.providers.futu.enabled = false;
     } else if (action === "apply") {
-      assets = await applyPreview({ stateDir, data, provider, previewId: body.previewId, revision: body.revision, now, persist });
+      assets = await applyPreview({ stateDir, data, provider, previewId: body.previewId, revision: body.revision, now: clock(), clock, persist });
     } else throw syncError("不支持这个同步操作。", 404);
     await persist(data);
-    return assets ? { sync: status(data, now), assets } : status(data, now);
+    return assets ? { sync: status(data, clock()), assets } : status(data, clock());
   });
 }
 
@@ -723,7 +729,8 @@ export async function completeFutuAuthorization({ stateDir, query, sessionBindin
   });
 }
 
-export async function runAssetSyncCycle({ stateDir, api = adapters, now = new Date() }) {
+export async function runAssetSyncCycle({ stateDir, api = adapters, now, clock = now ? advancingClock(now) : () => new Date() }) {
+  now ??= clock();
   // Reading an unconfigured collector never creates credential or financial files.
   if (!Object.values((await readPrivate(pathFor(stateDir))).providers).some((value) => value.enabled)) return { attempted: 0, applied: 0, failed: 0 };
   return locked(stateDir, async (data, persist) => {
@@ -732,7 +739,7 @@ export async function runAssetSyncCycle({ stateDir, api = adapters, now = new Da
       const value = data.providers[provider];
       if (!value?.enabled || value.lastFetchedAt && now.getTime() < Date.parse(nextAssetRefreshAt(value.lastFetchedAt))) continue;
       result.attempted += 1;
-      value.lastAttemptAt = now.toISOString();
+      value.lastAttemptAt = clock().toISOString();
       try {
         const current = await readPersonalAssets({ stateDir });
         const targetAccountId = value.targetAccountId || PROVIDERS[provider].id;
@@ -741,9 +748,9 @@ export async function runAssetSyncCycle({ stateDir, api = adapters, now = new Da
           throw syncError("此账户已被手动修改，自动同步已暂停。请重新拉取并确认预览。", 409);
         }
         targetAccount(current, provider, undefined, value);
-        const preview = await fetched(data, provider, stateDir, api, now, value.externalAccountId, persist);
+        const preview = await fetched(data, provider, stateDir, api, clock, value.externalAccountId, persist);
         if (!sameExternal(provider, preview.externalAccountId, value.externalAccountId)) { value.enabled = false; throw syncError("平台账户标识已变化，请重新核对授权。", 409); }
-        await applyPreview({ stateDir, data, provider, previewId: preview.id, revision: preview.revision, now, persist, automatic: true });
+        await applyPreview({ stateDir, data, provider, previewId: preview.id, revision: preview.revision, now: clock(), clock, persist, automatic: true });
         result.applied += 1;
       } catch (error) {
         value.lastError = error.statusCode === 409 ? error.message : failureText;

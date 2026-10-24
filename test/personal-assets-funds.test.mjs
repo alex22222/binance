@@ -188,10 +188,11 @@ test("unchanged NAV is idempotent, a new NAV updates only its holding and long-t
 });
 test("failed, stale and regressing NAV preserves the exact ledger and last successful time", async t => {
   const stateDir = await fixture(t); await bind(stateDir); const ledger = await readFile(join(stateDir, "personal-assets.json"), "utf8");
+  const lastGoodFetchedAt = (await readAssetFundStatus({ stateDir, now })).bindings[0].lastFetchedAt;
   for (const [i, options] of [{ fail: true }, { date: "2026-10-01" }, { date: "2026-10-22" }].entries()) {
     const result = await runAssetFundCycle({ stateDir, now: new Date(Date.parse("2026-10-25T01:00:00Z") + i * 12 * 60 * 60_000), fetchImpl: source(options) });
     assert.equal(result.failed, 1); assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), ledger);
-    const status = await readAssetFundStatus({ stateDir, now }); assert.equal(status.bindings[0].lastFetchedAt, now.toISOString()); assert.ok(status.bindings[0].lastError);
+    const status = await readAssetFundStatus({ stateDir, now }); assert.equal(status.bindings[0].lastFetchedAt, lastGoodFetchedAt); assert.ok(status.bindings[0].lastError);
     assert.doesNotMatch(JSON.stringify(status), /private upstream body/);
   }
 });
@@ -265,13 +266,14 @@ test("HSBC public token and NAV failures never retry, expose tokens or overwrite
   const initial = await bind(stateDir, { isin: hsbcIsin, quantity: "10466.17", fetchImpl: source.fetchImpl });
   assert.equal(initial.portfolio.entries[0].amount, 121355.24115); assert.equal(initial.portfolio.entries[0].currency, "HKD"); assert.equal(initial.portfolio.entries.length, 2);
   const before = await readFile(join(stateDir, "personal-assets.json"), "utf8");
+  const lastGoodFetchedAt = (await readAssetFundStatus({ stateDir, now })).bindings[0].lastFetchedAt;
   for (const [index, options] of [{ tokenResponse: () => new Response("private upstream secret", { status: 429 }) }, { tokenResponse: () => new Response("<html>blocked</html>") },
     { dataResponse: () => new Response("anonymous.public.token", { status: 400 }) }, { dataResponse: () => new Response("broken") }].entries()) {
     const bad = hsbcSource(() => {}, options);
     const result = await runAssetFundCycle({ stateDir, fetchImpl: bad.fetchImpl, now: new Date(Date.parse("2026-10-25T01:00:00Z") + index * 12 * 60 * 60_000) });
     assert.deepEqual(result, { attempted: 1, applied: 0, failed: 1 }); assert.ok(bad.calls.length <= 2);
     assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
-    const status = await readAssetFundStatus({ stateDir }); assert.doesNotMatch(JSON.stringify(status), /private upstream secret|anonymous\.public\.token/); assert.equal(status.bindings[0].lastFetchedAt, now.toISOString());
+    const status = await readAssetFundStatus({ stateDir }); assert.doesNotMatch(JSON.stringify(status), /private upstream secret|anonymous\.public\.token/); assert.equal(status.bindings[0].lastFetchedAt, lastGoodFetchedAt);
   }
   assert.doesNotMatch(await readFile(join(stateDir, "personal-assets-funds.json"), "utf8"), /anonymous\.public\.token|Authorization/);
 });

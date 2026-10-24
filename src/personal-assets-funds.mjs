@@ -44,6 +44,12 @@ const HSBC_PAGE = {
   fundDetailPageUrl: "/en/individual-investor/fund-centre", forceHttps: true,
 };
 
+// Preserve an injected reference date while network, lock and storage work advances.
+function advancingClock(reference) {
+  const started = performance.now();
+  return () => new Date(reference.getTime() + performance.now() - started);
+}
+
 async function publicText(url, body, fetchImpl, encoding = "utf8", headers = {}, method = body ? "POST" : "GET") {
   const response = await fetchImpl(url, { method, redirect: "error", signal: AbortSignal.timeout(8000),
     headers: { Accept: body ? "application/json" : "text/html", ...(body ? { "Content-Type": "application/json" } : {}), ...(encoding === "gb18030" ? { Referer: "https://gu.qq.com/" } : {}), ...headers }, ...(body ? { body: JSON.stringify(body) } : {}) });
@@ -55,9 +61,10 @@ async function publicText(url, body, fetchImpl, encoding = "utf8", headers = {},
   } finally { await reader.cancel().catch(() => {}); }
 }
 
-export async function fetchAssetHoldingQuote({ isin, symbol, fetchImpl = fetch, now = new Date() }) {
+export async function fetchAssetHoldingQuote({ isin, symbol, fetchImpl = fetch, now, clock = now ? advancingClock(now) : () => new Date() }) {
+  now ??= clock();
   if (!validInstrument({ isin, symbol })) throw fail("暂不支持此证券代码或基金份额，请核对。", 400);
-  if (symbol === undefined) return fetchAssetFundNav({ isin, fetchImpl, now });
+  if (symbol === undefined) return fetchAssetFundNav({ isin, fetchImpl, now, clock });
   try {
     const text = await publicText(`https://qt.gtimg.cn/q=${symbol}`, null, fetchImpl, "gb18030");
     const match = text.match(new RegExp(`^v_${symbol}="([^"\\r\\n]*)";\\s*$`));
@@ -66,6 +73,7 @@ export async function fetchAssetHoldingQuote({ isin, symbol, fetchImpl = fetch, 
     if (!fields || fields.length < 62 || fields.length > 120 || fields[1] !== (metadata.quoteName || metadata.name) || fields[2] !== (metadata.quoteCode || symbol.slice(2))
       || (us ? fields[0] !== "200" || fields[35] !== "USD" || fields[46] !== metadata.issuer || fields[56] !== (metadata.category === "股票ETF" ? "GP-ETF" : "GP") : fields[61] !== "GP-A")
       || !/^\d{1,9}(?:\.\d{1,6})?$/.test(fields[3]) || Number(fields[3]) <= 0) throw Error();
+    now = clock();
     const at = fields[30]; let date; let observedAt = null;
     if (us) {
       if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(at) || Number(at.slice(11,13)) > 23 || Number(at.slice(14,16)) > 59 || Number(at.slice(17,19)) > 59) throw Error();
@@ -83,7 +91,8 @@ export async function fetchAssetHoldingQuote({ isin, symbol, fetchImpl = fetch, 
   } catch (error) { if (error.fundError) throw error; throw fail("证券身份、未复权报价或行情日期无法核实，保留上次有效估值。"); }
 }
 
-export async function fetchAssetFundNav({ isin, fetchImpl = fetch, now = new Date() }) {
+export async function fetchAssetFundNav({ isin, fetchImpl = fetch, now, clock = now ? advancingClock(now) : () => new Date() }) {
+  now ??= clock();
   if (!Object.hasOwn(CATALOG, isin)) throw fail("暂不支持此基金份额类别，请核对 ISIN。", 400);
   try {
     let nav; let date;
@@ -147,6 +156,7 @@ export async function fetchAssetFundNav({ isin, fetchImpl = fetch, now = new Dat
       if (rows.length !== 1 || rows[0].fundClassId !== "10008003" || rows[0].fundClassName !== "A(港元)-累積" || rows[0].currency !== "港元") throw Error();
       nav = rows[0].fundNav; date = rows[0].navDate;
     }
+    now = clock();
     if (typeof nav !== "string" || !/^\d{1,9}(?:\.\d{1,9})?$/.test(nav) || Number(nav) <= 0 || !validDate(date) || date > day(now)) throw Error();
     if (Date.parse(day(now)) - Date.parse(date) > 7 * 86_400_000) throw fail("官方净值或价格超过七天未更新，保留上次有效估值。");
     return { isin, ...CATALOG[isin], nav, date, fetchedAt: now.toISOString() };
@@ -213,7 +223,8 @@ function status(config, state, now) {
 }
 export async function readAssetFundStatus({ stateDir, state, now = new Date() }) { return status(await readConfig(filePath(stateDir)), state || await readPersonalAssets({ stateDir }), now); }
 
-export async function configureAssetFund({ stateDir, entryId, isin, symbol, quantity, quantityBasis = "manual", confirmedOn, revision, fetchImpl = fetch, now = new Date() }) {
+export async function configureAssetFund({ stateDir, entryId, isin, symbol, quantity, quantityBasis = "manual", confirmedOn, revision, fetchImpl = fetch, now, clock = now ? advancingClock(now) : () => new Date() }) {
+  now ??= clock();
   if (!validInstrument({ isin, symbol }) || !validQuantity(quantity) || !validDate(confirmedOn) || confirmedOn > day(now)
     || symbol !== undefined && (STOCKS[symbol].currency === "CNY" && !Number.isInteger(Number(quantity)) || !["manual", "screenshot"].includes(quantityBasis))) throw fail("请核对证券标识、非负数量及数量日期。", 400);
   return locked(stateDir, async (config, persist) => {
@@ -222,29 +233,30 @@ export async function configureAssetFund({ stateDir, entryId, isin, symbol, quan
     const metadata = instrument({ isin, symbol });
     if (symbol !== undefined ? original.entry.category !== (metadata.category || "股票") || original.entry.name !== metadata.name
       : (metadata.priceBasis === "market-close") !== (original.entry.category === "股票ETF") || original.entry.category === "股票") throw fail("证券类型或名称与所选报价不匹配，请核对原持仓。", 400);
-    const quote = await fetchAssetHoldingQuote({ isin, symbol, fetchImpl, now });
+    const quote = await fetchAssetHoldingQuote({ isin, symbol, fetchImpl, now, clock });
     const binding = { entryId, accountId: original.account.id, ...(symbol === undefined ? { isin } : { symbol, quantityBasis }), quantity, confirmedOn, enabled: true };
     const entry = revalued(original.entry, binding, quote);
     const valued = await valuePersonalAssetState(current, { stateDir });
     await createPersonalAssetsSnapshot({ stateDir, revision, valuation: { rates: valued.portfolio.rates, fx: valued.fx } });
     await writePrivate(join(resolve(stateDir), "personal-assets-funds-previous.json"), current);
     const assets = await savePersonalAssets({ stateDir, revision, portfolio: { ...current.portfolio, entries: current.portfolio.entries.map(row => row.id === entryId ? entry : row) } });
-    Object.assign(binding, { quote, fingerprint: target(assets, entryId).fingerprint, lastAttemptAt: now.toISOString(), lastFetchedAt: quote.fetchedAt, lastAppliedAt: now.toISOString(), lastError: null });
+    Object.assign(binding, { quote, fingerprint: target(assets, entryId).fingerprint, lastAttemptAt: now.toISOString(), lastFetchedAt: quote.fetchedAt, lastAppliedAt: clock().toISOString(), lastError: null });
     config.bindings = [...config.bindings.filter(row => row.entryId !== entryId), binding]; await persist(); return assets;
   });
 }
 
-export async function runAssetFundCycle({ stateDir, fetchImpl = fetch, now = new Date() }) {
+export async function runAssetFundCycle({ stateDir, fetchImpl = fetch, now, clock = now ? advancingClock(now) : () => new Date() }) {
+  now ??= clock();
   if (!(await readConfig(filePath(stateDir))).bindings.some(row => row.enabled)) return { attempted: 0, applied: 0, failed: 0 };
   return locked(stateDir, async (config, persist) => {
     const result = { attempted: 0, applied: 0, failed: 0 };
     for (const binding of config.bindings) {
       if (!binding.enabled || binding.lastAttemptAt && now.getTime() < Date.parse(nextAssetRefreshAt(binding.lastAttemptAt))) continue;
-      result.attempted++; binding.lastAttemptAt = now.toISOString();
+      result.attempted++; binding.lastAttemptAt = clock().toISOString();
       try {
         let current = await readPersonalAssets({ stateDir });
         if (target(current, binding.entryId).fingerprint !== binding.fingerprint) { binding.enabled = false; throw fail("持仓已修改，自动重估暂停，请重新确认份额。", 409); }
-        const quote = await fetchAssetHoldingQuote({ isin: binding.isin, symbol: binding.symbol, fetchImpl, now });
+        const quote = await fetchAssetHoldingQuote({ isin: binding.isin, symbol: binding.symbol, fetchImpl, now: clock(), clock });
         if (binding.quote?.date > quote.date) throw fail("报价日期发生倒退，保留上次有效估值。");
         for (let attempt = 0; attempt < 3; attempt++) {
           current = await readPersonalAssets({ stateDir }); const selected = target(current, binding.entryId);
@@ -254,7 +266,7 @@ export async function runAssetFundCycle({ stateDir, fetchImpl = fetch, now = new
           try {
             await writePrivate(join(resolve(stateDir), "personal-assets-funds-previous.json"), current);
             const assets = await savePersonalAssets({ stateDir, revision: current.revision, portfolio: { ...current.portfolio, entries: current.portfolio.entries.map(row => row.id === binding.entryId ? entry : row) } });
-            binding.fingerprint = target(assets, binding.entryId).fingerprint; binding.lastAppliedAt = now.toISOString(); result.applied++; break;
+            binding.fingerprint = target(assets, binding.entryId).fingerprint; binding.lastAppliedAt = clock().toISOString(); result.applied++; break;
           } catch (error) { if (error.statusCode !== 409 || attempt === 2) throw error; }
         }
         binding.quote = quote; binding.lastFetchedAt = quote.fetchedAt; binding.lastError = null;

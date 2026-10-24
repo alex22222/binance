@@ -121,7 +121,7 @@ test("applied account bindings cannot be moved silently and unexpected external 
   const before = await readFile(join(stateDir, "personal-assets.json"), "utf8");
   await assert.rejects(action(stateDir, "okx", "preview", { targetAccountId: "account-5" }), /绑定/);
   await assert.rejects(action(stateDir, "okx", "connect", credentials, { api: { fetchOkxAssets: async () => synthetic({ externalAccountId: "different" }) } }), /真实账户/);
-  const cycle = await runAssetSyncCycle({ stateDir, now: later, api: { fetchOkxAssets: async () => synthetic({ externalAccountId: "different", fetchedAt: later.toISOString() }) } });
+  const cycle = await runAssetSyncCycle({ stateDir, now: later, clock: () => later, api: { fetchOkxAssets: async () => synthetic({ externalAccountId: "different", fetchedAt: later.toISOString() }) } });
   assert.deepEqual(cycle, { attempted: 1, applied: 0, failed: 1 });
   assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
   const status = await readAssetSyncStatus({ stateDir, now: later });
@@ -274,13 +274,13 @@ test("disconnect removes wallet credentials but preserves applied missing valuat
   const targetAccountId = await tokenPocketTarget(stateDir);
   const connected = await action(stateDir, "tokenpocket", "connect", { ...credentials, wallets: polygonWallet, targetAccountId }, { api: walletApi({ total: 0, holdings: [], valuationComplete: false, unpricedAssets: [unpriced], coverage: ["Retained scope"], warnings: ["Retained missing price"] }) });
   const preview = connected.providers.tokenpocket.preview;
-  await action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision });
+  const applied = await action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision });
   const before = await readFile(join(stateDir, "personal-assets.json"), "utf8");
   const disconnected = (await action(stateDir, "tokenpocket", "disconnect")).providers.tokenpocket;
   assert.equal(disconnected.connected, false);
   assert.equal(disconnected.enabled, false);
   assert.equal(disconnected.preview, undefined);
-  assert.equal(disconnected.lastAppliedAt, at.toISOString());
+  assert.equal(disconnected.lastAppliedAt, applied.sync.providers.tokenpocket.lastAppliedAt);
   assert.equal(disconnected.lastValuationComplete, false);
   assert.equal(disconnected.lastUnpricedAssets[0].quantity, unpriced.quantity);
   assert.deepEqual(disconnected.lastCoverage, ["Retained scope"]);
@@ -411,7 +411,7 @@ test("a formerly priced wallet token becoming unpriced retains the entire last v
   const before = await readFile(join(stateDir, "personal-assets.json"), "utf8");
   const lastGood = (await readAssetSyncStatus({ stateDir })).providers.tokenpocket;
   const missing = { ...unpriced, externalId: tokenExternalId };
-  const options = { api: walletApi({ fetchedAt: later.toISOString(), valuationComplete: false, unpricedAssets: [missing] }), now: later };
+  const options = { api: walletApi({ fetchedAt: later.toISOString(), valuationComplete: false, unpricedAssets: [missing] }), now: later, clock: () => later };
   assert.deepEqual(await runAssetSyncCycle({ stateDir, ...options }), { attempted: 1, applied: 0, failed: 1 });
   assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
   const status = (await readAssetSyncStatus({ stateDir })).providers.tokenpocket;
