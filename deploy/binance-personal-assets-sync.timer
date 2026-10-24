@@ -1,9 +1,10 @@
 [Unit]
-Description=Refresh authorized personal assets every 15 minutes
+Description=Refresh authorized personal assets twice daily in Beijing time
 
 [Timer]
-OnBootSec=2min
-OnUnitInactiveSec=15min
+OnCalendar=*-*-* 09:00:00 Asia/Shanghai
+OnCalendar=*-*-* 21:00:00 Asia/Shanghai
+Persistent=true
 AccuracySec=30s
 Unit=binance-personal-assets-sync.service
 

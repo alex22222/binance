@@ -3,7 +3,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { CATEGORIES, CURRENCIES, validatePortfolio } from "./personal-assets-core.mjs";
+import { CATEGORIES, CURRENCIES, validatePortfolio, nextAssetRefreshAt } from "./personal-assets-core.mjs";
 import { readPersonalAssets, savePersonalAssets, createPersonalAssetsSnapshot } from "./personal-assets.mjs";
 import { fetchOkxAssets } from "./personal-assets-okx.mjs";
 import { fetchPolymarketAssets } from "./personal-assets-polymarket.mjs";
@@ -15,7 +15,7 @@ const PROVIDERS = { okx: { id: "okx-exchange", platform: "OKX", name: "OKX · �
   polymarket: { id: "polymarket-main", platform: "Polymarket", name: "Polymarket · 资产账户" }, future: { id: "future-main", platform: "Future", name: "Future · Polygon 交易账户" },
   okxweb3: { id: "okx-web3", platform: "OKX", name: "OKX · Web3 钱包" }, tokenpocket: { id: "tokenpocket-main", platform: "TokenPocket", name: "TokenPocket · 钱包" } };
 const adapters = { fetchOkxAssets, fetchPolymarketAssets, fetchWalletAssets, registerFutuClient, createFutuAuthorization, exchangeFutuCode, refreshFutuToken, fetchFutuAccounts, fetchFutuAssets };
-const INTERVAL = 15 * 60_000;
+const INTERVAL = 12 * 60 * 60_000;
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const failureText = "只读同步未完成，请检查授权、账户地区和网络，并核对最近入账状态。";
 const callbackUri = "https://spaceflag.site/api/assets/sync/futu/callback";
@@ -228,7 +228,7 @@ function status(data, now = new Date()) {
   const providers = {};
   for (const name of Object.keys(PROVIDERS)) {
     const value = data.providers[name] || {};
-    const dueAt = value.enabled && Number.isFinite(Date.parse(value.lastFetchedAt)) ? new Date(Date.parse(value.lastFetchedAt) + INTERVAL).toISOString() : null;
+    const dueAt = value.enabled && Number.isFinite(Date.parse(value.lastFetchedAt)) ? nextAssetRefreshAt(value.lastFetchedAt) : null;
     providers[name] = {
       connected: name === "okx" || walletProvider(name) ? Boolean(value.credentials) : predictionProvider(name) ? Boolean(value.address) : Boolean(value.tokens),
       enabled: value.enabled === true,
@@ -250,7 +250,7 @@ function status(data, now = new Date()) {
       ...(name === "futu" ? { accounts: value.accounts || [], selectedAccountId: value.externalAccountId || null } : {})
     };
   }
-  return { providers, serverIp: "173.199.122.23", intervalMinutes: 15 };
+  return { providers, serverIp: "173.199.122.23", intervalMinutes: 720, schedule: "北京时间每天 09:00、21:00" };
 }
 
 export async function readAssetSyncStatus({ stateDir, now = new Date() }) { return status(await readPrivate(pathFor(stateDir)), now); }
@@ -576,7 +576,7 @@ export async function runAssetSyncCycle({ stateDir, api = adapters, now = new Da
     const result = { attempted: 0, applied: 0, failed: 0 };
     for (const provider of Object.keys(PROVIDERS)) {
       const value = data.providers[provider];
-      if (!value?.enabled || now.getTime() - Date.parse(value.lastFetchedAt || 0) < INTERVAL) continue;
+      if (!value?.enabled || value.lastFetchedAt && now.getTime() < Date.parse(nextAssetRefreshAt(value.lastFetchedAt))) continue;
       result.attempted += 1;
       value.lastAttemptAt = now.toISOString();
       try {

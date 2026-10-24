@@ -11,7 +11,7 @@ import { performAssetSyncAction, completeFutuAuthorization, readAssetSyncStatus,
 process.env.PERSONAL_ASSETS_FX_DISABLED = "1";
 
 const at = new Date("2026-10-24T12:00:00Z");
-const later = new Date(at.getTime() + 16 * 60_000);
+const later = new Date("2026-10-24T13:00:00Z");
 const credentials = { apiKey: "synthetic-key", secret: "synthetic-secret", passphrase: "synthetic-passphrase", region: "global" };
 const synthetic = (overrides = {}) => ({ provider: "okx", currency: "USD", total: 100, asOf: "2026-10-24", fetchedAt: at.toISOString(), accountLabel: "Synthetic OKX", externalAccountId: "12345", breakdownComplete: true,
   holdings: [{ externalId: "one", name: "Synthetic asset", category: "加密资产", currency: "USD", amount: 100, quantity: "0.01" }], coverage: ["Synthetic scope"], warnings: [], ...overrides });
@@ -37,6 +37,21 @@ async function enabled(stateDir) {
   const preview = await connected(stateDir);
   return action(stateDir, "okx", "apply", { previewId: preview.id, revision: preview.revision });
 }
+
+test("automatic collectors skip intra-slot requests and refresh at the next Beijing calendar slot", async context => {
+  const stateDir = await fixture(context);
+  await enabled(stateDir);
+  let calls = 0;
+  const source = { fetchOkxAssets: async () => { calls++; return synthetic({ fetchedAt: later.toISOString() }); } };
+  assert.deepEqual(await runAssetSyncCycle({ stateDir, now: new Date("2026-10-24T12:16:00Z"), api: source }), { attempted: 0, applied: 0, failed: 0 });
+  assert.equal(calls, 0);
+  assert.deepEqual(await runAssetSyncCycle({ stateDir, now: later, api: source }), { attempted: 1, applied: 1, failed: 0 });
+  assert.deepEqual(await runAssetSyncCycle({ stateDir, now: new Date("2026-10-24T13:16:00Z"), api: source }), { attempted: 0, applied: 0, failed: 0 });
+  const status = await readAssetSyncStatus({ stateDir, now: later });
+  assert.equal(status.providers.okx.dueAt, "2026-10-25T01:00:00.000Z");
+  assert.equal(status.intervalMinutes, 720);
+  assert.equal(calls, 1);
+});
 
 test("explicit account binding replaces the existing same exchange instead of duplicating its balance", async (context) => {
   const stateDir = await fixture(context);
@@ -122,11 +137,11 @@ test("source observation time and overdue status distinguish current reads from 
   const row = result.assets.portfolio.entries.find((entry) => entry.id === "sync-okx-total");
   assert.equal(row.asOfBasis, "statement");
   assert.match(row.note, new RegExp(observedAt.replaceAll(".", "\\.")));
-  const status = (await readAssetSyncStatus({ stateDir, now: new Date(at.getTime() + 31 * 60_000) })).providers.okx;
+  const status = (await readAssetSyncStatus({ stateDir, now: new Date(at.getTime() + 13 * 60 * 60_000 + 60_000) })).providers.okx;
   assert.equal(status.observedAt, observedAt);
   assert.equal(status.timeBasis, "source");
   assert.equal(status.lastAttemptAt, at.toISOString());
-  assert.equal(status.dueAt, new Date(at.getTime() + 15 * 60_000).toISOString());
+  assert.equal(status.dueAt, "2026-10-24T13:00:00.000Z");
   assert.equal(status.overdue, true);
 });
 
@@ -415,7 +430,7 @@ test("applied prediction valuations retain bounded original amounts, quote evide
 test("changing the real Futu account requires a new preview and confirmation on the same local binding", async (context) => {
   const stateDir = await fixture(context);
   await writeFile(privateFile(stateDir), JSON.stringify({ schemaVersion: 1, futuClient: { clientId: "synthetic-client" }, providers: { futu: {
-    tokens: { accessToken: "synthetic-access", refreshToken: "synthetic-refresh", expiresAt: new Date(at.getTime() + 3600_000).toISOString() },
+    tokens: { accessToken: "synthetic-access", refreshToken: "synthetic-refresh", expiresAt: new Date(at.getTime() + 24 * 3600_000).toISOString() },
     accounts: [{ id: "123", label: "First synthetic real account" }, { id: "456", label: "Second synthetic real account" }],
   } } }), { mode: 0o600 });
   const selected = [];

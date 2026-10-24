@@ -4,13 +4,14 @@ import { lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { readPersonalAssets, savePersonalAssets, createPersonalAssetsSnapshot } from "./personal-assets.mjs";
 import { valuePersonalAssetState } from "./personal-assets-fx.mjs";
+import { nextAssetRefreshAt } from "./personal-assets-core.mjs";
 
 const CATALOG = {
   HK0000857299: { name: "泰康开泰美元货币（A Acc）", currency: "USD", source: "泰康资产管理（香港）", url: "https://hk.taikangasset.cn/hk/product_service/productService.html" },
   HK0000478872: { name: "高腾微财货币基金（A 港元累积）", currency: "HKD", source: "高腾国际资产管理", url: "https://www.gaotengasset.com/zh-HK/product-services" },
   US9229083632: { name: "Vanguard 标普500 ETF（VOO）", currency: "USD", source: "Vanguard（发行人）", priceBasis: "market-close", url: "https://investor.vanguard.com/investment-products/etfs/profile/voo" },
 };
-const INTERVAL = 15 * 60_000;
+const INTERVAL = 12 * 60 * 60_000;
 const fail = (message, statusCode = 502) => Object.assign(new Error(message), { statusCode, fundError: true });
 const day = at => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(at);
 const validDate = value => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
@@ -155,7 +156,7 @@ export async function runAssetFundCycle({ stateDir, fetchImpl = fetch, now = new
   return locked(stateDir, async (config, persist) => {
     const result = { attempted: 0, applied: 0, failed: 0 };
     for (const binding of config.bindings) {
-      if (!binding.enabled || now - Date.parse(binding.lastAttemptAt || 0) < INTERVAL) continue;
+      if (!binding.enabled || binding.lastAttemptAt && now.getTime() < Date.parse(nextAssetRefreshAt(binding.lastAttemptAt))) continue;
       result.attempted++; binding.lastAttemptAt = now.toISOString();
       try {
         let current = await readPersonalAssets({ stateDir });

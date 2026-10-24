@@ -32,6 +32,14 @@ async function fixture(t) {
 }
 const bind = (stateDir, more = {}) => configureAssetFund({ stateDir, entryId: "fund-one", isin, quantity: "2.5", confirmedOn: "2026-10-24", revision: 1, fetchImpl: source(), now, ...more });
 
+test("fund checking respects the twice-daily schedule and normal intervals are not marked delayed", async t => {
+  const stateDir = await fixture(t); await bind(stateDir);
+  let called = false;
+  assert.deepEqual(await runAssetFundCycle({ stateDir, now: new Date(now.getTime() + 60 * 60_000), fetchImpl: async () => { called = true; throw Error(); } }), { attempted: 0, applied: 0, failed: 0 });
+  assert.equal(called, false);
+  assert.equal((await readAssetFundStatus({ stateDir, now: new Date(now.getTime() + 10 * 60 * 60_000) })).bindings[0].delayed, false);
+});
+
 function etfSource(change = () => {}) {
   const data = { overview: { cusip: "922908363", fundId: "0968", iovTickerSymbol: "VOO.P", marketPrice: "$123.45", marketPriceAsOfDate: "10/23/2026", navPrice: "$120.00" },
     dashboard: { ticker: "VOO", fundId: "0968", fundFullName: "Vanguard S&P 500 ETF", marketPrice: "$123.45", marketPriceAsOfDate: "10/23/2026" },
@@ -95,10 +103,10 @@ test("HKD fund uses native NAV rather than interpreting a prior USD equivalent a
 });
 test("unchanged NAV is idempotent, a new NAV updates only its holding and long-term units never expire", async t => {
   const stateDir = await fixture(t); await bind(stateDir, { confirmedOn: "2020-10-24" });
-  const later = new Date(now.getTime() + 16 * 60_000);
+  const later = new Date("2026-10-25T01:00:00Z");
   assert.deepEqual(await runAssetFundCycle({ stateDir, now: later, fetchImpl: source() }), { attempted: 1, applied: 0, failed: 0 });
   assert.equal((await readPersonalAssets({ stateDir })).revision, 2);
-  const monthsLater = new Date("2026-10-24T15:00:00Z");
+  const monthsLater = new Date("2026-10-25T13:00:00Z");
   assert.deepEqual(await runAssetFundCycle({ stateDir, now: monthsLater, fetchImpl: source({ nav: "12.2" }) }), { attempted: 1, applied: 1, failed: 0 });
   assert.equal((await readPersonalAssets({ stateDir })).portfolio.entries[0].amount, 30.5);
   assert.equal((await readAssetFundStatus({ stateDir, now: monthsLater })).bindings[0].enabled, true);
@@ -107,7 +115,7 @@ test("unchanged NAV is idempotent, a new NAV updates only its holding and long-t
 test("failed, stale and regressing NAV preserves the exact ledger and last successful time", async t => {
   const stateDir = await fixture(t); await bind(stateDir); const ledger = await readFile(join(stateDir, "personal-assets.json"), "utf8");
   for (const [i, options] of [{ fail: true }, { date: "2026-10-01" }, { date: "2026-10-22" }].entries()) {
-    const result = await runAssetFundCycle({ stateDir, now: new Date(now.getTime() + (i + 1) * 16 * 60_000), fetchImpl: source(options) });
+    const result = await runAssetFundCycle({ stateDir, now: new Date(Date.parse("2026-10-25T01:00:00Z") + i * 12 * 60 * 60_000), fetchImpl: source(options) });
     assert.equal(result.failed, 1); assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), ledger);
     const status = await readAssetFundStatus({ stateDir, now }); assert.equal(status.bindings[0].lastFetchedAt, now.toISOString()); assert.ok(status.bindings[0].lastError);
     assert.doesNotMatch(JSON.stringify(status), /private upstream body/);
@@ -116,10 +124,10 @@ test("failed, stale and regressing NAV preserves the exact ledger and last succe
 test("manual changes pause automatic overwrite, while unrelated changes do not", async t => {
   const stateDir = await fixture(t); await bind(stateDir); let current = await readPersonalAssets({ stateDir });
   current.portfolio.entries[1].amount = 55; await savePersonalAssets({ stateDir, revision: current.revision, portfolio: current.portfolio });
-  const later = new Date(now.getTime() + 16 * 60_000); assert.equal((await runAssetFundCycle({ stateDir, now: later, fetchImpl: source() })).failed, 0);
+  const later = new Date("2026-10-25T01:00:00Z"); assert.equal((await runAssetFundCycle({ stateDir, now: later, fetchImpl: source() })).failed, 0);
   current = await readPersonalAssets({ stateDir }); current.portfolio.entries[0].amount = 88; await savePersonalAssets({ stateDir, revision: current.revision, portfolio: current.portfolio });
   const untouched = await readFile(join(stateDir, "personal-assets.json"), "utf8");
-  const result = await runAssetFundCycle({ stateDir, now: new Date(later.getTime() + 16 * 60_000), fetchImpl: source({ nav: "99" }) });
+  const result = await runAssetFundCycle({ stateDir, now: new Date(later.getTime() + 12 * 60 * 60_000), fetchImpl: source({ nav: "99" }) });
   assert.equal(result.failed, 1); assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), untouched);
   assert.equal((await readAssetFundStatus({ stateDir })).bindings[0].enabled, false);
 });

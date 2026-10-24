@@ -487,9 +487,9 @@ test("automatic rates distinguish retrieval time, daily references and independe
   assert.doesNotMatch(html, /<img|尚未更新/);
 });
 
-test("five-minute refresh polls only visible pages without pending drafts, writes or conflicts", async () => {
+test("twice-daily page refresh reads only visible pages without pending drafts, writes or conflicts", async () => {
   const ui = await view(stateWith());
-  const timer = ui.intervals.find((item) => item.delay === 5 * 60 * 1000);
+  const timer = ui.intervals.find((item) => item.delay === 12 * 60 * 60 * 1000);
   assert.ok(timer);
   const initialReads = ui.requests.length;
   for (const condition of ['modal="manual"', "saving=true", "loading=true", "conflict=true", 'document.visibilityState="hidden"']) {
@@ -503,6 +503,43 @@ test("five-minute refresh polls only visible pages without pending drafts, write
   assert.equal(ui.requests.length, initialReads + 1);
   assert.equal(ui.requests.at(-1).url, "/api/assets");
   assert.equal(ui.requests.at(-1).options.method, undefined);
+});
+
+test("overview leads with total, floating stock PnL and distributions before AI and collapsed source details", async () => {
+  const initial = stateWith([entry({ amount: 500 })]);
+  initial.portfolio.stockPnl = [{ accountId: "account-1", amount: -123.45, currency: "CNY", asOf: entry().asOf, source: "screenshot", asOfBasis: "imported" }];
+  const ui = await view(initial);
+  const html = ui.get("asset-content").innerHTML;
+  assert.match(html, /股票浮动盈亏[\s\S]*-123\.45/);
+  assert.match(html, /已含在当前市值中，不重复加减/);
+  assert.match(html, /截图核对[\s\S]*截图时点未核实/);
+  assert.ok(html.indexOf('class="metrics"') < html.indexOf('aria-label="资产类型"'));
+  assert.ok(html.indexOf('aria-label="资产类型"') < html.indexOf('aria-label="AI 资产点评"'));
+  assert.match(html, /<details class="source-details">/);
+  assert.match(html, /09:00.*21:00/);
+  assert.equal(ui.run("summarize(portfolio()).total"), 500);
+  ui.run("hidden=true;render()");
+  assert.doesNotMatch(ui.get("asset-content").innerHTML, /123\.45|500\.00/);
+});
+
+test("stock PnL edits retain drafts under privacy and save signed amounts without changing market values", async () => {
+  const initial = stateWith([entry({ category: "股票", amount: 500 })]);
+  const ui = await view(initial);
+  ui.run("openStockPnl()");
+  assert.match(ui.get("dialog-body").innerHTML, /浮动盈亏（可为负数）/);
+  await ui.listeners.input({ target: { dataset: { pnlAccount: "account-1", pnlField: "amount" }, value: "-80.25" } });
+  ui.run("hidden=true;rerenderDialog()");
+  assert.doesNotMatch(ui.get("dialog-body").innerHTML, /80\.25/);
+  assert.equal(ui.run('stockPnlDraft["account-1"].amount'), "-80.25");
+  ui.run("hidden=false;rerenderDialog()");
+  assert.match(ui.get("dialog-body").innerHTML, /-80\.25/);
+  await ui.run("saveStockPnl()");
+  const saved = JSON.parse(ui.requests.find(row => row.options.method === "PUT").options.body);
+  assert.equal(saved.portfolio.stockPnl[0].amount, -80.25);
+  assert.deepEqual(saved.portfolio.entries, initial.portfolio.entries);
+  assert.equal(ui.run("summarize(portfolio()).total"), 500);
+  ui.run('page="overview";displayCurrency="USD";state.portfolio.rates.USD={value:5,date:currentDate()};render()');
+  assert.match(ui.get("asset-content").innerHTML, /USD -16\.05/);
 });
 
 function categorizedState() {
@@ -732,7 +769,7 @@ test("overview and analysis render an accessible category pie using only account
   assert.equal(colors.length, 2);
   for (const [, category, color] of colors) assert.ok(pie.includes(`data-category="${category}"`) && pie.includes(`background:${color}`));
   assert.doesNotMatch(pie, /990\.00|1,190\.00|900\.00|200\.00/);
-  assert.ok(ui.get("asset-content").innerHTML.includes(pie));
+  assert.ok(ui.get("asset-content").innerHTML.includes(pie.match(/<svg[\s\S]*?<\/svg>/)[0]));
   ui.run('page="analysis"; render()');
   assert.ok(ui.get("asset-content").innerHTML.includes(pie));
 });

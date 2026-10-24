@@ -17,12 +17,46 @@ import {
   parseCsv,
   summarize,
   validatePortfolio,
+  nextAssetRefreshAt,
   readPersonalAssets,
   savePersonalAssets,
   createPersonalAssetsSnapshot,
 } from "../src/personal-assets.mjs";
 
 const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
+
+test("asset refresh slots are 09:00 and 21:00 Beijing time across midnight", () => {
+  assert.equal(nextAssetRefreshAt("2026-10-24T00:59:59Z"), "2026-10-24T01:00:00.000Z");
+  assert.equal(nextAssetRefreshAt("2026-10-24T01:00:00Z"), "2026-10-24T13:00:00.000Z");
+  assert.equal(nextAssetRefreshAt("2026-10-24T12:59:59Z"), "2026-10-24T13:00:00.000Z");
+  assert.equal(nextAssetRefreshAt("2026-10-24T13:00:00Z"), "2026-10-25T01:00:00.000Z");
+});
+
+test("stock floating PnL is signed reference data, counted once per confirmed account and never added to assets", () => {
+  const value = portfolio([entry(), entry({ id: "two", accountId: "account-2", currency: "USD", amount: 20 }), entry({ id: "pending", accountId: "account-3", amount: 50 })]);
+  value.accounts[2].reviewStatus = "pending";
+  value.rates.USD = { value: 7, date: today };
+  value.stockPnl = [
+    { accountId: "account-1", amount: -30, currency: "CNY", asOf: today, source: "screenshot", asOfBasis: "imported" },
+    { accountId: "account-2", amount: 2, currency: "USD", asOf: today, source: "manual", asOfBasis: "statement" },
+    { accountId: "account-3", amount: -999, currency: "CNY", asOf: today, source: "manual" },
+  ];
+  const clean = validatePortfolio(value);
+  assert.deepEqual(clean.stockPnl, value.stockPnl);
+  const summary = summarize(clean);
+  assert.equal(summary.total, 240);
+  assert.equal(summary.stockPnl.total, -16);
+  assert.equal(summary.stockPnl.included.length, 2);
+  assert.equal(summary.stockPnl.excluded.length, 1);
+  delete clean.rates.USD;
+  assert.equal(summarize(clean).stockPnl.total, -30);
+  assert.equal(summarize(clean).stockPnl.missing.length, 1);
+  assert.equal(summarize(portfolio([entry()])).stockPnl.total, null);
+  for (const patch of [{ amount: NaN }, { amount: -1e13 }, { currency: "XYZ" }, { accountId: "absent" }, { asOf: "2099-01-01" }]) {
+    assert.throws(() => validatePortfolio({ ...value, stockPnl: [{ ...value.stockPnl[0], ...patch }] }), /盈亏|账户|币种|日期/);
+  }
+  assert.throws(() => validatePortfolio({ ...value, stockPnl: [value.stockPnl[0], value.stockPnl[0]] }), /重复/);
+});
 function entry(overrides = {}) {
   return { id: "entry-1", accountId: "account-1", kind: "total", name: "账户总额", category: "未分类", currency: "CNY", amount: 100, asOf: today, source: "manual", ...overrides };
 }

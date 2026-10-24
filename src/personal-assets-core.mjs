@@ -6,6 +6,12 @@ const MAX_AMOUNT = 1_000_000_000_000;
 const DAY_MS = 86_400_000;
 const dateFormatter = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" });
 
+export function nextAssetRefreshAt(value) {
+  const at = new Date(value).getTime();
+  const midnight = Math.floor(at / DAY_MS) * DAY_MS;
+  return new Date([midnight + 3_600_000, midnight + 13 * 3_600_000, midnight + DAY_MS + 3_600_000].find(slot => slot > at)).toISOString();
+}
+
 function today() {
   return dateFormatter.format(new Date());
 }
@@ -113,7 +119,22 @@ export function validatePortfolio(input) {
     if (rate.note !== undefined) rates[currency].note = noteText(rate.note, `${currency} 汇率备注`);
   }
   rates.CNY ??= { value: 1, date: today() };
-  return { accounts, entries, rates };
+  const result = { accounts, entries, rates };
+  if (value.stockPnl !== undefined) {
+    if (!Array.isArray(value.stockPnl) || value.stockPnl.length > 100) throw new Error("股票盈亏须为列表，最多 100 个账户");
+    const seen = new Set();
+    result.stockPnl = value.stockPnl.map(raw => {
+      const row = object(raw, "股票盈亏");
+      if (!accountIds.has(row.accountId) || seen.has(row.accountId)) throw new Error("股票盈亏账户不存在或重复");
+      seen.add(row.accountId);
+      if (typeof row.amount !== "number" || !Number.isFinite(row.amount) || Math.abs(row.amount) > MAX_AMOUNT) throw new Error("股票盈亏金额须为有效的正数、负数或零");
+      if (!validDate(row.asOf)) throw new Error("股票盈亏日期无效");
+      return { accountId: row.accountId, amount: row.amount, currency: choice(row.currency, CURRENCIES, "盈亏币种"), asOf: row.asOf,
+        source: choice(row.source, ["manual", "csv", "screenshot", "api"], "盈亏来源"),
+        ...(row.asOfBasis !== undefined ? { asOfBasis: choice(row.asOfBasis, ["statement", "imported"], "盈亏日期依据") } : {}) };
+    });
+  }
+  return result;
 }
 
 export function summarize(portfolio) {
@@ -155,7 +176,16 @@ export function summarize(portfolio) {
     byCurrency.set(entry.currency, (byCurrency.get(entry.currency) ?? 0) + value);
   }
   const groups = (map) => Array.from(map, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-  return { total: included.length ? total : null, included, excluded, missing, stale, pending, byPlatform: groups(byPlatform), byCategory: groups(byCategory), byCurrency: groups(byCurrency) };
+  const countedAccounts = new Set([...included, ...missing].map(row => row.accountId));
+  const stockPnl = { total: null, included: [], missing: [], excluded: [] };
+  for (const row of portfolio.stockPnl || []) {
+    if (!countedAccounts.has(row.accountId)) { stockPnl.excluded.push(row); continue; }
+    const rate = row.currency === "CNY" ? 1 : portfolio.rates[row.currency]?.value;
+    if (!Number.isFinite(rate) || rate <= 0 || rate > 1e9 || row.currency !== "CNY" && !validDate(portfolio.rates[row.currency]?.date)) { stockPnl.missing.push(row); continue; }
+    stockPnl.total = (stockPnl.total ?? 0) + row.amount * rate;
+    stockPnl.included.push(row);
+  }
+  return { total: included.length ? total : null, included, excluded, missing, stale, pending, stockPnl, byPlatform: groups(byPlatform), byCategory: groups(byCategory), byCurrency: groups(byCurrency) };
 }
 
 function csvRows(text) {

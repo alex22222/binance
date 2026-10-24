@@ -62,6 +62,7 @@ const syncNames = { okx: "OKX 交易所", futu: "富途", polymarket: "Polymarke
 const syncPlatforms = { okx: "OKX", futu: "富途", polymarket: "Polymarket", future: "Future", okxweb3: "OKX", tokenpocket: "TokenPocket" };
 let syncCallbackHandled = false;
 let fundEditingId = null;
+let stockPnlDraft = null;
 let aiState = null;
 let aiLoading = false;
 let aiOpened = false;
@@ -141,7 +142,7 @@ function fundValuationPanel(accountId) {
   if (state?.funds?.status === "unavailable") return '<div class="notice error">基金重估状态暂不可用，沿用已保存估值。</div>';
   const bindings = (state?.funds?.bindings || []).filter(row => !accountId || row.accountId === accountId);
   if (!bindings.length) return "";
-  return `<section class="panel" aria-label="基金与 ETF 自动估值" style="margin-bottom:20px"><h3>基金与 ETF 自动估值</h3><p class="muted small">长期持有份额持续用于估值；确认日期不是到期日。每 15 分钟检查管理人最新公布的净值或市场收盘价，报价日可能早于今天。不代表整个银行账户或持有数量已自动同步。</p>${bindings.map(row => `<div class="notice"><div class="section-head"><strong>${escape(row.name)}</strong><span class="pill">${!row.enabled ? "已暂停" : row.lastError ? "更新失败 · 保留上次估值" : row.delayed ? "更新延迟" : "报价自动更新"}</span></div>${hidden ? '<p class="muted small">隐私模式已隐藏数量、报价和时间详情。</p>' : `<p class="small">${row.priceBasis === "market-close" ? "股数" : "份额"} ${escape(row.quantity)} · 确认日 ${escape(row.confirmedOn)}（不是到期日）<br>${row.priceBasis === "market-close" ? "市场收盘价" : "最新入账净值"} ${escape(row.nav || "待获取")} ${escape(row.currency)} · ${row.priceBasis === "market-close" ? "价格日" : "净值日"} ${escape(row.navDate || "待获取")}${row.priceBasis === "market-close" ? "（非盘中实时）" : ""}<br>最近成功读取 ${escape(dateTime(row.lastFetchedAt))} · 最近估值入账 ${escape(dateTime(row.lastAppliedAt))}<br>最近尝试 ${escape(dateTime(row.lastAttemptAt))}</p><p class="muted small">来源：<a href="${escape(row.url)}" target="_blank" rel="noopener noreferrer">${escape(row.source)}</a> · ${escape(row.isin)}</p>${row.lastError ? `<p class="small">${escape(row.lastError)}</p>` : ""}<button class="button small" data-action="fund-edit" data-id="${escape(row.entryId)}">更新 / 重新确认份额</button>`}</div>`).join("")}</section>`;
+  return `<section class="panel" aria-label="基金与 ETF 自动估值" style="margin-bottom:20px"><h3>基金与 ETF 自动估值</h3><p class="muted small">长期持有份额持续用于估值；确认日期不是到期日。每天北京时间 09:00、21:00 检查管理人最新公布的净值或市场收盘价，报价日可能早于今天。不代表整个银行账户或持有数量已自动同步。</p>${bindings.map(row => `<div class="notice"><div class="section-head"><strong>${escape(row.name)}</strong><span class="pill">${!row.enabled ? "已暂停" : row.lastError ? "更新失败 · 保留上次估值" : row.delayed ? "更新延迟" : "报价自动更新"}</span></div>${hidden ? '<p class="muted small">隐私模式已隐藏数量、报价和时间详情。</p>' : `<p class="small">${row.priceBasis === "market-close" ? "股数" : "份额"} ${escape(row.quantity)} · 确认日 ${escape(row.confirmedOn)}（不是到期日）<br>${row.priceBasis === "market-close" ? "市场收盘价" : "最新入账净值"} ${escape(row.nav || "待获取")} ${escape(row.currency)} · ${row.priceBasis === "market-close" ? "价格日" : "净值日"} ${escape(row.navDate || "待获取")}${row.priceBasis === "market-close" ? "（非盘中实时）" : ""}<br>最近成功读取 ${escape(dateTime(row.lastFetchedAt))} · 最近估值入账 ${escape(dateTime(row.lastAppliedAt))}<br>最近尝试 ${escape(dateTime(row.lastAttemptAt))}</p><p class="muted small">来源：<a href="${escape(row.url)}" target="_blank" rel="noopener noreferrer">${escape(row.source)}</a> · ${escape(row.isin)}</p>${row.lastError ? `<p class="small">${escape(row.lastError)}</p>` : ""}<button class="button small" data-action="fund-edit" data-id="${escape(row.entryId)}">更新 / 重新确认份额</button>`}</div>`).join("")}</section>`;
 }
 function openFund(entryId) {
   const binding = state?.funds?.bindings?.find(row => row.entryId === entryId);
@@ -164,7 +165,7 @@ function syncCoveragePanel() {
   const accounts = portfolio().accounts.filter(accountHasRecords);
   const automatic = accounts.filter((account) => { const details = accountSyncDetails(account)?.[1]; return details?.connected && details.enabled && details.lastAppliedAt; });
   const delayed = automatic.filter((account) => { const details = accountSyncDetails(account)[1]; return details.overdue || details.lastError; });
-  return `<section class="panel" aria-label="自动同步覆盖" style="margin-bottom:20px"><div class="section-head"><div><h3>自动同步覆盖</h3><span class="muted small">${automatic.length} / ${accounts.length} 个已录入账户完成首次同步${delayed.length ? ` · ${delayed.length} 个更新延迟或失败` : ""}</span></div><button class="button small" data-action="sync">管理只读同步</button></div><p class="muted small" style="margin:0">已完成首次同步的账户每 15 分钟检查；其他金额沿用已保存记录。汇率自动刷新不代表账户余额已更新。每个账户的数据来源与时间见“账户与持仓”。</p></section>`;
+  return `<section class="panel" aria-label="自动同步覆盖" style="margin-bottom:20px"><div class="section-head"><div><h3>自动同步覆盖</h3><span class="muted small">${automatic.length} / ${accounts.length} 个已录入账户完成首次同步${delayed.length ? ` · ${delayed.length} 个更新延迟或失败` : ""}</span></div><button class="button small" data-action="sync">管理只读同步</button></div><p class="muted small" style="margin:0">已完成首次同步的账户每天北京时间 09:00、21:00 检查；其他金额沿用已保存记录。汇率自动刷新不代表账户余额已更新。每个账户的数据来源与时间见“账户与持仓”。</p></section>`;
 }
 function fxStatusText() {
   const fx = state?.fx;
@@ -202,13 +203,13 @@ function categoryDescription(category) {
 function assetTypeGuide() {
   return '<p class="footnote">货币基金与现金分开；稳定币与银行存款分开；股票ETF与个股分开。组合资产待拆分，不能据此判断底层股票或债券敞口。稳定币仅统计已识别部分，未展开的加密资产中也可能含稳定币。分类金额各自四舍五入，显示合计可能有尾差。</p>';
 }
-function assetTypesPanel(summary) {
-  return `<section class="panel" aria-label="资产类型" style="margin:22px 0"><div class="section-head"><div><h2>资产类型</h2><span class="muted small">仅统计已确认、已换算且符合账户口径的记录 · 点击图例查看明细</span></div><button class="button small quiet" data-action="clear-category">查看全部资产 →</button></div>${assetTypeChart(summary)}${assetTypeGuide()}</section>`;
+function assetTypesPanel(summary, compact = false) {
+  return `<section class="panel" aria-label="资产类型" style="margin:0"><div class="section-head"><div><h2>资产类型</h2><span class="muted small">仅统计已确认、已换算且符合账户口径的记录 · 点击图例查看明细</span></div><button class="button small quiet" data-action="clear-category">查看全部资产 →</button></div>${assetTypeChart(summary, compact)}${compact ? `<details class="pnl-sources"><summary>资产分类说明</summary>${assetTypeGuide()}</details>` : assetTypeGuide()}</section>`;
 }
-function assetTypeChart(summary) {
+function assetTypeChart(summary, compact = false) {
   const colors = ["#f5c14f", "#6ba4ed", "#64c7ab", "#b5a2f4", "#e89a67", "#d77ea7", "#74beca", "#c2ca70", "#ae9679", "#8d9edf", "#75b988", "#a4a9b3"];
   const color = (name) => colors[Math.max(0, CATEGORIES.indexOf(name)) % colors.length];
-  const legend = `<div class="type-legend">${summary.byCategory.map((group) => `<button type="button" class="type-legend-item" data-action="category" data-category="${escape(group.name)}"><span class="type-key" style="background:${color(group.name)}" aria-hidden="true"></span><span class="type-name">${escape(group.name)}${categoryDescription(group.name) ? `<small>${escape(categoryDescription(group.name))}</small>` : ""}</span><span class="type-figures num">${displayCurrency} ${displayAmount(group.value)}<small>${percentage(group.value, summary.total)} · 查看明细 →</small></span></button>`).join("")}</div>`;
+  const legend = `<div class="type-legend">${summary.byCategory.map((group) => `<button type="button" class="type-legend-item" data-action="category" data-category="${escape(group.name)}"><span class="type-key" style="background:${color(group.name)}" aria-hidden="true"></span><span class="type-name">${escape(group.name)}${!compact && categoryDescription(group.name) ? `<small>${escape(categoryDescription(group.name))}</small>` : ""}</span><span class="type-figures num">${displayCurrency} ${displayAmount(group.value)}<small>${percentage(group.value, summary.total)} · 查看明细 →</small></span></button>`).join("")}</div>`;
   if (hidden) return `<div class="type-pie-layout"><div class="empty small">分布及占比已隐藏</div>${legend}</div>`;
   if (!(summary.total > 0)) return `<div class="empty small">暂无可绘制的资产类型金额，录入并核算资产后显示饼图。</div>${legend}`;
   let offset = 0;
@@ -351,15 +352,44 @@ function insights(summary) {
   const top = summary.byPlatform[0];
   return `<div class="insights"><div class="insight"><strong>${top && !hidden ? `${escape(top.name)}占已核算资产 ${percentage(top.value, summary.total)}` : "平台集中度"}</strong><p>${top ? "平台占比帮助识别托管与账户集中情况，不等于底层投资风险。不同平台也可能持有相同资产。" : "录入各账户后，即可比较平台分布。空账户保持未录入，不按零资产处理。"}</p></div><div class="insight"><strong>${summary.missing.length ? `${summary.missing.length} 条记录等待汇率` : "核算范围与币种"}</strong><p>${summary.missing.length ? `${escape([...new Set(summary.missing.map((entry) => entry.currency))].join("、"))} 尚未换算，已从总额和分布中排除。` : `当前以 ${displayCurrency} 展示资产。汇率自动获取，USD、USDT、USDC 分别核算；仅统计各账户选定口径的记录。`}</p></div><div class="insight"><strong>${summary.stale.length ? `${summary.stale.length} 条记录超过 30 天未更新` : "资产估值的新鲜度"}</strong><p>${summary.stale.length ? "请核对金额和资产日期，尽量在相近日期更新不同账户。" : "页面展示最近成功入账的估值。已授权账户按同步状态更新；其他账户请定期核对，并保存时点快照。"}</p></div></div>`;
 }
+function stockPnlAccounts() {
+  return portfolio().accounts.filter(account => !pendingAccount(account) && ((portfolio().stockPnl || []).some(row => row.accountId === account.id)
+    || portfolio().entries.some(row => row.accountId === account.id && ["股票", "股票ETF"].includes(row.category))));
+}
+function stockPnlPanel(summary) {
+  const pnl = summary.stockPnl;
+  const rows = [...pnl.included, ...pnl.missing];
+  const value = displayValue(pnl.total);
+  return `<div class="stock-pnl"><div class="row"><span class="metric-label">股票浮动盈亏 · 已记录部分</span><button class="button small quiet" data-action="stock-pnl">更新盈亏</button></div><div class="stock-pnl-value num${!hidden && value < 0 ? " negative" : !hidden && value > 0 ? " positive" : ""}">${displayCurrency} ${!hidden && value > 0 ? "+" : ""}${number(value)}</div><p class="metric-foot">已含在当前市值中，不重复加减 · ${pnl.included.length} / ${stockPnlAccounts().length} 个股票账户已提供${pnl.missing.length ? ` · ${pnl.missing.length} 个缺汇率` : ""}</p><details class="pnl-sources"><summary>查看盈亏来源与日期</summary>${hidden ? '<p class="muted small">盈亏明细已隐藏。</p>' : rows.length ? rows.map(row => `<div class="pnl-source"><span>${escape(portfolio().accounts.find(account => account.id === row.accountId)?.name)}<small>${sourceName(row.source)} · ${escape(row.asOf)}${row.asOfBasis === "imported" ? "（导入日期，截图时点未核实）" : "（盈亏记录日）"}</small></span><span class="num">${escape(row.currency)} ${number(row.amount)}</span></div>`).join("") : '<p class="muted small">尚未提供股票盈亏；缺失值不按零统计。</p>'}</details></div>`;
+}
+function openStockPnl() {
+  stockPnlDraft ??= Object.fromEntries(stockPnlAccounts().map(account => {
+    const original = portfolio().stockPnl?.find(row => row.accountId === account.id);
+    return [account.id, { amount: original ? String(original.amount) : "", currency: original?.currency || selectedEntries(account)[0]?.currency || "CNY", asOf: original?.asOf || currentDate(), original }];
+  }));
+  modal = "stock-pnl";
+  setDialog("股票浮动盈亏", "按账户录入股票及股票 ETF 的未实现盈亏，亏损填负数。该数值仅展示，不改变资产市值。", hidden ? '<p class="muted">隐私模式已隐藏盈亏草稿，显示金额后可继续编辑。</p>' : `<form id="stock-pnl-form"><p class="muted small">留空表示尚未提供；不同日期的记录会标明来源，不能视为同一时点的完整收益。</p>${Object.entries(stockPnlDraft).map(([id,row]) => `<fieldset class="pnl-edit-row"><legend>${escape(portfolio().accounts.find(account => account.id === id)?.name)}</legend><div class="form-grid"><div class="field"><label for="pnl-amount-${escape(id)}">浮动盈亏（可为负数）</label><input id="pnl-amount-${escape(id)}" type="number" step="any" value="${escape(row.amount)}" data-pnl-account="${escape(id)}" data-pnl-field="amount" placeholder="尚未提供"></div><div class="field"><label for="pnl-currency-${escape(id)}">盈亏币种</label><select id="pnl-currency-${escape(id)}" data-pnl-account="${escape(id)}" data-pnl-field="currency">${options(CURRENCIES,row.currency)}</select></div><div class="field full"><label for="pnl-date-${escape(id)}">盈亏记录日期</label><input id="pnl-date-${escape(id)}" type="date" required max="${currentDate()}" value="${escape(row.asOf)}" data-pnl-account="${escape(id)}" data-pnl-field="asOf"></div></div></fieldset>`).join("")}</form>`, `${cancelButton}${hidden ? "" : '<button class="button primary" type="submit" form="stock-pnl-form">保存盈亏记录</button>'}`);
+}
+async function saveStockPnl() {
+  if (!stockPnlDraft || hidden) return;
+  const rows = Object.entries(stockPnlDraft).filter(([, row]) => row.amount.trim() !== "").map(([accountId, row]) => {
+    if (row.original && String(row.original.amount) === row.amount && row.original.currency === row.currency && row.original.asOf === row.asOf) return row.original;
+    return { accountId, amount: Number(row.amount), currency: row.currency, asOf: row.asOf, source: "manual", asOfBasis: "statement" };
+  });
+  const untouched = (portfolio().stockPnl || []).filter(row => !Object.hasOwn(stockPnlDraft, row.accountId));
+  if (await save({ ...portfolio(), stockPnl: [...untouched, ...rows] }, "股票盈亏已保存，总资产继续按市值统计")) closeDialog();
+}
 function renderOverview(summary) {
   const active = portfolio().accounts.filter(accountHasRecords).length;
   const partial = partialValuationSources().length > 0;
   const initial = !active;
-  return `<div class="metrics"><section class="panel metric total"><div class="row"><span class="metric-label">${partial || summary.missing.length || summary.pending.length ? "已核算资产 · 部分估值" : "已录入资产总额"}</span>${displayCurrencyControl()}</div><div class="metric-value"><small>${displayCurrency === "USD" ? "$" : displayCurrency === "HKD" ? "HK$" : "¥"}</small>${displayAmount(partial && !summary.included.length ? null : summary.total)}</div><div class="metric-foot">按最新可用汇率折算${partial ? " · 仅含已定价记录" : ""}</div><div class="metric-foot">${initial ? "尚未录入真实金额" : `${summary.included.length} 条计入 · ${summary.missing.length} 条缺汇率 · ${summary.pending.length} 条待确认`}</div></section><section class="panel metric"><div class="metric-label">已录入账户 / 全部账户</div><div class="metric-value">${active}<span class="muted"> / ${portfolio().accounts.length}</span></div><div class="metric-foot">已知平台与待确认账户，统一整理</div></section><section class="panel metric"><div class="metric-label">最近保存</div><div class="metric-value" style="font-size:19px">${escape(state.updatedAt ? dateTime(state.updatedAt) : "尚未录入")}</div><div class="metric-foot">最近已入账估值 · 非实时市值</div></section></div>
-  ${displayCurrency !== "CNY" && displayValue(1) === null ? `<div class="notice">${displayCurrency}/CNY 自动汇率暂不可用，总额待换算。可切回 CNY 查看人民币金额。</div>` : ""}${summary.missing.length ? `<div class="notice">${displayCurrency} 合计仅覆盖已完成换算的记录，其余资产见原币参考。缺汇率记录和待确认账户均未计入总额与分布。</div>` : ""}${partialValuationNotice()}${aiPanel()}${originalCurrencyPanel()}${syncCoveragePanel()}${fundValuationPanel()}${assetTypesPanel(summary)}${pendingAccountsPanel()}
+  const automatic = Object.values(state.sync?.providers || {}).filter(row => row.connected && row.enabled && row.lastAppliedAt).length;
+  return `<div class="metrics"><section class="panel metric total"><div class="row"><span class="metric-label">${partial || summary.missing.length || summary.pending.length ? "已核算资产 · 部分估值" : "已录入资产总额"}</span>${displayCurrencyControl()}</div><div class="metric-value"><small>${displayCurrency === "USD" ? "$" : displayCurrency === "HKD" ? "HK$" : "¥"}</small>${displayAmount(partial && !summary.included.length ? null : summary.total)}</div><div class="metric-foot">${initial ? "尚未录入真实金额" : "当前市值 · 按最新可用汇率折算"}${partial ? " · 仅含已定价记录" : ""}</div>${stockPnlPanel(summary)}</section><section class="panel metric overview-status"><div><span class="metric-label">已录入账户 / 全部账户</span><div class="metric-value">${active}<span class="muted"> / ${portfolio().accounts.length}</span></div><span class="metric-foot">${automatic} 个账户已开启只读同步</span></div><div class="summary-update"><span class="metric-label">最近保存</span><div class="small num">${escape(state.updatedAt ? dateTime(state.updatedAt) : "尚未录入")}</div><span class="metric-foot">${summary.included.length} 条计入 · ${summary.missing.length} 条缺汇率 · ${summary.pending.length} 条待确认</span></div></section><section class="panel metric overview-status"><div><span class="metric-label">自动更新计划 · 北京时间</span><div class="refresh-times num">09:00 <span>/</span> 21:00</div><span class="metric-foot">每天两次 · 仅刷新已接入的资产来源</span></div><div class="summary-update"><span class="metric-label">${displayCurrency} 汇率</span><p class="metric-foot">${escape(fxStatusText())}</p><button class="button small quiet" data-action="sync">管理只读同步 →</button></div></section></div>
+  <div class="overview-distributions">${assetTypesPanel(summary, true)}<section class="panel"><div class="section-head"><h2>平台分布</h2><span class="pill">按已核算 ${displayCurrency}</span></div>${distribution(summary.byPlatform, summary.total)}</section></div>
+  ${displayCurrency !== "CNY" && displayValue(1) === null ? `<div class="notice">${displayCurrency}/CNY 自动汇率暂不可用，总额待换算。可切回 CNY 查看人民币金额。</div>` : ""}${summary.missing.length ? `<div class="notice">${displayCurrency} 合计仅覆盖已完成换算的记录，其余资产见原币参考。缺汇率记录和待确认账户均未计入总额与分布。</div>` : ""}${partialValuationNotice()}${aiPanel()}${pendingAccountsPanel()}
   <div class="section-head"><div><h2>你的资产版图</h2><span class="muted small">币种自动按已存记录识别 · 原币分开列示 · 可逐条纠错</span></div><button class="button small" data-action="manual">＋ 录入资产</button></div>
   <div class="platform-grid">${PLATFORMS.map((platform, index) => platformCard(platform, index, summary)).join("")}<section class="panel platform-card"><div class="platform-top"><span class="platform-mark">＋</span><span class="platform-name">继续整理</span></div><p class="muted small" style="margin:0">同一平台可建立多个独立账户。</p><div class="platform-bottom"><button data-action="account">添加资产账户 →</button></div></section></div>
-  <div class="columns"><section class="panel"><div class="section-head"><h2>平台分布</h2><span class="pill">按已核算 ${displayCurrency}</span></div>${distribution(summary.byPlatform, summary.total)}</section><section class="panel"><h2>资产观察</h2>${insights(summary)}</section></div>${initial ? '<div class="notice">从一个真实数字开始：可先录入账户总额，也可导入截图或 CSV。无需一次整理完所有平台。</div>' : ""}`;
+  <details class="source-details"><summary>数据更新与来源 <span>每天 09:00 / 21:00 · 汇率、连接状态与基金估值明细</span></summary><div class="source-details-body">${originalCurrencyPanel()}${syncCoveragePanel()}${fundValuationPanel()}</div></details><section class="panel" style="margin-top:20px"><h2>资产观察</h2>${insights(summary)}</section>${initial ? '<div class="notice">从一个真实数字开始：可先录入账户总额，也可导入截图或 CSV。</div>' : ""}`;
 }
 function renderHoldings(summary) {
   const included = new Set(summary.included.map((entry) => entry.id));
@@ -471,7 +501,7 @@ function syncPreview(provider, details) {
   const stale = preview.revision !== state?.revision;
   const partial = preview.valuationComplete === false;
   const total = partial && !holdings.length ? null : Number.isFinite(preview.total) ? preview.total : null;
-  return `<div class="sync-preview"><div class="section-head"><h3>入账前核对${partial ? " · 已定价部分合计" : ""}</h3><span class="pill gold">${escape(preview.currency)} ${number(total)}</span></div><p class="muted small">更新到：${escape(account?.name || preview.targetAccountId)} · ${preview.observedAt ? `源资产时点 ${escape(dateTime(preview.observedAt))}` : `读取日期 ${escape(preview.asOf)} · 源未提供资产时点`}<br>成功读取：${escape(dateTime(preview.fetchedAt))}<br>当前所选口径：${current.map((group) => `${escape(group.name)} ${number(group.value)}`).join(" · ") || "尚未录入"}<br>新统计口径：${basisName(preview.countedBasis)}。账户总额和持仓明细不重复计入。</p>${hidden ? '<p class="muted small">隐私模式已隐藏覆盖详情与核对说明。</p>' : `<p class="muted small">覆盖范围：${escape(coverage)}</p>${warningText.map((warning) => `<div class="notice">${escape(warning)}</div>`).join("")}`}${unpricedAssetsPanel(preview.unpricedAssets, partial)}${holdings.length ? `<div class="table-scroll"><table><thead><tr><th>资产</th><th>类型</th><th>估值</th></tr></thead><tbody>${holdings.map((holding) => `<tr><td>${escape(holding.name)}</td><td>${escape(holding.category)}</td><td class="num">${escape(holding.currency)} ${number(Number.isFinite(holding.amount) ? holding.amount : null)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted small">此预览暂无可列示的已定价持仓明细。</p>'}${stale ? '<div class="notice">资产记录已变化，请重新获取预览后再入账。</div>' : ""}<div class="actions" style="margin-top:14px"><button class="button primary small" data-action="sync-apply" data-provider="${provider}"${stale ? " disabled" : ""}>核对并入账，开启自动同步</button></div><p class="muted small">首次入账后每 15 分钟更新此账户。手动修改此账户后，自动同步会暂停，需重新核对预览。断开后保留已入账数据。</p></div>`;
+  return `<div class="sync-preview"><div class="section-head"><h3>入账前核对${partial ? " · 已定价部分合计" : ""}</h3><span class="pill gold">${escape(preview.currency)} ${number(total)}</span></div><p class="muted small">更新到：${escape(account?.name || preview.targetAccountId)} · ${preview.observedAt ? `源资产时点 ${escape(dateTime(preview.observedAt))}` : `读取日期 ${escape(preview.asOf)} · 源未提供资产时点`}<br>成功读取：${escape(dateTime(preview.fetchedAt))}<br>当前所选口径：${current.map((group) => `${escape(group.name)} ${number(group.value)}`).join(" · ") || "尚未录入"}<br>新统计口径：${basisName(preview.countedBasis)}。账户总额和持仓明细不重复计入。</p>${hidden ? '<p class="muted small">隐私模式已隐藏覆盖详情与核对说明。</p>' : `<p class="muted small">覆盖范围：${escape(coverage)}</p>${warningText.map((warning) => `<div class="notice">${escape(warning)}</div>`).join("")}`}${unpricedAssetsPanel(preview.unpricedAssets, partial)}${holdings.length ? `<div class="table-scroll"><table><thead><tr><th>资产</th><th>类型</th><th>估值</th></tr></thead><tbody>${holdings.map((holding) => `<tr><td>${escape(holding.name)}</td><td>${escape(holding.category)}</td><td class="num">${escape(holding.currency)} ${number(Number.isFinite(holding.amount) ? holding.amount : null)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted small">此预览暂无可列示的已定价持仓明细。</p>'}${stale ? '<div class="notice">资产记录已变化，请重新获取预览后再入账。</div>' : ""}<div class="actions" style="margin-top:14px"><button class="button primary small" data-action="sync-apply" data-provider="${provider}"${stale ? " disabled" : ""}>核对并入账，开启自动同步</button></div><p class="muted small">首次入账后每天北京时间 09:00、21:00 更新此账户。手动修改此账户后，自动同步会暂停，需重新核对预览。断开后保留已入账数据。</p></div>`;
 }
 function syncTargetControl(provider, details) {
   const accounts = portfolio().accounts.filter((account) => account.platform === syncPlatforms[provider] && (provider !== "okx" || !/web3|wallet|钱包/i.test(`${account.id} ${account.name}`)) && (provider !== "okxweb3" || /web3|wallet|钱包/i.test(`${account.id} ${account.name}`)));
@@ -579,7 +609,7 @@ async function applySyncPreview(provider) {
   const preview = syncState?.providers?.[provider]?.preview;
   if (provider === "futu" && preview?.externalAccountId !== syncAccountId) { showError("所选证券账户与预览不同，请重新获取预览后核对。"); return; }
   if (!preview || preview.revision !== state?.revision) { showError("资产记录已变化，请重新获取预览后再入账。"); return; }
-  await syncMutation(`/${provider}/apply`, { previewId: preview.id, revision: state.revision }, "资产已入账，此账户已开启每 15 分钟只读同步");
+  await syncMutation(`/${provider}/apply`, { previewId: preview.id, revision: state.revision }, "资产已入账，此账户已开启每天两次只读同步");
 }
 function openEntry(entry = null, candidate = null, accountId = "") {
   clearOcr();
@@ -852,6 +882,7 @@ function rerenderDialog() {
   else if (modal === "import") renderImport();
   else if (modal === "rates") renderRates();
   else if (modal === "account") renderAccount();
+  else if (modal === "stock-pnl") openStockPnl();
   else if (modal === "delete") openDelete(deleteId);
   else if (modal === "currencies") renderCurrencyCorrections();
   else if (modal === "sync") renderSync();
@@ -873,6 +904,7 @@ document.addEventListener("click", async (event) => {
   if (!action || saving) return;
   if (action === "close-dialog") closeDialog();
   else if (action === "reload") await load();
+  else if (action === "stock-pnl") { stockPnlDraft = null; openStockPnl(); }
   else if (action === "ai-settings") openAiSettings();
   else if (action === "ai-review") await loadAi();
   else if (action === "fund-edit") openFund(button.dataset.id);
@@ -913,6 +945,7 @@ document.addEventListener("click", async (event) => {
 document.addEventListener("input", (event) => {
   if (saving) return;
   const target = event.target;
+  if (target.dataset.pnlAccount && stockPnlDraft?.[target.dataset.pnlAccount]) { stockPnlDraft[target.dataset.pnlAccount][target.dataset.pnlField] = target.value; return; }
   if (target.dataset.entryField && draft) {
     const field = target.dataset.entryField;
     if (hidden && field === "note") return;
@@ -969,10 +1002,11 @@ document.addEventListener("change", async (event) => {
   }
 });
 document.addEventListener("submit", async (event) => {
-  if (!["fund-form", "ai-config-form", "entry-form", "account-form", "sync-okx-form", "sync-polymarket-form", "sync-future-form", "sync-okxweb3-form", "sync-tokenpocket-form"].includes(event.target.id)) return;
+  if (!["stock-pnl-form", "fund-form", "ai-config-form", "entry-form", "account-form", "sync-okx-form", "sync-polymarket-form", "sync-future-form", "sync-okxweb3-form", "sync-tokenpocket-form"].includes(event.target.id)) return;
   event.preventDefault();
   if (saving) return;
-  if (event.target.id === "ai-config-form") await configureAi();
+  if (event.target.id === "stock-pnl-form") await saveStockPnl();
+  else if (event.target.id === "ai-config-form") await configureAi();
   else if (event.target.id === "fund-form") await configureFund();
   else if (event.target.id === "entry-form") await saveEntry();
   else if (event.target.id === "account-form") await saveAccount();
@@ -988,5 +1022,5 @@ window.addEventListener("pagehide", () => { clearOcr(); clearSyncSecrets(); });
 setInterval(async () => {
   if (!state || saving || loading || modal || conflict || document.visibilityState === "hidden") return;
   await load();
-}, 5 * 60 * 1000);
+}, 12 * 60 * 60 * 1000);
 void load();
