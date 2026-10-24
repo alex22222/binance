@@ -63,12 +63,24 @@ function unpricedSummary(value = []) {
   return value.map((row) => {
     if (!row || !["1", "501", "137", "56", "196"].includes(row.chainIndex) || typeof row.contract !== "string"
       || !exactQuantity(row.quantity) || !/[1-9]/.test(row.quantity)
+      || row.externalId !== undefined && (typeof row.externalId !== "string" || !/^token:[a-f0-9]{64}$/.test(row.externalId))
       || ["symbol", "name", "reason"].some((key) => typeof row[key] !== "string" || !row[key].trim() || row[key].length > (key === "reason" ? 500 : key === "name" ? 180 : 100) || /[\u0000-\u001f\u007f]/.test(row[key]))) throw syncError("钱包未估值资产无法核验。", 502);
     let contract = "";
     try { if (row.contract) contract = walletAddress(row.contract, row.chainIndex); }
     catch { throw syncError("钱包未估值资产合约无法核验。", 502); }
-    return { chainIndex: row.chainIndex, contract, symbol: row.symbol, name: row.name, quantity: row.quantity, reason: row.reason };
+    return { ...(row.externalId !== undefined ? { externalId: row.externalId } : {}), chainIndex: row.chainIndex, contract, symbol: row.symbol, name: row.name, quantity: row.quantity, reason: row.reason };
   });
+}
+
+function retainPricedWalletAssets(current, preview) {
+  if (!walletProvider(preview.provider)) return;
+  const entries = new Set(current.portfolio.entries.filter(row => row.accountId === preview.targetAccountId && row.kind === "holding").map(row => row.id));
+  // Existing ledger IDs include the old position index; match them without guessing from names or quantities.
+  for (const row of unpricedSummary(preview.unpricedAssets)) if (row.externalId && entries.size) {
+    for (let index = 0; index < 1000; index += 1) {
+      if (entries.has(`sync-${preview.provider}-${digest(row.externalId + ":" + index).slice(0, 24)}`)) throw syncError("部分已估值资产本次报价不可用，保留上次有效估值。", 502);
+    }
+  }
 }
 
 function walletBindings(data) {
@@ -303,10 +315,15 @@ function makePreview(result, provider, revision, now, targetAccountId) {
       || !Number.isFinite(row.amount) || row.amount < 0 || row.amount > 1e12) throw syncError("持仓明细无法核验，未更新原有资产。", 502);
     if ((row.sourceCurrency !== undefined || row.sourceAmount !== undefined) && (!CURRENCIES.includes(row.sourceCurrency) || typeof row.sourceAmount !== "number" || !Number.isFinite(row.sourceAmount) || row.sourceAmount < 0 || row.sourceAmount > 1e12)) throw syncError("持仓原币估值无法核验。", 502);
     if (row.rawQuantity !== undefined && !exactQuantity(row.rawQuantity)) throw syncError("钱包持仓原始数量无法核验。", 502);
+    const quoted = row.quoteSource !== undefined || row.quoteObservedAt !== undefined;
+    if (quoted && (typeof row.quoteSource !== "string" || !row.quoteSource.trim() || row.quoteSource.length > 100 || /[\u0000-\u001f\u007f]/.test(row.quoteSource)
+      || typeof row.quoteObservedAt !== "string" || !Number.isFinite(Date.parse(row.quoteObservedAt)) || new Date(row.quoteObservedAt).toISOString() !== row.quoteObservedAt
+      || Date.parse(row.quoteObservedAt) > Date.parse(result.fetchedAt) + 10_000 || Date.parse(result.fetchedAt) - Date.parse(row.quoteObservedAt) > 300_000)) throw syncError("钱包价格来源或报价时点无法核验。", 502);
     return { externalId: String(row.externalId || index).slice(0, 100), name: row.name, category: row.category, currency: row.currency, amount: row.amount,
       ...(typeof row.symbol === "string" ? { symbol: row.symbol.slice(0, 100) } : {}),
       ...(row.sourceCurrency !== undefined ? { sourceCurrency: row.sourceCurrency, sourceAmount: row.sourceAmount } : {}),
       ...(row.rawQuantity !== undefined ? { rawQuantity: row.rawQuantity } : {}),
+      ...(quoted ? { quoteSource: row.quoteSource, quoteObservedAt: row.quoteObservedAt } : {}),
       ...(row.quantity !== undefined ? { quantity: String(row.quantity).slice(0, 80) } : {}) };
   });
   const sum = holdings.reduce((value, row) => value + (row.currency === result.currency ? row.amount : 0), 0);
@@ -367,7 +384,9 @@ async function fetched(data, provider, stateDir, api, now, accountId, persist, r
   separateExchangeTarget(data, provider, targetAccountId);
   if (predictionProvider(provider)) uniquePredictionSource(data, current, provider, value.address.toLowerCase(), targetAccountId);
   if (walletProvider(provider)) uniqueWalletSource(data, current, provider, walletList(value.wallets), targetAccountId);
-  value.preview = makePreview(result, provider, current.revision, now, targetAccountId);
+  const preview = makePreview(result, provider, current.revision, now, targetAccountId);
+  retainPricedWalletAssets(current, preview);
+  value.preview = preview;
   value.targetAccountId = targetAccountId;
   value.lastFetchedAt = value.preview.fetchedAt;
   value.lastError = null;
@@ -398,7 +417,8 @@ function updatedPortfolio(current, preview) {
     name: `${row.name}${preview.holdings.some((item, other) => other !== index && item.name === row.name && item.currency === row.currency) ? ` · ${index + 1}` : ""}`,
     category: row.category, currency: row.currency, amount: row.amount,
     note: [`读取时间 ${preview.fetchedAt}${sourceTime}`, row.symbol ? `代码 ${row.symbol}` : "", row.rawQuantity !== undefined || row.quantity !== undefined ? `数量 ${row.rawQuantity ?? row.quantity}${row.symbol ? ` ${row.symbol}` : ""}；金额为市值` : "",
-      row.sourceAmount !== undefined ? `原币估值 ${row.sourceAmount} ${row.sourceCurrency}` : ""].filter(Boolean).join("；") + quoteNote }));
+      row.sourceAmount !== undefined ? `原币估值 ${row.sourceAmount} ${row.sourceCurrency}` : "",
+      row.quoteSource ? `价格来源 ${row.quoteSource}；价格时点 ${row.quoteObservedAt}；价格时点不代表余额时点` : ""].filter(Boolean).join("；") + quoteNote }));
   return validatePortfolio({ ...current.portfolio, accounts: [...current.portfolio.accounts.filter((item) => item.id !== preview.targetAccountId), account],
     entries: [...current.portfolio.entries.filter((item) => item.accountId !== preview.targetAccountId), ...entries] });
 }
@@ -421,6 +441,7 @@ async function applyPreview({ stateDir, data, provider, previewId, revision, now
     throw syncError("此账户已被手动修改，自动同步已暂停。请重新拉取并确认预览。", 409);
   }
   if (current.revision !== revision || preview.revision !== revision) throw syncError("资产版本已更新，请重新拉取预览。", 409);
+  retainPricedWalletAssets(current, preview);
   const portfolio = updatedPortfolio(current, preview);
   if (!automatic && current.portfolio.entries.length) {
     const valued = await valuePersonalAssetState(current, { stateDir });
@@ -495,6 +516,7 @@ export async function performAssetSyncAction({ stateDir, provider, action, body 
         targetAccount(current, provider, targetAccountId, previous);
         uniqueWalletSource(data, current, provider, wallets, targetAccountId);
         const preview = makePreview(result, provider, current.revision, now, targetAccountId);
+        retainPricedWalletAssets(current, preview);
         const value = { ...previous, wallets, targetAccountId, enabled: false, preview, lastAttemptAt: now.toISOString(),
           lastFetchedAt: preview.fetchedAt, accountLabel: preview.accountLabel, lastError: null,
           ...(!previous.lastAppliedAt ? { observedAt: preview.observedAt, timeBasis: preview.timeBasis } : {}) };

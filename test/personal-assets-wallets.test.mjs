@@ -300,3 +300,154 @@ test("verified BSC SPYon is valued per token, distinguished from ETF shares, and
   const risk = await run({ provider: "binanceagentic", wallets: [wallet], ...fakeFetch(data) });
   assert.equal(risk.holdings.length, 0); assert.equal(risk.unpricedAssets.length, 2);
 });
+
+const zeroMint = "EmcxFTNVDqyLHp11NvwvLZ4D7LKGbG9i7B8RF7dwpump";
+const zeroQuoteUrl = `https://api.jup.ag/price/v3?ids=${zeroMint}`;
+const zeroPrice = 0.00023619741294875424;
+function zeroFixture() {
+  const data = fixture();
+  data.balances["501"].push(token(wallets[1], zeroMint, "untrusted-symbol", "309.248658", "999999"));
+  return data;
+}
+function zeroFetch(data = zeroFixture(), options = {}) {
+  const quote = options.quote ?? { [zeroMint]: { usdPrice: zeroPrice, blockId: 460917114, decimals: 6 } };
+  const rpc = options.rpc ?? { jsonrpc: "2.0", id: 1, result: time.getTime() / 1000 - 60 };
+  return fakeFetch(data, (url, init) => {
+    if (url.origin === "https://api.jup.ag") return options.quoteResponse ? options.quoteResponse() : Response.json(quote);
+    if (url.origin === "https://api.mainnet-beta.solana.com") return options.rpcResponse ? options.rpcResponse() : Response.json(rpc);
+    return options.intercept?.(url, init);
+  });
+}
+
+test("ZERO exact Solana mint uses a fresh Jupiter USD price without relabelling the balance observation time", async () => {
+  const { fetchImpl, calls } = zeroFetch();
+  const result = await run({ fetchImpl });
+  const holding = result.holdings.find(row => row.contract === zeroMint);
+  assert.ok(holding);
+  assert.equal(holding.symbol, "ZERO"); assert.equal(holding.category, "加密资产");
+  assert.equal(holding.rawQuantity, "309.248658"); assert.equal(holding.quantity, "309.248658");
+  assert.ok(Math.abs(holding.amount - 309.248658 * zeroPrice) < 1e-15);
+  assert.equal(holding.currency, "USD"); assert.equal(holding.quoteSource, "Jupiter Price V3");
+  assert.equal(holding.quoteObservedAt, "2026-10-24T12:29:00.000Z");
+  assert.equal(result.observedAt, null); assert.equal(result.timeBasis, "retrieved");
+  assert.equal(result.unpricedAssets.length, 0);
+  assert.ok(Math.abs(result.total - (700 + 103.625 * 0.998 + 309.248658 * zeroPrice)) < 1e-9);
+  assert.ok(result.warnings.some(line => /ZERO.*Jupiter.*价格时点.*12:29:00/.test(line)));
+  assert.equal(calls.filter(call => call.url === zeroQuoteUrl).length, 1);
+});
+
+test("ZERO public requests share one quote across wallets and never receive Developer auth or owner addresses", async () => {
+  const second = { chainIndex: "501", address: "11111111111111111111111111111113" };
+  const data = zeroFixture();
+  const { fetchImpl, calls } = zeroFetch(data, { intercept: url => url.pathname === balancePath && url.searchParams.get("address") === second.address
+    ? Response.json({ code: "0", data: [{ tokenAssets: [token(second, zeroMint, "ZERO", "1.000001", "500")] }] }) : undefined });
+  const result = await run({ wallets: [...wallets, second], fetchImpl });
+  assert.equal(result.holdings.filter(row => row.contract === zeroMint).length, 2);
+  const publicCalls = calls.filter(call => ["api.jup.ag", "api.mainnet-beta.solana.com"].includes(new URL(call.url).hostname));
+  assert.equal(publicCalls.length, 2);
+  assert.equal(publicCalls[0].url, zeroQuoteUrl); assert.equal(publicCalls[0].init.method, "GET");
+  assert.equal(publicCalls[1].url, "https://api.mainnet-beta.solana.com");
+  assert.deepEqual(JSON.parse(publicCalls[1].init.body), { jsonrpc: "2.0", id: 1, method: "getBlockTime", params: [460917114] });
+  for (const call of publicCalls) {
+    assert.equal(call.init.redirect, "error"); assert.ok(call.init.signal instanceof AbortSignal);
+    for (const header of Object.keys(call.init.headers)) assert.ok(!/authorization|ok-access|api-key/i.test(header));
+    const encoded = JSON.stringify(call);
+    for (const secret of Object.values(credentials)) assert.equal(encoded.includes(secret), false);
+    for (const wallet of [...wallets, second]) assert.equal(encoded.includes(wallet.address), false);
+  }
+  assert.equal(calls.some(call => /\/swap\/|\/order|\/execute|tokens\/v2/.test(call.url)), false);
+});
+
+test("ZERO missing or mismatched mint, decimals, slot and USD price retain exact quantity without provider-price fallback", async () => {
+  const base = { usdPrice: zeroPrice, blockId: 460917114, decimals: 6 };
+  const invalidQuotes = [{}, { [usdtSol]: base }, { [zeroMint]: base, [usdtSol]: base },
+    ...[5, "6", null].map(decimals => ({ [zeroMint]: { ...base, decimals } })),
+    ...[undefined, 0, -1, 0.5, "460917114", Number.MAX_SAFE_INTEGER + 1].map(blockId => ({ [zeroMint]: { ...base, blockId } })),
+    ...[undefined, 0, -1, null, "0.1", NaN, Infinity, 1_000_000_000_001].map(usdPrice => ({ [zeroMint]: { ...base, usdPrice } }))];
+  for (const quote of invalidQuotes) {
+    const { fetchImpl, calls } = zeroFetch(zeroFixture(), { quote });
+    const result = await run({ fetchImpl });
+    const unknown = result.unpricedAssets.find(row => row.contract === zeroMint);
+    assert.ok(unknown); assert.equal(unknown.quantity, "309.248658"); assert.match(unknown.reason, /ZERO.*Jupiter|ZERO.*报价/);
+    assert.equal(result.holdings.some(row => row.contract === zeroMint), false);
+    assert.ok(Math.abs(result.total - (700 + 103.625 * 0.998)) < 1e-9);
+    assert.equal(calls.filter(call => call.url === zeroQuoteUrl).length, 1);
+    assert.equal(calls.some(call => new URL(call.url).hostname === "api.mainnet-beta.solana.com"), false);
+  }
+});
+
+test("ZERO enforces a five-minute quote age and ten-second future limit using the returned Solana block time", async () => {
+  for (const [offset, accepted] of [[-300, true], [-301, false], [-360, false], [10, true], [11, false]]) {
+    const { fetchImpl } = zeroFetch(zeroFixture(), { rpc: { jsonrpc: "2.0", id: 1, result: time.getTime() / 1000 + offset } });
+    const result = await run({ fetchImpl });
+    assert.equal(result.holdings.some(row => row.contract === zeroMint), accepted);
+    if (!accepted) {
+      const unknown = result.unpricedAssets.find(row => row.contract === zeroMint);
+      assert.equal(unknown.quantity, "309.248658"); assert.match(unknown.reason, offset < 0 ? /5 分钟|过期/ : /未来|时点/);
+    }
+  }
+  for (const rpc of [{ jsonrpc: "2.0", id: 1, result: null }, { jsonrpc: "2.0", id: 1, result: "1792844940" },
+    { jsonrpc: "2.0", id: 2, result: time.getTime() / 1000 }, { id: 1, result: time.getTime() / 1000 },
+    { jsonrpc: "2.0", id: 1, result: time.getTime() / 1000, error: { message: credentials.secret } }]) {
+    const result = await run(zeroFetch(zeroFixture(), { rpc }));
+    assert.equal(result.holdings.some(row => row.contract === zeroMint), false);
+    assert.equal(result.unpricedAssets.find(row => row.contract === zeroMint).quantity, "309.248658");
+    assert.equal(JSON.stringify(result).includes(credentials.secret), false);
+  }
+});
+
+test("ZERO does not query prices for risk-marked, zero-quantity or symbol-only matches", async () => {
+  for (const change of [data => { data.balances["501"].at(-1).isRiskToken = true; },
+    data => { data.balances["501"].at(-1).balance = "0.000000"; },
+    data => { Object.assign(data.balances["501"].at(-1), { tokenContractAddress: zeroMint.slice(0, -1) + "P", symbol: "ZERO" }); },
+    data => { Object.assign(data.balances["501"].at(-1), { tokenContractAddress: "11111111111111111111111111111113", symbol: "ZERO" }); },
+    data => { data.balances["501"].pop(); data.balances["1"].push(token(wallets[0], unknownEth, "ZERO", "10", "5")); }]) {
+    const data = zeroFixture(); change(data); const { fetchImpl, calls } = zeroFetch(data);
+    const result = await run({ fetchImpl });
+    assert.equal(calls.some(call => ["api.jup.ag", "api.mainnet-beta.solana.com"].includes(new URL(call.url).hostname)), false);
+    assert.equal(result.holdings.some(row => row.contract === zeroMint), false);
+  }
+});
+
+test("ZERO public quote failures, limits, payment gates and malformed responses only leave that holding unpriced", async () => {
+  const failures = [() => new Response(credentials.secret, { status: 402 }), () => new Response(credentials.apiKey, { status: 429 }),
+    () => new Response(credentials.secret, { status: 403 }), () => new Response("upstream", { status: 500 }),
+    () => new Response("upstream", { status: 302, headers: { location: "https://attacker.invalid" } }),
+    () => new Response("not-json " + credentials.secret), () => new Response("{}", { headers: { "content-length": "1000001" } }),
+    () => { throw Error(credentials.secret); }];
+  for (const field of ["quoteResponse", "rpcResponse"]) for (const failure of failures) {
+    const { fetchImpl, calls } = zeroFetch(zeroFixture(), { [field]: failure });
+    const result = await run({ fetchImpl });
+    const unknown = result.unpricedAssets.find(row => row.contract === zeroMint);
+    assert.equal(unknown.quantity, "309.248658"); assert.match(unknown.reason, /ZERO.*报价|ZERO.*查询/);
+    assert.equal(result.holdings.some(row => row.contract === zeroMint), false);
+    assert.ok(Math.abs(result.total - (700 + 103.625 * 0.998)) < 1e-9);
+    for (const secret of Object.values(credentials)) assert.equal(JSON.stringify(result).includes(secret), false);
+    assert.equal(calls.filter(call => call.url === zeroQuoteUrl).length, 1);
+    assert.ok(calls.filter(call => new URL(call.url).hostname === "api.mainnet-beta.solana.com").length <= 1);
+  }
+});
+
+test("wallet token identity remains the same when ZERO changes from priced to unpriced", async () => {
+  const priced = await run(zeroFetch());
+  const unpriced = await run(zeroFetch(zeroFixture(), { rpc: { jsonrpc: "2.0", id: 1, result: time.getTime() / 1000 - 360 } }));
+  const known = priced.holdings.find(row => row.contract === zeroMint);
+  const unknown = unpriced.unpricedAssets.find(row => row.contract === zeroMint);
+  assert.equal(unknown.externalId, known.externalId);
+  assert.equal(unknown.externalId, `token:${createHash("sha256").update(`501:${solana}:${zeroMint}`).digest("hex")}`);
+  assert.equal(unknown.quantity, "309.248658"); assert.equal(Object.hasOwn(unknown, "amount"), false);
+  const first = fixture(); first.balances["1"].push(token(wallets[0], unknownEth, "UNKNOWN", "2.0000000001", "1"));
+  const result = await run(fakeFetch(first));
+  assert.equal(result.unpricedAssets[0].externalId, `token:${createHash("sha256").update(`1:${evm}:${unknownEth}`).digest("hex")}`);
+  assert.equal(result.unpricedAssets[0].quantity, "2.0000000001");
+});
+
+test("ZERO quote work does not extend the existing forty-five-second wallet snapshot deadline", async () => {
+  let current = time;
+  const mock = zeroFetch(zeroFixture(), { quoteResponse: () => {
+    current = new Date(time.getTime() + 46_000);
+    return Response.json({ [zeroMint]: { usdPrice: zeroPrice, decimals: 6, blockId: 460917114 } });
+  } });
+  await assert.rejects(run({ ...mock, now: () => current }), /资产|响应/);
+  assert.equal(mock.calls.filter(call => call.url === zeroQuoteUrl).length, 1);
+});

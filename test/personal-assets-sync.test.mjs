@@ -366,6 +366,99 @@ test("wallet source freshness clock advances across the network call", async (co
   assert.ok(elapsed >= 10, `source clock advanced ${elapsed}ms`);
 });
 
+const tokenExternalId = `token:${createHash("sha256").update(`137:${publicAddress}:${unpriced.contract}`).digest("hex")}`;
+const quotedHolding = { externalId: tokenExternalId, name: "ZERO", symbol: "ZERO", category: "加密资产", currency: "USD", amount: 0.07,
+  rawQuantity: "309.248658", quoteSource: "Jupiter Price V3", quoteObservedAt: "2026-10-24T11:59:00.000Z" };
+
+test("wallet quote metadata survives preview and apply without claiming a balance observation time", async context => {
+  const stateDir = await fixture(context); const targetAccountId = await tokenPocketTarget(stateDir);
+  const options = { api: walletApi({ total: 0.07, holdings: [quotedHolding] }) };
+  const connected = await action(stateDir, "tokenpocket", "connect", { ...credentials, wallets: polygonWallet, targetAccountId }, options);
+  const preview = connected.providers.tokenpocket.preview;
+  assert.equal(preview.holdings[0].quoteSource, quotedHolding.quoteSource);
+  assert.equal(preview.holdings[0].quoteObservedAt, quotedHolding.quoteObservedAt);
+  assert.equal(preview.observedAt, null); assert.equal(preview.timeBasis, "retrieved");
+  const applied = await action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision });
+  const row = applied.assets.portfolio.entries.find(item => item.accountId === targetAccountId && item.kind === "holding");
+  assert.equal(row.asOfBasis, "imported");
+  assert.match(row.note, /源未提供精确资产时点/);
+  assert.match(row.note, /价格来源 Jupiter Price V3.*价格时点 2026-10-24T11:59:00.000Z.*不代表余额时点/);
+  assert.equal(applied.sync.providers.tokenpocket.observedAt, null);
+});
+
+test("wallet quote metadata validates the pair and age against the completed fetch clock", async context => {
+  const stateDir = await fixture(context); const targetAccountId = await tokenPocketTarget(stateDir);
+  const before = await readFile(join(stateDir, "personal-assets.json"), "utf8");
+  for (const metadata of [{ quoteSource: undefined }, { quoteObservedAt: undefined }, { quoteSource: "" }, { quoteSource: "bad\nsource" },
+    { quoteObservedAt: "invalid" }, { quoteObservedAt: "2026-10-24" }, { quoteObservedAt: "2026-10-24T11:54:59.999Z" }, { quoteObservedAt: "2026-10-24T12:00:10.001Z" }]) {
+    await assert.rejects(action(stateDir, "tokenpocket", "connect", { ...credentials, wallets: polygonWallet, targetAccountId },
+      { api: walletApi({ total: 0.07, holdings: [{ ...quotedHolding, ...metadata }] }) }), { statusCode: 502 });
+  }
+  assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
+  const fresh = await action(stateDir, "tokenpocket", "connect", { ...credentials, wallets: polygonWallet, targetAccountId },
+    { api: walletApi({ total: 0.07, fetchedAt: "2026-10-24T12:00:30.000Z", holdings: [{ ...quotedHolding, quoteObservedAt: "2026-10-24T12:00:25.000Z" }] }) });
+  assert.equal(fresh.providers.tokenpocket.preview.holdings[0].quoteObservedAt, "2026-10-24T12:00:25.000Z");
+});
+
+test("a formerly priced wallet token becoming unpriced retains the entire last valid ledger and source success time", async context => {
+  const stateDir = await fixture(context); const targetAccountId = await tokenPocketTarget(stateDir);
+  const native = (await walletApi().fetchWalletAssets({ provider: "tokenpocket", wallets: polygonWallet })).holdings[0];
+  // Index one deliberately exercises IDs already written before unpriced identity metadata existed.
+  const connected = await action(stateDir, "tokenpocket", "connect", { ...credentials, wallets: polygonWallet, targetAccountId },
+    { api: walletApi({ total: 100.07, holdings: [native, quotedHolding] }) });
+  const preview = connected.providers.tokenpocket.preview;
+  await action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision });
+  const before = await readFile(join(stateDir, "personal-assets.json"), "utf8");
+  const lastGood = (await readAssetSyncStatus({ stateDir })).providers.tokenpocket;
+  const missing = { ...unpriced, externalId: tokenExternalId };
+  const options = { api: walletApi({ fetchedAt: later.toISOString(), valuationComplete: false, unpricedAssets: [missing] }), now: later };
+  assert.deepEqual(await runAssetSyncCycle({ stateDir, ...options }), { attempted: 1, applied: 0, failed: 1 });
+  assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
+  const status = (await readAssetSyncStatus({ stateDir })).providers.tokenpocket;
+  assert.equal(status.lastFetchedAt, lastGood.lastFetchedAt); assert.equal(status.lastAppliedAt, lastGood.lastAppliedAt);
+  assert.equal(status.lastAttemptAt, later.toISOString()); assert.equal(status.enabled, true); assert.ok(status.lastError);
+  await assert.rejects(action(stateDir, "tokenpocket", "preview", {}, options), /保留上次有效估值/);
+  await assert.rejects(action(stateDir, "tokenpocket", "connect", { ...credentials, wallets: polygonWallet, targetAccountId }, options), /保留上次有效估值/);
+  assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
+});
+
+test("unpriced token identity is bounded and does not confuse new holdings or sold-out tokens with quote loss", async context => {
+  const stateDir = await fixture(context); const targetAccountId = await tokenPocketTarget(stateDir);
+  for (const externalId of ["token:bad", `token:${"a".repeat(65)}`, 123, null]) await assert.rejects(action(stateDir, "tokenpocket", "connect",
+    { ...credentials, wallets: polygonWallet, targetAccountId }, { api: walletApi({ valuationComplete: false, unpricedAssets: [{ ...unpriced, externalId }] }) }), { statusCode: 502 });
+  const options = { api: walletApi({ total: 0.07, holdings: [quotedHolding] }) };
+  const connected = await action(stateDir, "tokenpocket", "connect", { ...credentials, wallets: polygonWallet, targetAccountId }, options);
+  const preview = connected.providers.tokenpocket.preview;
+  await action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision });
+  const newIdentity = `token:${"b".repeat(64)}`;
+  const updated = await action(stateDir, "tokenpocket", "preview", {}, { api: walletApi({ fetchedAt: later.toISOString(), total: 0, holdings: [], valuationComplete: false,
+    unpricedAssets: [{ ...unpriced, symbol: "ZERO", externalId: newIdentity }] }), now: later });
+  assert.equal(updated.providers.tokenpocket.preview.unpricedAssets[0].externalId, newIdentity);
+  const empty = await action(stateDir, "tokenpocket", "preview", {}, { api: walletApi({ fetchedAt: later.toISOString(), total: 0, holdings: [], unpricedAssets: [], valuationComplete: true }), now: later });
+  const next = empty.providers.tokenpocket.preview;
+  const applied = await action(stateDir, "tokenpocket", "apply", { previewId: next.id, revision: next.revision }, { now: later });
+  assert.equal(applied.assets.portfolio.entries.filter(row => row.accountId === targetAccountId).length, 1);
+  assert.equal(applied.assets.portfolio.entries.find(row => row.accountId === targetAccountId).amount, 0);
+});
+
+test("wallet apply rechecks unpriced identities before creating any backup or snapshot", async context => {
+  const stateDir = await fixture(context); const targetAccountId = await tokenPocketTarget(stateDir);
+  const connected = await action(stateDir, "tokenpocket", "connect", { ...credentials, wallets: polygonWallet, targetAccountId },
+    { api: walletApi({ total: 0.07, holdings: [quotedHolding] }) });
+  const preview = connected.providers.tokenpocket.preview;
+  await action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision });
+  const next = await action(stateDir, "tokenpocket", "preview", {}, { api: walletApi({ total: 0, holdings: [], valuationComplete: false, unpricedAssets: [unpriced] }) });
+  const stored = JSON.parse(await readFile(privateFile(stateDir), "utf8"));
+  stored.providers.tokenpocket.preview.unpricedAssets[0].externalId = tokenExternalId;
+  await writeFile(privateFile(stateDir), JSON.stringify(stored), { mode: 0o600 });
+  const before = await readFile(join(stateDir, "personal-assets.json"), "utf8");
+  const backup = await readFile(join(stateDir, "personal-assets-sync-tokenpocket-previous.json"), "utf8");
+  const current = next.providers.tokenpocket.preview;
+  await assert.rejects(action(stateDir, "tokenpocket", "apply", { previewId: current.id, revision: current.revision }), /保留上次有效估值/);
+  assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
+  assert.equal(await readFile(join(stateDir, "personal-assets-sync-tokenpocket-previous.json"), "utf8"), backup);
+});
+
 function predictionApi(overrides = {}) {
   return { ...api, fetchPolymarketAssets: async ({ address }) => synthetic({ provider: "polymarket", externalAccountId: address, observedAt: null, timeBasis: "retrieved", ...overrides }) };
 }

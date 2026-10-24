@@ -4,6 +4,11 @@ const HOST = "https://web3.okx.com";
 const BALANCES = "/api/v6/dex/balance/all-token-balances-by-address";
 const DEFI = "/api/v6/defi/user/asset/platform/list";
 const QUOTE = "https://api.kraken.com/0/public/Trades?pair=USDTUSD&count=1";
+// Exact Solana mint and decimals independently matched against its Token2022 mint metadata.
+// https://developers.jup.ag/docs/price: blockId identifies the price, not createdAt.
+const ZERO_MINT = "EmcxFTNVDqyLHp11NvwvLZ4D7LKGbG9i7B8RF7dwpump";
+const ZERO_QUOTE = `https://api.jup.ag/price/v3?ids=${ZERO_MINT}`;
+const SOLANA_RPC = "https://api.mainnet-beta.solana.com";
 const MAX_BYTES = 1_000_000;
 const MAX_ASSETS = 999;
 const MAX_VALUE = 1_000_000_000_000;
@@ -132,7 +137,10 @@ export async function fetchWalletAssets({ provider, credentials, wallets, fetchI
     const target = new URL(url);
     const onchain = target.origin === HOST && [BALANCES, DEFI].includes(target.pathname)
       && ((target.pathname === BALANCES && body === undefined) || (target.pathname === DEFI && body !== undefined && !target.search));
-    if (!onchain && url !== QUOTE) throw invalid();
+    const zeroQuote = url === ZERO_QUOTE && body === undefined;
+    const zeroTime = url === SOLANA_RPC && body?.jsonrpc === "2.0" && body.id === 1 && body.method === "getBlockTime"
+      && Object.keys(body).length === 4 && Array.isArray(body.params) && body.params.length === 1 && Number.isSafeInteger(body.params[0]) && body.params[0] > 0;
+    if (!onchain && !(url === QUOTE && body === undefined) && !zeroQuote && !zeroTime) throw invalid();
     const method = body === undefined ? "GET" : "POST";
     const encoded = body === undefined ? "" : JSON.stringify(body);
     const timestamp = atTime(now).toISOString();
@@ -146,6 +154,7 @@ export async function fetchWalletAssets({ provider, credentials, wallets, fetchI
       if (!response.ok) {
         await response.body?.cancel().catch(() => {});
         if (onchain && [401, 403].includes(response.status)) throw denied();
+        if (zeroQuote || zeroTime) throw new WalletAssetsError("ZERO 公开报价查询未完成", response.status);
         if (response.status === 429) throw new WalletAssetsError("钱包只读查询访问受限，请稍后重试", 429);
         throw new WalletAssetsError("钱包只读接口访问失败，请检查开发者凭据和服务权限");
       }
@@ -202,25 +211,52 @@ export async function fetchWalletAssets({ provider, credentials, wallets, fetchI
       usdtPrice = { value, observedAt: new Date(observed).toISOString() };
     } catch { /* Keep exact USDT quantity unpriced instead of assuming its peg. */ }
   }
+  let zeroPrice = null;
+  let zeroReason = "ZERO 未取得可核实的 Jupiter USD 报价，保留数量暂不估值";
+  if (rows.some((row) => row.chainIndex === "501" && row.contract === ZERO_MINT && !row.risk)) {
+    try {
+      const payload = await request(ZERO_QUOTE);
+      const quote = payload?.[ZERO_MINT];
+      zeroReason = "ZERO 的 Jupiter 报价未匹配精确 mint、6 位精度或有效 USD 价格与区块，保留数量暂不估值";
+      if (payload && !Array.isArray(payload) && Object.keys(payload).length === 1 && Object.hasOwn(payload, ZERO_MINT)
+        && quote?.decimals === 6 && typeof quote.usdPrice === "number" && Number.isFinite(quote.usdPrice) && quote.usdPrice > 0 && quote.usdPrice <= MAX_VALUE
+        && Number.isSafeInteger(quote.blockId) && quote.blockId > 0) {
+        const block = await request(SOLANA_RPC, { jsonrpc: "2.0", id: 1, method: "getBlockTime", params: [quote.blockId] });
+        const observed = block?.result * 1000;
+        const at = atTime(now).getTime();
+        zeroReason = "ZERO 的 Solana 报价区块时点无法核实，保留数量暂不估值";
+        if (block?.jsonrpc === "2.0" && block.id === 1 && block.error === undefined && Number.isSafeInteger(block.result) && block.result > 0 && Number.isSafeInteger(observed)) {
+          if (observed > at + 10_000) zeroReason = "ZERO 的 Jupiter 报价时点超过允许的未来偏差，保留数量暂不估值";
+          else if (at - observed > 300_000) zeroReason = "ZERO 的 Jupiter 报价已超过 5 分钟，保留数量暂不估值";
+          else zeroPrice = { value: quote.usdPrice, observedAt: new Date(observed).toISOString() };
+        }
+      }
+    } catch (error) {
+      zeroReason = `ZERO 的 Jupiter 报价或 Solana 时点查询失败${error instanceof WalletAssetsError && [401, 402, 403, 429].includes(error.statusCode) ? `（HTTP ${error.statusCode}）` : "或响应无效"}，本次不重试，保留数量暂不估值`;
+    }
+  }
   const holdings = [];
   const unpricedAssets = [];
   for (const row of rows) {
     const native = row.contract === "";
     const tether = !native && row.contract === USDT[row.chainIndex];
+    const zero = row.chainIndex === "501" && row.contract === ZERO_MINT;
     const sourcePriced = SOURCE_PRICED[`${row.chainIndex}:${row.contract}`];
-    const known = native || tether || sourcePriced;
-    const usdPrice = row.risk || !known ? null : tether ? usdtPrice?.value : row.tokenPrice;
+    const known = native || tether || sourcePriced || zero;
+    const usdPrice = row.risk || !known ? null : tether ? usdtPrice?.value : zero ? zeroPrice?.value : row.tokenPrice;
+    const externalId = `token:${digest(`${row.chainIndex}:${row.address}:${row.contract || "native"}`)}`;
     if (!usdPrice) {
-      unpricedAssets.push({ chainIndex: row.chainIndex, contract: row.contract, symbol: row.symbol, name: row.name, quantity: row.quantity,
-        reason: !known || row.risk ? "代币身份、风险或报价时点尚未核实，未采用提供商估值" : "缺少可核实的有效 USD 报价，未按固定美元价格估值" });
+      unpricedAssets.push({ externalId, chainIndex: row.chainIndex, contract: row.contract, symbol: row.symbol, name: row.name, quantity: row.quantity,
+        reason: zero ? row.risk ? "ZERO 被提供商标记风险，保留数量暂不估值" : zeroReason : !known || row.risk ? "代币身份、风险或报价时点尚未核实，未采用提供商估值" : "缺少可核实的有效 USD 报价，未按固定美元价格估值" });
       continue;
     }
     const amount = Number(row.quantity) * usdPrice;
     if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_VALUE) throw invalid();
-    const symbol = native ? CHAINS[row.chainIndex].symbol : tether ? "USDT" : sourcePriced.symbol;
-    holdings.push({ externalId: `token:${digest(`${row.chainIndex}:${row.address}:${row.contract || "native"}`)}`,
+    const symbol = native ? CHAINS[row.chainIndex].symbol : tether ? "USDT" : zero ? "ZERO" : sourcePriced.symbol;
+    holdings.push({ externalId,
       chainIndex: row.chainIndex, contract: row.contract, name: `${sourcePriced?.name || symbol}（${CHAINS[row.chainIndex].name}）`, category: tether ? "稳定币" : sourcePriced?.category || "加密资产",
-      currency: "USD", amount, quantity: row.quantity, rawQuantity: row.quantity, symbol });
+      currency: "USD", amount, quantity: row.quantity, rawQuantity: row.quantity, symbol,
+      ...(zero ? { quoteObservedAt: zeroPrice.observedAt, quoteSource: "Jupiter Price V3" } : {}) });
   }
   const fetched = atTime(now);
   const total = holdings.reduce((sum, row) => sum + row.amount, 0);
@@ -240,6 +276,7 @@ export async function fetchWalletAssets({ provider, credentials, wallets, fetchI
       "代币余额与原生币来源报价未提供精确资产或报价时点，页面标记为获取时间，不代表同一实时区块。",
       "只按链与合约识别资产；未知代币即使返回价格也暂不估值，名称和风险标记不构成身份确认。",
       ...(usdtPrice ? [`USDT 使用 Kraken USDT / USD 最近成交价；报价时点 ${usdtPrice.observedAt}，不假设固定 1 美元。`] : []),
+      ...(zeroPrice ? [`ZERO 使用精确 Solana mint 的 Jupiter Price V3 实际 USD 参考价；价格时点 ${zeroPrice.observedAt}，不等于余额时点；仅接受 5 分钟内报价，不保证成交或变现净额。`] : []),
       ...(rows.some((row) => row.chainIndex === "56" && row.contract === USDT["56"]) ? ["BSC USDT 为 Binance-Peg 合约；美元估值使用 USDT / USD 参考成交价，不核实其链上赎回或跨链溢折价。"] : []),
       ...(holdings.some((row) => row.symbol === "USDT0") ? ["USDT0 使用提供商返回的实际 USD 报价，不按固定 1 美元估值；源未提供精确报价时点，标记为获取时间。"] : []),
       ...(holdings.some((row) => row.symbol === "SPYon") ? ["SPYon 为 Ondo 代币化 ETF，按实际代币数量和提供商每代币 USD 价格估值，不转换为券商股数，也不使用固定份额乘数；源未提供精确报价时点。"] : []),
