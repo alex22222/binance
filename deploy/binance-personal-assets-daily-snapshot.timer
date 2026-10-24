@@ -1,0 +1,11 @@
+[Unit]
+Description=Save one personal asset snapshot per Beijing day
+
+[Timer]
+OnCalendar=*-*-* 23:55:00 Asia/Shanghai
+Persistent=true
+AccuracySec=30s
+Unit=binance-personal-assets-daily-snapshot.service
+
+[Install]
+WantedBy=timers.target

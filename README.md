@@ -239,6 +239,15 @@ npm run dashboard:live
 
 Open `http://127.0.0.1:4173`. It refreshes every three seconds and shows the bot heartbeat, all current positions, per-position executable-quote PnL, pending order, risk budget, latest 15-minute signals, and recent action trace. A live candidate appears as a five-minute, one-time approval request containing the exact side, symbol, full contract addresses, amount, quote, costs, risk parameters, and audit status. The server binds only to `127.0.0.1`.
 
+The **个人资产** navigation entry (`/assets`) keeps a separate cross-platform
+asset ledger in this Dashboard. It supports confirmed screenshot OCR, manual
+records, CSV imports, automatic FX with CNY/USD/HKD display, allocation analysis,
+daily Beijing-time snapshots, and OpenAI asset commentary.
+Screenshots are recognized in the browser using the bundled OCR models; only
+confirmed fields are saved. Asset records use `state/personal-assets.json` and
+`state/personal-assets-snapshots/` independently of trading state. The page and
+its APIs share Dashboard authentication. See [personal asset page](docs/personal-assets-page.md).
+
 Approving or rejecting from the dashboard writes a new immutable decision under `state/approval-decisions/`; it never edits `state/bot-state.json`. The bot consumes that exact decision on its next cycle. Before an approved swap is submitted it rechecks the wallet, emergency stop, position state, trend/exit trigger, executable quote, quote drift, cost coverage, and token audit. An expired, mismatched, reused, or materially changed approval fails closed without broadcasting.
 
 For authenticated access, configure both values before starting the dashboard:

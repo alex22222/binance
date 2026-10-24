@@ -1,0 +1,5 @@
+Browser OCR: Tesseract.js 7.0.0 and Tesseract.js-core 7.0.0 (Apache-2.0).
+Sources: https://github.com/naptha/tesseract.js and https://github.com/naptha/tesseract.js-core
+Language models eng, chi_sim, chi_tra from @tesseract.js-data 4.0.0_best_int (Apache-2.0).
+Source: https://github.com/naptha/tessdata
+Images are processed on the visitor's device. Only user-confirmed asset fields are saved to this Site.

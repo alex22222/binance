@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh authorized personal assets every 15 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=15min
+AccuracySec=30s
+Unit=binance-personal-assets-sync.service
+
+[Install]
+WantedBy=timers.target

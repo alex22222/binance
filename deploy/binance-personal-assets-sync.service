@@ -1,0 +1,18 @@
+[Unit]
+Description=Personal assets read-only OKX and Futu collector
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=binancebot
+Group=binancebot
+WorkingDirectory=/opt/binance-agentic-stock-bot
+Environment=PERSONAL_ASSETS_DIR=/opt/binance-agentic-stock-bot/state
+ExecStart=/usr/bin/node /opt/binance-agentic-personal-assets/current/scripts/sync-personal-assets.mjs
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/binance-agentic-stock-bot/state
+TimeoutStartSec=120

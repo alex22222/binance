@@ -23,6 +23,7 @@ import { loadBtcRadarView, saveBtcRadarSettings } from "../src/btc-radar.mjs";
 import { loadManagerPage } from "../src/fund-manager-html.mjs";
 import { weeklyReportStatus } from "../src/weekly-research-store.mjs";
 import { weeklyResearchHtml } from "../src/weekly-research-html.mjs";
+import { handlePersonalAssetsRequest } from "../src/personal-assets-routes.mjs";
 import { activateEmergencyStop, clearEmergencyStop } from "../src/reliability.mjs";
 import { createTracer } from "../src/trace.mjs";
 import { approvalDecisionStatus, recordApprovalDecision } from "../src/approvals.mjs";
@@ -52,6 +53,7 @@ const tradeReviewDirectory = resolve(
   process.env.TRADE_REVIEW_DIR || "state/trade-reviews"
 );
 const btcRadarDirectory = resolve(projectRoot, process.env.BTC_RADAR_DIR || "state/btc-radar");
+const personalAssetsDirectory = resolve(projectRoot, process.env.PERSONAL_ASSETS_DIR || "state");
 
 async function executeBaw(args) {
   let stdout;
@@ -147,7 +149,7 @@ function requireAllowedOrigin(request) {
 
 function requireAuthentication(request, response) {
   if (dashboardRequestAuthorized(request, authConfig)) return true;
-  if (request.method === "GET" && (["/", "/strategies", "/btc-radar"].includes(request.url) || ["/reviews", "/fund-manager", "/weekly-strategy"].includes(new URL(request.url, "http://localhost").pathname))) {
+  if (request.method === "GET" && (["/", "/strategies", "/btc-radar"].includes(request.url) || ["/reviews", "/fund-manager", "/weekly-strategy", "/assets", "/assets/"].includes(new URL(request.url, "http://localhost").pathname))) {
     response.writeHead(303, {
       "Location": "/login",
       "Cache-Control": "no-store",
@@ -223,6 +225,7 @@ const server = createServer(async (request, response) => {
       return;
     }
     if (!requireAuthentication(request, response)) return;
+    if (await handlePersonalAssetsRequest({ request, response, stateDir: personalAssetsDirectory, requireAllowedOrigin })) return;
     if (request.method === "GET" && request.url === "/health") {
       response.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",

@@ -5,6 +5,7 @@
 
 export const SITE_NAV = Object.freeze([
   ["/", "仪表盘"],
+  ["/assets", "个人资产"],
   ["/strategies", "策略"],
   ["/reviews", "复盘"],
   ["/fund-manager", "基金经理"],
