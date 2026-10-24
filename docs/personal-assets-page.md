@@ -71,9 +71,9 @@
 | TokenPocket / OKX Web3 | 需提供每个网络的公开持仓地址；按链、地址、合约去重，不能仅凭钱包品牌推断网络。 |
 | 币安 | 当前部署服务器对官方账户 API 返回 HTTP 451 地区限制，暂不能在此完成同步；不能以公共行情接口代替私人账户资产。 |
 | 盈立 | [官方 Open API](https://api-doc.usmart8.com/zh-cn/trade.html)提供真实资产及持仓查询，但需券商批准独立禁止交易及资金操作的只读权限，再接入用户两个实际账户。 |
-| 汇丰基金 | [FlexInvest](https://www.hsbc.com.hk/investments/products/mutual-funds/flexinvest/)不是存款 API 覆盖的证据；需具体基金份额类别、真实单位数与数量日期，或投资结单。不能由总市值倒推份额。 |
+| 汇丰基金 | 用户已确认灵活智投只有 U50001，D 类港元累积（HK0000465903），10,466.17 单位；使用官方 NAV 重估，数量来自用户确认，不能称为已读取银行最新份额或现金。 |
 | HSBC / ZA Bank 存款 | [HSBC 香港个人账户 API](https://develop.hsbc.com/ob-api-documentation/account-information-hk-personal)需要合资格 TSP 和证书；[ZA Bank 开发者目录](https://developer.bank.za.group/)不等于私人证券、基金及余额 API 已开放。银行间 IADS 授权不会自动给本站读取权限。 |
-| ZA Bank 投资 | 用户已确认 App 为众安银行。泰康基金官方每日 NAV 可读取，但缺少真实份额；VOO 最新价格也不能证明当前股数或现金。重估价格与实际账户同步须分开标记。 |
+| ZA Bank 投资 | 泰康 360.832 份、高腾 130 份及 VOO 2 股已由用户确认并接入报价重估；银行最新数量及现金仍未自动读取。重估价格与实际账户同步分开标记。 |
 | 民生香港个人账户 | [官方个人电子银行](https://hk.cmbc.com.cn/personal/pseb/index.htm)支持结单、定存和持仓查看；尚未核实个人自助只读 API，先采用用户下载结单或截图更新。 |
 | 平安证券 A 股 | [官方量盈 QMT](https://stock.pingan.com/static/webinfo/agencybrokerage/agencybrokerage.html)需确认用户准入和独立只读权限；行情更新不等于券商持仓更新。 |
 
@@ -143,7 +143,7 @@ node --test --test-timeout=30000 test/*.test.mjs
 
 总览的「基金与 ETF 自动估值」及对应账户展示官方报价日、数量确认日、最近成功读取/入账时间和失败/延迟状态。数量确认日期不是到期日；长期持有数量持续有效，买卖、申购、赎回或拆并股后通过「更新 / 重新确认份额」保存新数量。报价自动更新不代表银行账户现金、证券或基金份额已自动读取，不加入完整账户同步覆盖数。
 
-目前准确支持两种净值：泰康开泰美元货币 A 累积（HK0000857299，USD）和高腾微财货币 A 港元累积（HK0000478872，HKD）。泰康同时核对官方交易资料的 ISIN 与基金代码，再读取指定份额净值；高腾只解析[管理人产品页](https://www.gaotengasset.com/zh-HK/product-services)的 JSON 数据，不执行网页脚本。VOO（US9229083632）则读取 [Vanguard 官方产品页](https://investor.vanguard.com/investment-products/etfs/profile/voo)公布的市场收盘价，核对 CUSIP、基金号、代码及页面三处价格/日期；不以 NAV 替代市场价格，不声称盘中实时。需先取得用户确认的实际股数，不能由旧市值反推。身份、类别、币种、日期或报价无法核实即保留上次有效金额，不采用其他产品顶替。
+目前准确支持三种净值：泰康开泰美元货币 A 累积（HK0000857299，USD）、高腾微财货币 A 港元累积（HK0000478872，HKD）及汇丰环球货币基金 D 港元累积（HK0000465903，HKD）。泰康同时核对官方交易资料的 ISIN 与基金代码，再读取指定份额净值；高腾只解析[管理人产品页](https://www.gaotengasset.com/zh-HK/product-services)的 JSON 数据，不执行网页脚本；汇丰使用下文的官方公开 NAV 组件接口。VOO（US9229083632）则读取 [Vanguard 官方产品页](https://investor.vanguard.com/investment-products/etfs/profile/voo)公布的市场收盘价，核对 CUSIP、基金号、代码及页面三处价格/日期；不以 NAV 替代市场价格，不声称盘中实时。需先取得用户确认的实际股数，不能由旧市值反推。身份、类别、币种、日期或报价无法核实即保留上次有效金额，不采用其他产品顶替。
 
 绑定更新已有的一条基金持仓，不新增账户或重复资产；原记录和币种在首次重估前快照保留，现值使用基金原币净值乘已确认份额，再由现有汇率换算。状态及份额存于 `state/personal-assets-funds.json`（0600），每次改账先保留一份滚动备份。当前服务器 每天北京时间 09:00、21:00 的定时器检查新净值，同一净值幂等；超过七天的净值不再用于更新、超过四天或读取超时明确标记延迟。节假日可能只有上一交易日净值。
 
@@ -178,3 +178,11 @@ BSC USDT 使用 Kraken 实际 USDT/USD 成交报价；X Layer USD₮0 按[发行
 Solana ZERO 仅匹配已核实的精确 mint `EmcxFTNVDqyLHp11NvwvLZ4D7LKGbG9i7B8RF7dwpump`，按实际代币数量乘 [Jupiter Price V3](https://developers.jup.ag/docs/price) 的 USD 参考价格；不使用同名代币或 OnchainOS 的未核时报价替代。公开请求只含固定 mint 和报价区块，不带钱包地址或 Developer 凭据。以 Solana `getBlockTime(blockId)` 核实报价时点，只接受 5 分钟内且未来偏差不超过 10 秒的价格；`createdAt` 是代币创建时间，不能用来判定报价新鲜度。价格来源及价格时点保留在持仓备注中，不把它当成余额时点，也不保证实际成交或变现净额。
 
 报价缺失、过期、限流、付费要求或响应异常时不重试、不付款，保留准确数量并标为未估值。若同一链、地址、合约对应的资产已在该账户估值，本次失价会拒绝替换整个账户，保留上次有效账本及成功时点；完整余额清单中已不存在的代币仍可正常移除。首次出现的未估值资产不冒充零金额。查询沿用每天 09:00、21:00 的既有资产任务；手动预览可以查询，不新增轮询或报价日配额，钱包读取仍共用 45 秒上限。
+
+## 汇丰 U50001 官方净值重估
+
+[HSBC U50001 产品页](https://investments3.personal-banking.hsbc.com.hk/public/utb/en-gb/fundDetail/U50001)对应 HSBC Global Money Funds - Hong Kong Dollar，D 类港元累积，ISIN `HK0000465903`；不与 A、C 或派息 DD 类混用。用户于 2026-10-25 确认该账户只有这一只基金、持有 `10466.17` 单位。旧账户总额及截图记录先保存快照，现有账户改按唯一基金持仓计入，不新增重复账户或再叠加旧总额。
+
+报价使用[汇丰环球投资管理官网基金中心](https://www.assetmanagement.hsbc.com.hk/en/individual-investor/fund-centre)的公开组件协议：一次空正文 POST 获取匿名网页组件 token，再以 `Prices`、精确 ISIN、个人投资者公开页面参数查询 NAV。公开组件配置固定于源码；token 仅在本次请求内存中使用，不保存、不导出，也不读取或发送银行登录资料、持有数量或个人账户信息。每次核对基金 ID、份额 ID、D 类、双重 ISIN、选中港元币种、唯一结果和真实价格日；响应结构变化、错误、限流、未来或超过七天的净值均保留上次估值和成功时间，无重试或其他类别回退。
+
+每日 09:00、21:00 以官方净值乘人工确认单位数，页面分别显示数量确认日、净值日和成功读取／入账时间。单位数不会自动随申购赎回变化；此功能不等于银行账户余额或持仓数量同步。2026-10-23 官方 NAV `11.5950 HKD` 乘 `10466.17` 单位为 `121355.241150 HKD`，显示两位小数为 `121355.24 HKD`。

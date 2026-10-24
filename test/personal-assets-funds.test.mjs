@@ -210,3 +210,68 @@ test("missing configuration does not create files and stale revisions or invalid
   for (const more of [{ quantity: "-1" }, { quantity: "1e2" }, { confirmedOn: "2026-10-25" }, { isin: "unknown" }, { entryId: "other-stock" }, { revision: 0 }]) await assert.rejects(bind(stateDir, more));
   assert.equal((await readPersonalAssets({ stateDir })).revision, 1);
 });
+
+const hsbcIsin = "HK0000465903";
+function hsbcData() {
+  return { view: "Prices", invalidConfigurationErrorMessage: null, messages: [], filteredTotal: 1, fundsTotal: 1, shareTotal: 1,
+    paging: { currentPage: 1, fundsPerPage: 20, numberOfFunds: 1, totalPages: 1 },
+    funds: [{ name: "HSBC Global Money Funds - Hong Kong Dollar", id: "FSGBR06FJR", shareClasses: [{ id: "F0000119QG", name: "D", isin: hsbcIsin, data: [
+      { columnId: "DropDown_PriceCurrency", selected: "0P0001EPQ8", groups: [{ name: "Base Currency", options: [{ value: "HKD", id: "0P0001EPQ8" }] }] },
+      { columnId: "UniqueIdentifier", value: hsbcIsin + " " }, { columnId: "Nav", value: "11.5950 " }, { columnId: "PriceDate", value: "23 Oct 2026  " },
+    ] }] }] };
+}
+function hsbcSource(change = () => {}, options = {}) {
+  const data = hsbcData(); change(data); const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, init }); assert.equal(init.method, "POST"); assert.equal(init.redirect, "error"); assert.ok(init.signal); assert.equal(init.headers.Cookie, undefined);
+    if (url === "https://www.assetmanagement.hsbc.com.hk/api/v1/token/issue") {
+      assert.equal(init.headers["X-Country"], "HK"); assert.equal(init.headers["X-Language"], "EN"); assert.equal(init.headers["Content-Length"], "0");
+      assert.equal(init.headers.Authorization, undefined); assert.equal(init.body, undefined);
+      return options.tokenResponse ? options.tokenResponse() : new Response("anonymous.public.token");
+    }
+    assert.equal(url, "https://www.assetmanagement.hsbc.com.hk/api/v1/nav/funds"); assert.equal(init.headers.Authorization, "Bearer anonymous.public.token");
+    const body = JSON.parse(init.body); assert.equal(body.view, "Prices"); assert.deepEqual(body.searchTerm, [hsbcIsin]); assert.deepEqual(body.selectedValues, []);
+    assert.deepEqual(body.paging, { currentPage: 1, fundsPerPage: 20 }); assert.equal(body.pageInformation.investorType, "INDV");
+    assert.doesNotMatch(init.body, /10466\.17|121355\.31|apiKey|secret|wallet/);
+    return options.dataResponse ? options.dataResponse() : Response.json(data);
+  };
+  return { fetchImpl, calls };
+}
+
+test("HSBC U50001 uses only the exact D accumulating HKD share class and its official dated NAV", async () => {
+  const source = hsbcSource(); const quote = await fetchAssetFundNav({ isin: hsbcIsin, fetchImpl: source.fetchImpl, now });
+  assert.equal(quote.isin, hsbcIsin); assert.equal(quote.nav, "11.5950"); assert.equal(quote.currency, "HKD"); assert.equal(quote.date, "2026-10-23"); assert.match(quote.name, /D.*累积/);
+  assert.equal(source.calls.length, 2); assert.doesNotMatch(JSON.stringify(quote), /anonymous\.public\.token|Authorization/);
+});
+
+test("HSBC NAV rejects other funds, classes, currencies, duplicate fields and incomplete result sets", async () => {
+  const share = data => data.funds[0].shareClasses[0];
+  for (const change of [d => { d.funds[0].id = "other"; }, d => { d.funds[0].name += " Other"; }, d => { share(d).isin = "HK0000434412"; },
+    d => { share(d).name = "DD"; }, d => { share(d).id = "other"; }, d => { share(d).data[0].groups[0].options[0].value = "USD"; },
+    d => { share(d).data[0].selected = "foreign-currency"; }, d => { share(d).data[1].value = "HK0000465895"; },
+    d => { share(d).data.push({ columnId: "Nav", value: "999" }); }, d => { share(d).data = share(d).data.filter(row => row.columnId !== "PriceDate"); },
+    d => { d.funds.push(d.funds[0]); }, d => { d.paging.totalPages = 2; }, d => { d.filteredTotal = 2; }, d => { d.view = "Performance"; },
+    d => { d.invalidConfigurationErrorMessage = "unavailable"; }, d => { d.messages.push("incomplete"); }]) {
+    const source = hsbcSource(change); await assert.rejects(fetchAssetFundNav({ isin: hsbcIsin, fetchImpl: source.fetchImpl, now }), /身份|净值|报价/); assert.equal(source.calls.length, 2);
+  }
+  for (const [field, value] of [["Nav", "0"], ["Nav", "NaN"], ["Nav", "-1"], ["PriceDate", "25 Oct 2026"], ["PriceDate", "30 Feb 2026"], ["PriceDate", "01 Oct 2026"], ["PriceDate", "23 Foo 2026"]]) {
+    const source = hsbcSource(d => { share(d).data.find(row => row.columnId === field).value = value; });
+    await assert.rejects(fetchAssetFundNav({ isin: hsbcIsin, fetchImpl: source.fetchImpl, now }), /身份|净值|报价/);
+  }
+});
+
+test("HSBC public token and NAV failures never retry, expose tokens or overwrite a valid holding", async t => {
+  const stateDir = await fixture(t); const source = hsbcSource();
+  const initial = await bind(stateDir, { isin: hsbcIsin, quantity: "10466.17", fetchImpl: source.fetchImpl });
+  assert.equal(initial.portfolio.entries[0].amount, 121355.24115); assert.equal(initial.portfolio.entries[0].currency, "HKD"); assert.equal(initial.portfolio.entries.length, 2);
+  const before = await readFile(join(stateDir, "personal-assets.json"), "utf8");
+  for (const [index, options] of [{ tokenResponse: () => new Response("private upstream secret", { status: 429 }) }, { tokenResponse: () => new Response("<html>blocked</html>") },
+    { dataResponse: () => new Response("anonymous.public.token", { status: 400 }) }, { dataResponse: () => new Response("broken") }].entries()) {
+    const bad = hsbcSource(() => {}, options);
+    const result = await runAssetFundCycle({ stateDir, fetchImpl: bad.fetchImpl, now: new Date(Date.parse("2026-10-25T01:00:00Z") + index * 12 * 60 * 60_000) });
+    assert.deepEqual(result, { attempted: 1, applied: 0, failed: 1 }); assert.ok(bad.calls.length <= 2);
+    assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
+    const status = await readAssetFundStatus({ stateDir }); assert.doesNotMatch(JSON.stringify(status), /private upstream secret|anonymous\.public\.token/); assert.equal(status.bindings[0].lastFetchedAt, now.toISOString());
+  }
+  assert.doesNotMatch(await readFile(join(stateDir, "personal-assets-funds.json"), "utf8"), /anonymous\.public\.token|Authorization/);
+});

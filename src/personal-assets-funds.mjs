@@ -9,6 +9,7 @@ import { nextAssetRefreshAt } from "./personal-assets-core.mjs";
 const CATALOG = {
   HK0000857299: { name: "泰康开泰美元货币（A Acc）", currency: "USD", source: "泰康资产管理（香港）", url: "https://hk.taikangasset.cn/hk/product_service/productService.html" },
   HK0000478872: { name: "高腾微财货币基金（A 港元累积）", currency: "HKD", source: "高腾国际资产管理", url: "https://www.gaotengasset.com/zh-HK/product-services" },
+  HK0000465903: { name: "汇丰环球货币基金－港元（D 累积）", currency: "HKD", source: "汇丰环球投资管理", url: "https://www.assetmanagement.hsbc.com.hk/en/individual-investor/fund-centre" },
   US9229083632: { name: "Vanguard 标普500 ETF（VOO）", currency: "USD", source: "Vanguard（发行人）", priceBasis: "market-close", url: "https://investor.vanguard.com/investment-products/etfs/profile/voo" },
 };
 const STOCKS = {
@@ -32,10 +33,20 @@ const validDate = value => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.te
 const validQuantity = value => typeof value === "string" && /^\d{1,12}(?:\.\d{1,9})?$/.test(value) && Number.isFinite(Number(value)) && Number(value) <= 1e12;
 const hash = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const filePath = stateDir => join(resolve(stateDir), "personal-assets-funds.json");
+// Public fund-centre component configuration, not customer credentials. Keep requests on the fixed official host.
+const HSBC_PAGE = {
+  country: "HK", language: "EN", investorType: "INDV", tokenIssue: { url: "/api/v1/token/issue" },
+  dataUrl: { url: "/api/v1/nav/funds", id: "e0FFNDg5MTJELUFEMzEtNEQ5RC04MzA4LTdBQzZERTgyQTc4Rn0=" },
+  shareClassUrl: { url: "/api/v1/nav/shareclass", id: "ezUxODdjODJiLWY1YmItNDIzOC1hM2Y0LWY5NzZlY2JmMTU3OX0=" },
+  filterUrl: { url: "/api/v1/nav/filters", id: "ezRFREYxQTU3LTVENkYtNDBDRC1CMjJDLTQ0NDc4Nzc1NTlFQn0=" },
+  presentationUrl: { url: "/api/v1/nav/presentation", id: "e0E1NEZDODZGLUE5MDctNDUzQi04RTYyLTIxNDNBMEM1MEVGQ30=" },
+  liveDataUrl: { id: "ezlEMjA2MDk5LUNCRTItNENGMy1BRThBLUM0RTMwMEIzMjlDQ30=" },
+  fundDetailPageUrl: "/en/individual-investor/fund-centre", forceHttps: true,
+};
 
-async function publicText(url, body, fetchImpl, encoding = "utf8") {
-  const response = await fetchImpl(url, { method: body ? "POST" : "GET", redirect: "error", signal: AbortSignal.timeout(8000),
-    headers: { Accept: body ? "application/json" : "text/html", ...(body ? { "Content-Type": "application/json" } : {}), ...(encoding === "gb18030" ? { Referer: "https://gu.qq.com/" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+async function publicText(url, body, fetchImpl, encoding = "utf8", headers = {}, method = body ? "POST" : "GET") {
+  const response = await fetchImpl(url, { method, redirect: "error", signal: AbortSignal.timeout(8000),
+    headers: { Accept: body ? "application/json" : "text/html", ...(body ? { "Content-Type": "application/json" } : {}), ...(encoding === "gb18030" ? { Referer: "https://gu.qq.com/" } : {}), ...headers }, ...(body ? { body: JSON.stringify(body) } : {}) });
   if (!response.ok || !response.body || Number(response.headers.get("content-length")) > 1_000_000) { await response.body?.cancel(); throw fail("报价来源接口暂不可用，保留上次有效估值。"); }
   const reader = response.body.getReader(); const chunks = []; let size = 0;
   try {
@@ -83,6 +94,30 @@ export async function fetchAssetFundNav({ isin, fetchImpl = fetch, now = new Dat
       const rows = quotes.data.filter(row => row.fundCode === "20220530" && row.classType === "ausdacc");
       if (rows.length !== 1 || rows[0].className !== "A類-美元-累積" || rows[0].currencyCode !== "美元") throw Error();
       nav = rows[0].netAssets; date = rows[0].date;
+    } else if (isin === "HK0000465903") {
+      const host = "https://www.assetmanagement.hsbc.com.hk";
+      const token = (await publicText(host + "/api/v1/token/issue", null, fetchImpl, "utf8",
+        { "X-Country": "HK", "X-Language": "EN", "X-Component": HSBC_PAGE.dataUrl.id, "Content-Length": "0" }, "POST")).trim();
+      if (token.length > 4000 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) throw Error();
+      const body = { appliedFilters: [], paging: { currentPage: 1, fundsPerPage: 20 }, view: "Prices", searchTerm: [isin], selectedValues: [], pageInformation: HSBC_PAGE };
+      const data = JSON.parse(await publicText(host + "/api/v1/nav/funds", body, fetchImpl, "utf8",
+        { Authorization: "Bearer " + token, "IFC-Cache-Header": "en,hk,indv,prices,hk0000465903,1,n20" }));
+      if (data.view !== "Prices" || data.invalidConfigurationErrorMessage !== null || !Array.isArray(data.messages) || data.messages.length
+        || data.filteredTotal !== 1 || data.fundsTotal !== 1 || data.shareTotal !== 1 || data.paging?.currentPage !== 1 || data.paging.numberOfFunds !== 1 || data.paging.totalPages !== 1
+        || !Array.isArray(data.funds) || data.funds.length !== 1) throw Error();
+      const fund = data.funds[0];
+      if (fund.id !== "FSGBR06FJR" || fund.name !== "HSBC Global Money Funds - Hong Kong Dollar" || !Array.isArray(fund.shareClasses) || fund.shareClasses.length !== 1) throw Error();
+      const share = fund.shareClasses[0];
+      if (share.id !== "F0000119QG" || share.name !== "D" || share.isin !== isin || !Array.isArray(share.data)) throw Error();
+      const field = id => { const rows = share.data.filter(row => row.columnId === id); if (rows.length !== 1) throw Error(); return rows[0]; };
+      const currency = field("DropDown_PriceCurrency");
+      const currencies = currency.groups?.flatMap(group => group.options || []).filter(option => option.id === currency.selected);
+      if (currency.selected !== "0P0001EPQ8" || currencies?.length !== 1 || currencies[0].value !== "HKD" || field("UniqueIdentifier").value.trim() !== isin) throw Error();
+      nav = field("Nav").value.trim();
+      const parts = /^(\d{1,2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{4})$/.exec(field("PriceDate").value.trim());
+      if (!parts) throw Error();
+      const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].indexOf(parts[2]) + 1;
+      date = `${parts[3]}-${String(month).padStart(2, "0")}-${parts[1].padStart(2, "0")}`;
     } else if (isin === "US9229083632") {
       const html = await publicText(CATALOG[isin].url, null, fetchImpl);
       const blocks = [...html.matchAll(/\bdata-vgn-funds-profile="([^"]+)"/g)];
