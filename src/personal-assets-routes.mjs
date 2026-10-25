@@ -1,9 +1,11 @@
 import { readAssetAiStatus, reviewPersonalAssets, configureAssetAi } from "./personal-assets-ai.mjs";
 import { readAssetFundStatus, configureAssetFund } from "./personal-assets-funds.mjs";
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { personalAssetsHtml, statementPasswordsHtml, refreshScheduleHtml } from "./personal-assets-html.mjs";
+import { personalAssetsHtml, statementPasswordsHtml, refreshScheduleHtml, operationsHtml } from "./personal-assets-html.mjs";
 import { readPersonalAssets, savePersonalAssets, createPersonalAssetsSnapshot, readStatementPasswordStatus, configureStatementPassword, readAssetRefreshSchedule, configureAssetRefreshSchedule } from "./personal-assets.mjs";
 import { valuePersonalAssetState } from "./personal-assets-fx.mjs";
 import { readAssetSyncStatus, performAssetSyncAction, completeFutuAuthorization } from "./personal-assets-sync.mjs";
@@ -83,6 +85,132 @@ async function readAssetBody(request) {
 }
 
 // Called only after the Dashboard's shared authentication gate.
+// Run overview. This module is already in the Dashboard-only release, so the
+// overview lives here rather than in a new module the release loader would have
+// to admit. Each binance* systemd timer reports its last run, result and next
+// trigger; where its output is readable by the Dashboard user, the page also
+// shows the date that output's data runs to. Nothing here writes or triggers.
+const RENEWAL_STATUS_PATH = "/var/lib/binance-agentic-authorization/public-status.json";
+const latestTime = (values) => values.filter((value) => typeof value === "string" && Number.isFinite(Date.parse(value)))
+  .sort((a, b) => Date.parse(b) - Date.parse(a))[0] || null;
+const sessionDate = (json) => json.lastObservation?.sessionDate;
+export const OPERATIONS_TASKS = Object.freeze([
+  { unit: "binance-agentic-authorization", group: "交易与风控", label: "交易授权续签", cadence: "每分钟", renewal: true },
+  { unit: "binance-agentic-btc-radar", group: "交易与风控", label: "BTC 风控雷达", cadence: "约每 4 小时", file: "btc-radar/state.json", asOf: (json) => json.lastRunAt, staleHours: 12 },
+  { unit: "binance-agentic-premarket-brief", group: "交易与风控", label: "盘前简报", cadence: "交易日", dir: "trade-reviews/premarket", asOf: (json) => json.tradingDate, staleHours: 96 },
+  { unit: "binance-agentic-trade-review", group: "交易与风控", label: "交易复盘", cadence: "每周", file: "trade-reviews/latest.json", asOf: (json) => json.tradingDate, staleHours: 216 },
+  { unit: "binance-agentic-spy-open-check", group: "交易与风控", label: "SPY 开盘检查", cadence: "一次性" },
+  { unit: "binance-agentic-strategy-validation", group: "策略研究", label: "策略验证", cadence: "每日", dir: "strategy-validation/reports", asOf: (json) => json.generatedAt, staleHours: 48 },
+  { unit: "binance-agentic-strategy-evidence", group: "策略研究", label: "策略证据采集", cadence: "每日", dir: "strategy-evidence", asOf: (json) => json.generatedAt, staleHours: 48 },
+  { unit: "binance-agentic-shadow-outcomes", group: "策略研究", label: "影子结果标注", cadence: "交易日", file: "shadow-outcomes/latest.json", asOf: (json) => json.generatedAt, staleHours: 96 },
+  { unit: "binance-agentic-turtle-paper", group: "纸面模拟", label: "海龟纸面模拟", cadence: "交易日", file: "turtle-paper/latest.json", asOf: sessionDate, staleHours: 96 },
+  { unit: "binance-agentic-weekly-etf-paper", group: "纸面模拟", label: "周度 ETF 轮动", cadence: "交易日", file: "weekly-etf-rotation-paper/latest.json", asOf: sessionDate, staleHours: 96 },
+  { unit: "binance-agentic-weekly-etf-defense-paper", group: "纸面模拟", label: "双动量防守", cadence: "交易日", file: "weekly-etf-dual-momentum-paper/latest.json", asOf: sessionDate, staleHours: 96 },
+  { unit: "binance-agentic-etf-frequency-paper", group: "纸面模拟", label: "ETF 调仓频率对照", cadence: "交易日", file: "etf-frequency-paper/latest.json", asOf: sessionDate, staleHours: 96 },
+  { unit: "binance-personal-assets-sync", group: "个人资产", label: "资产只读同步", cadence: "每分钟检查，每日同步", file: "personal-assets-sync.json", asOf: (json) => latestTime(Object.values(json.providers || {}).map((row) => row?.lastFetchedAt)), staleHours: 36 },
+  { unit: "binance-personal-assets-daily-snapshot", group: "个人资产", label: "资产每日快照", cadence: "每日", file: "personal-assets.json", asOf: (json) => json.snapshots?.[0]?.at, staleHours: 36 },
+  { unit: "binance-agentic-offhours-research", group: "研究", label: "盘后研究", cadence: "交易日", restricted: true },
+  { unit: "binance-agentic-monthly-research", group: "研究", label: "月度研究", cadence: "每月", restricted: true }
+]);
+const SERVICE_PROPERTIES = ["Id", "LoadState", "ActiveState", "Result", "ExecMainStatus", "ExecMainStartTimestamp", "ExecMainExitTimestamp"];
+const TIMER_PROPERTIES = ["Id", "LoadState", "ActiveState", "LastTriggerUSec", "NextElapseUSecRealtime"];
+const runSystemctl = (args) => new Promise((resolve, reject) => {
+  execFile("systemctl", args, { timeout: 5000, maxBuffer: 1_000_000, env: { ...process.env, SYSTEMD_PAGER: "", LC_ALL: "C" } },
+    (error, stdout) => error ? reject(error) : resolve(stdout));
+});
+// `--timestamp=unix` covers service timestamps ("@1792932180"); timer properties
+// keep systemd's "Sun 2026-10-25 16:43:39 UTC" form on this host.
+function systemdTime(value) {
+  if (!value || value === "n/a" || value === "0") return null;
+  const unix = /^@(\d+)$/.exec(value);
+  if (unix) return new Date(Number(unix[1]) * 1000).toISOString();
+  const text = /^[A-Z][a-z]{2} (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) UTC$/.exec(value);
+  return text ? new Date(`${text[1]}T${text[2]}Z`).toISOString() : null;
+}
+function parseSystemctlShow(output) {
+  const units = new Map();
+  for (const block of output.split(/\n\s*\n/)) {
+    const fields = Object.fromEntries(block.split("\n").filter((line) => line.includes("=")).map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]));
+    if (fields.Id) units.set(fields.Id, fields);
+  }
+  return units;
+}
+async function newestJson(directory, readText, listDirectory, statFile) {
+  const names = (await listDirectory(directory)).filter((name) => name.endsWith(".json") && !name.startsWith("."));
+  if (!names.length) return null;
+  // Dated report names sort by date; content-addressed names are ordered by modification time.
+  let newest = names.every((name) => /^\d{4}-\d{2}-\d{2}/.test(name)) ? names.sort().at(-1) : null;
+  if (!newest) {
+    const times = await Promise.all(names.map(async (name) => [name, (await statFile(join(directory, name))).mtimeMs]));
+    newest = times.sort((a, b) => b[1] - a[1])[0][0];
+  }
+  return JSON.parse(await readText(join(directory, newest), "utf8"));
+}
+function renewalView(raw, nowMs) {
+  // Same acceptance rules as the authorization component's public parser: a
+  // status older than three minutes or with unexpected fields is shown as unverified.
+  const valid = raw && raw.schemaVersion === 1 && ["ACTIVE", "HALTED", "EXPIRED", "ERROR"].includes(raw.autoRenewalState)
+    && typeof raw.authorizationAllowed === "boolean" && typeof raw.entryControlsOpen === "boolean"
+    && [raw.checkedAt, raw.leaseExpiresAt, raw.hardDeadline].every((value) => Number.isFinite(Date.parse(value)));
+  const checked = valid ? Date.parse(raw.checkedAt) : NaN;
+  if (!valid || checked > nowMs + 60_000 || nowMs - checked > 180_000) return { verified: false, state: null, reason: "STATUS_UNVERIFIED", checkedAt: valid ? raw.checkedAt : null };
+  return { verified: true, state: raw.autoRenewalState, reason: /^[A-Z][A-Z0-9_]{0,95}$/.test(raw.reason) ? raw.reason : "REASON_WITHHELD",
+    authorizationAllowed: raw.authorizationAllowed && nowMs < Date.parse(raw.leaseExpiresAt) && nowMs < Date.parse(raw.hardDeadline),
+    entryControlsOpen: raw.entryControlsOpen, checkedAt: raw.checkedAt, leaseExpiresAt: raw.leaseExpiresAt, hardDeadline: raw.hardDeadline };
+}
+export async function readOperationsOverview({ stateDir, now = new Date(), systemctl = runSystemctl, readText = readFile, listDirectory = readdir, statFile = stat, renewalPath = RENEWAL_STATUS_PATH } = {}) {
+  const nowMs = now.getTime();
+  const known = new Set(OPERATIONS_TASKS.map((task) => task.unit));
+  let systemdError = null;
+  let extra = [];
+  try {
+    extra = [...new Set((await systemctl(["list-timers", "--all", "--no-legend", "--plain"])).match(/\bbinance[\w.-]*(?=\.timer\b)/g) || [])].filter((unit) => !known.has(unit));
+  } catch { systemdError = "无法读取 systemd 定时任务列表"; }
+  const tasks = [...OPERATIONS_TASKS, ...extra.map((unit) => ({ unit, group: "其他", label: unit, cadence: "—" }))];
+  let units = new Map();
+  try {
+    units = parseSystemctlShow(await systemctl(["show", ...tasks.map((task) => `${task.unit}.service`), "--timestamp=unix", "--no-pager", "-p", SERVICE_PROPERTIES.join(",")]));
+    for (const [id, fields] of parseSystemctlShow(await systemctl(["show", ...tasks.map((task) => `${task.unit}.timer`), "--no-pager", "-p", TIMER_PROPERTIES.join(",")]))) units.set(id, fields);
+  } catch { systemdError = "无法读取 systemd 运行状态"; }
+  let renewal = { verified: false, state: null, reason: "STATUS_UNVERIFIED", checkedAt: null };
+  try { renewal = renewalView(JSON.parse(await readText(renewalPath, "utf8")), nowMs); } catch {}
+  const rows = await Promise.all(tasks.map(async (task) => {
+    const service = units.get(`${task.unit}.service`) || {};
+    const timer = units.get(`${task.unit}.timer`) || {};
+    const row = { unit: task.unit, group: task.group, label: task.label, cadence: task.cadence,
+      startedAt: systemdTime(service.ExecMainStartTimestamp), finishedAt: systemdTime(service.ExecMainExitTimestamp),
+      lastTriggerAt: systemdTime(timer.LastTriggerUSec), nextRunAt: systemdTime(timer.NextElapseUSecRealtime),
+      result: service.Result || null, exitStatus: service.ExecMainStatus ?? null, dataAsOf: null, dataNote: null };
+    if (task.renewal) {
+      row.dataAsOf = renewal.checkedAt;
+      row.dataNote = renewal.verified ? `续签 ${renewal.state} · ${renewal.reason}` : "续签状态未核实";
+    } else if (task.restricted) {
+      row.dataNote = "产物目录仅研究账户可读，只显示调度状态";
+    } else if (task.file || task.dir) {
+      try {
+        const json = task.file ? JSON.parse(await readText(join(stateDir, task.file), "utf8")) : await newestJson(join(stateDir, task.dir), readText, listDirectory, statFile);
+        const value = json && task.asOf(json);
+        row.dataAsOf = typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : null;
+        if (!row.dataAsOf) row.dataNote = "产物中没有可核验的数据时间";
+      } catch { row.dataNote = "产物不存在或无法读取"; }
+    }
+    // A trading-session date covers that whole day, so its age counts from the day's end.
+    const dataTime = row.dataAsOf ? Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(row.dataAsOf) ? `${row.dataAsOf}T23:59:59Z` : row.dataAsOf) : NaN;
+    const running = ["active", "activating", "reloading"].includes(service.ActiveState);
+    row.status = timer.LoadState === "not-found" || !timer.Id ? "missing"
+      : running ? "running"
+      : service.LoadState === "not-found" && !row.nextRunAt ? "finished"
+      : service.Result && service.Result !== "success" ? "failed"
+      : task.renewal && !(renewal.verified && renewal.state === "ACTIVE") ? (renewal.verified && renewal.state !== "ERROR" ? "attention" : "failed")
+      : !row.startedAt && !row.lastTriggerAt ? "never"
+      : task.staleHours && Number.isFinite(dataTime) && nowMs - dataTime > task.staleHours * 3_600_000 ? "stale"
+      : "ok";
+    return row;
+  }));
+  const counts = Object.fromEntries(["ok", "running", "failed", "stale", "attention", "never", "finished", "missing"].map((status) => [status, rows.filter((row) => row.status === status).length]));
+  return { generatedAt: now.toISOString(), systemdError, renewal, counts, tasks: rows };
+}
+
 export async function handlePersonalAssetsRequest({ request, response, stateDir, requireAllowedOrigin }) {
   const path = new URL(request.url, "http://localhost").pathname;
   // The site lands on personal assets. The trading dashboard moved to
@@ -99,6 +227,19 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
   if (request.method === "GET" && ["/dashboard", "/dashboard/"].includes(path)) {
     request.url = "/";
     return false;
+  }
+  if (request.method === "GET" && ["/operations", "/operations/", "/api/operations"].includes(path)) {
+    const overview = await readOperationsOverview({ stateDir });
+    if (path === "/api/operations") { json(response, overview); return true; }
+    response.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      // Server-rendered with no script; the page refreshes itself once a minute.
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      "X-Content-Type-Options": "nosniff"
+    });
+    response.end(operationsHtml(overview));
+    return true;
   }
   const assetApi = ["/api/assets", "/api/assets/snapshots", "/api/assets/rates/refresh", "/api/assets/funds/configure"].includes(path);
   const refreshApi = path === "/api/assets/refresh-schedule";

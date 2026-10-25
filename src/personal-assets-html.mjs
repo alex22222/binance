@@ -180,3 +180,62 @@ form.addEventListener("submit", async event => {
 request().then(data => { show(data); ready = true; input.disabled = button.disabled = false; }).catch(error => notify(error.message, true));
 </script></body></html>`;
 }
+
+const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+const OPERATION_STATUS = {
+  ok: ["正常", "ok"], running: ["运行中", "info"], failed: ["失败", "bad"], stale: ["数据滞后", "warn"], attention: ["需关注", "warn"],
+  never: ["尚未运行", "muted"], finished: ["已结束", "muted"], missing: ["未安装", "bad"]
+};
+const beijingTime = (iso) => iso ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(iso)).replace(/\//g, "-") : "—";
+function ageText(iso, nowMs) {
+  const diff = nowMs - Date.parse(iso);
+  if (!Number.isFinite(diff)) return "";
+  const minutes = Math.round(Math.abs(diff) / 60_000);
+  const span = minutes < 1 ? "不到 1 分钟" : minutes < 60 ? `${minutes} 分钟` : minutes < 48 * 60 ? `${Math.round(minutes / 60)} 小时` : `${Math.round(minutes / 1440)} 天`;
+  return diff < 0 ? `${span}后` : `${span}前`;
+}
+
+// Server-rendered run overview of the systemd timers; see readOperationsOverview.
+export function operationsHtml(overview) {
+  const nowMs = Date.parse(overview.generatedAt);
+  const { renewal, counts } = overview;
+  const pill = (status) => `<span class="op-pill ${OPERATION_STATUS[status]?.[1] || "muted"}">${OPERATION_STATUS[status]?.[0] || escapeHtml(status)}</span>`;
+  const renewalTone = !renewal.verified ? "bad" : renewal.state === "ACTIVE" ? "ok" : renewal.state === "HALTED" ? "warn" : "bad";
+  const dataCell = (row) => {
+    if (!row.dataAsOf) return `<span class="muted">${escapeHtml(row.dataNote || "—")}</span>`;
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(row.dataAsOf);
+    return `<span class="num">${day ? `${escapeHtml(row.dataAsOf)} 交易日` : beijingTime(row.dataAsOf)}</span><small>${day ? "" : ageText(row.dataAsOf, nowMs)}${row.dataNote ? `${day ? "" : " · "}${escapeHtml(row.dataNote)}` : ""}</small>`;
+  };
+  const runCell = (row) => {
+    const started = row.startedAt || row.lastTriggerAt;
+    if (!started) return '<span class="muted">尚无记录</span>';
+    const seconds = row.startedAt && row.finishedAt ? Math.max(0, Math.round((Date.parse(row.finishedAt) - Date.parse(row.startedAt)) / 1000)) : null;
+    const detail = [ageText(started, nowMs), seconds !== null ? `耗时 ${seconds < 120 ? `${seconds} 秒` : `${Math.round(seconds / 60)} 分钟`}` : "",
+      row.result && row.result !== "success" ? `结果 ${escapeHtml(row.result)} · 退出码 ${escapeHtml(row.exitStatus)}` : ""].filter(Boolean).join(" · ");
+    return `<span class="num">${beijingTime(started)}</span><small>${detail}</small>`;
+  };
+  const groups = [...new Set(overview.tasks.map((row) => row.group))];
+  const table = groups.map((group) => `<tbody><tr class="op-group"><th colspan="5">${escapeHtml(group)}</th></tr>${overview.tasks.filter((row) => row.group === group).map((row) => `<tr data-status="${escapeHtml(row.status)}"><td><strong>${escapeHtml(row.label)}</strong><small class="mono">${escapeHtml(row.unit)} · ${escapeHtml(row.cadence)}</small></td><td>${pill(row.status)}</td><td>${runCell(row)}</td><td>${dataCell(row)}</td><td><span class="num">${row.nextRunAt ? beijingTime(row.nextRunAt) : "—"}</span><small>${row.nextRunAt ? ageText(row.nextRunAt, nowMs) : row.status === "finished" ? "一次性任务" : ""}</small></td></tr>`).join("")}</tbody>`).join("");
+  const metric = (label, value, tone) => `<div class="op-metric ${tone}"><span>${label}</span><strong>${value}</strong></div>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="60"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><title>运行总览 · HQ Capital</title>
+<style>${SITE_CSS}
+:root{--site-width:1280px}*{box-sizing:border-box}body{font-size:14px;line-height:1.6}
+.op-wrap{max-width:1280px;margin:auto;padding:26px 20px 56px}.op-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:18px}.op-head h1{font-size:26px;margin:0}.op-head p{margin:4px 0 0;color:var(--muted);font-size:13px}
+.op-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) minmax(0,1.6fr);gap:12px;margin-bottom:18px}.op-metric,.op-renewal{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:14px 16px}.op-metric span{display:block;color:var(--muted);font-size:12px}.op-metric strong{font-size:26px;font-weight:500;font-variant-numeric:tabular-nums}.op-metric.bad strong{color:var(--red)}.op-metric.warn strong{color:var(--gold)}.op-metric.ok strong{color:var(--green)}
+.op-renewal .row{display:flex;justify-content:space-between;align-items:center;gap:8px}.op-renewal h2{font-size:13px;margin:0;color:var(--muted);font-weight:500}.op-renewal dl{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:10px 0 0;font-size:12px}.op-renewal dt{color:var(--muted)}.op-renewal dd{margin:0;font-variant-numeric:tabular-nums}
+.op-notice{border:1px solid var(--line);border-left:3px solid var(--red);padding:10px 14px;border-radius:0;background:var(--surface);margin-bottom:16px;color:var(--red)}
+.op-table-wrap{border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px;text-align:left}th{padding:10px 14px;color:var(--muted);font-weight:500;font-size:12px;background:var(--surface-2);border-bottom:1px solid var(--line);white-space:nowrap}td{padding:11px 14px;border-bottom:1px solid var(--line-soft);vertical-align:top;white-space:nowrap}td small{display:block;color:var(--muted);font-size:11px;white-space:normal;max-width:300px}tr.op-group th{background:var(--surface);color:var(--text);font-weight:600;font-size:12px;padding-top:16px}tbody tr:not(.op-group):hover td{background:var(--surface-2)}
+.mono{font-family:var(--font-num)}.num{font-variant-numeric:tabular-nums}.muted{color:var(--muted)}
+.op-pill{display:inline-flex;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}.op-pill.ok{color:var(--green);background:var(--green-soft)}.op-pill.bad{color:var(--red);background:var(--red-soft)}.op-pill.warn{color:var(--gold);background:var(--gold-soft)}.op-pill.info{color:var(--blue);background:var(--blue-soft)}.op-pill.muted{color:var(--muted);background:var(--surface-3)}
+.op-foot{margin-top:14px;color:var(--muted);font-size:12px}
+@media(max-width:900px){.op-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.op-renewal{grid-column:1/-1}}
+@media(max-width:600px){.op-wrap{padding:20px 12px 40px}td small.mono{display:none}td,th{padding:10px}}
+</style></head><body>${siteHeader("/operations")}<main class="op-wrap" aria-label="运行总览">
+<div class="op-head"><div><h1>运行总览</h1><p>服务器 ${overview.tasks.length} 个定时任务 · 生成于 ${beijingTime(overview.generatedAt)}（北京时间）· 每分钟自动刷新</p></div></div>
+${overview.systemdError ? `<div class="op-notice" role="alert">${escapeHtml(overview.systemdError)}；下表的运行时间与状态不可用。</div>` : ""}
+<section class="op-metrics" aria-label="状态汇总">${metric("正常", counts.ok, "ok")}${metric("失败 / 未安装", counts.failed + counts.missing, counts.failed + counts.missing ? "bad" : "")}${metric("数据滞后 / 需关注", counts.stale + counts.attention, counts.stale + counts.attention ? "warn" : "")}${metric("运行中", counts.running, "")}
+<div class="op-renewal"><div class="row"><h2>交易授权续签</h2><span class="op-pill ${renewalTone}">${renewal.verified ? escapeHtml(renewal.state) : "未核实"}</span></div><dl><dt>原因</dt><dd class="mono">${escapeHtml(renewal.reason)}</dd>${renewal.verified ? `<dt>买入授权</dt><dd>${renewal.authorizationAllowed && renewal.entryControlsOpen ? "有效" : "已阻断"}</dd><dt>租约到期</dt><dd>${beijingTime(renewal.leaseExpiresAt)}</dd><dt>最终截止</dt><dd>${beijingTime(renewal.hardDeadline)}</dd>` : ""}<dt>检查于</dt><dd>${renewal.checkedAt ? `${beijingTime(renewal.checkedAt)} · ${ageText(renewal.checkedAt, nowMs)}` : "—"}</dd></dl></div></section>
+<div class="op-table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>最近运行</th><th>数据截至</th><th>下次运行</th></tr></thead>${table}</table></div>
+<p class="op-foot">只读视图：读取 systemd 定时器与各任务产物，不触发、不修改任何任务。「数据截至」取自任务产物中的数据日期或生成时间；交易日数据按当日结束计算滞后。授权有效不代表通过全部交易风控。</p>
+</main></body></html>`;
+}

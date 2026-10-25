@@ -10,6 +10,7 @@ export const SITE_NAV = Object.freeze([
   ["/reviews", "复盘"],
   ["/fund-manager", "基金经理"],
   ["/btc-radar", "BTC 风控"],
+  ["/operations", "运行总览"],
   ["/gmgn/", "GMGN"],
   ["https://polyhermes.107-191-42-75.sslip.io/future-btc5m-bridge", "polymarket"]
 ]);
