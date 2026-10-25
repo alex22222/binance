@@ -48,7 +48,7 @@
 在 `/assets` 右上角点击“只读同步”。所有授权、状态和预览接口沿用 Dashboard 登录；提交同时校验请求来源。首次核对预览并入账后，独立的服务器定时器每天北京时间 09:00、21:00刷新。未授权时不连接交易账户，公共汇率仍会自动更新。
 
 - **OKX**：在官方 API 管理创建独立密钥，仅勾选 **Read**，绑定服务器 IP **173.199.122.23**。在本站选择账户实体（全球站、美国/澳洲、EEA），填写 API Key、Secret Key、API Passphrase。程序先从官方账户配置验证权限，拒绝 Trade、Withdraw 或未知权限。三个资产 GET 接口采用固定域名和路径，不使用钱包私钥。
-- **富途**：点击“前往富途授权”，在 `https://webapi.futunn.com/oauth2/authorize/confirm` 完成官方登录及 OAuth 2.1 + PKCE 授权。仅保留 `trade:read`（资产/持仓读取），拒绝 `trade:write`、`quote:write` 等写入范围。回调必须匹配发起登录会话、一次性 state 和十分钟有效期；授权返回后选择真实证券账户，读取预览再确认入账。无需 OpenD，也无需向本站提供富途密码。
+- **富途**：点击“前往富途授权”，在 `https://webapi.futunn.com/oauth2/authorize/confirm` 完成官方登录及 OAuth 2.1 + PKCE 授权。仅保留 `trade:read`（资产/持仓读取），拒绝 `trade:write`、`quote:write` 等写入范围。回调必须匹配发起登录会话、一次性 state 和十分钟有效期；授权返回后选择真实证券账户，读取预览再确认入账。无需 OpenD，也无需向本站提供富途密码。经只读权限校验的令牌先安全保存，再读取真实账户列表；列表读取失败时保留有效授权并显示失败阶段，可点击“重新读取账户”，无需重新登录。账户列表为空时不提示账户接入完成；读取列表不会修改资产，仍需选择账户、核对预览后入账。
 - **Polymarket**：填写 Polygon 上实际持有仓位的公开地址，无需签名、私钥或助记词。读取 Data API v2 的全部分页仓位、组合仓位和官方估值，并读取同区块的 Polygon pUSD 现金；数据完整、新鲜且核对一致后才允许入账。充值地址与持仓地址可能不同，不能将充值地址余额当作整个平台资产。pUSD 与仓位按独立 USDC/USD 报价估值，不硬编码稳定币等于 1 USD。
 - **Future.news**：Solana USDC 充值地址并非预测仓位地址。先在官方页面核对充值地址与所选交易账户的对应关系，再绑定该 Polygon 交易账户。复用其 Polymarket 上游的全部分页仓位、pUSD 链上现金和完整性核对，不筛选 BTC 系列；未到账充值不包含在内。相同交易地址不能在 Future 与 Polymarket 重复计入；断开后保留入账来源去重记录。
 - **OKX Web3 / TokenPocket**：使用用户明确指定的公开地址与网络。完整代币索引需要独立的 [OnchainOS Developer API 凭据](https://web3.okx.com/onchainos/dev-portal)，与交易所 Read Key 不同；只在安全表单填写 Key、Secret、Passphrase。本站白名单仅查询资产，不保存外部钱包私钥、助记词或签名材料，也不复制本机 Agentic 登录会话。未核实提供商存在强制只读 scope，因此不把本站只查询描述成密钥自身权限保证。

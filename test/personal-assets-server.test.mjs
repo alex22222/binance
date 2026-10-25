@@ -136,6 +136,10 @@ test("personal assets share Dashboard authentication and persist isolated review
     assert.equal(invalidCallback.status, 303);
     assert.equal(invalidCallback.headers.get("location"), "/assets?sync=futu-error");
     assert.equal(invalidCallback.headers.get("referrer-policy"), "no-referrer");
+    const accountRetry = "/api/assets/sync/futu/accounts";
+    assert.equal((await fetch(origin + accountRetry, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: "{}" })).status, 401);
+    assert.equal((await fetch(origin + accountRetry, { method: "POST", headers: { ...headers, Origin: "https://attacker.example", "Content-Type": "application/json" }, body: "{}" })).status, 403);
+    assert.equal((await fetch(origin + accountRetry, { method: "POST", headers: { ...headers, Origin: origin, "Content-Type": "application/json" }, body: "{}" })).status, 400);
     assert.equal(initial.revision, 0);
     assert.deepEqual(initial.portfolio.entries, []);
     assert.equal(initial.portfolio.accounts.length, PLATFORMS.length);

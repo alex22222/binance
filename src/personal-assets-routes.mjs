@@ -86,7 +86,7 @@ async function readAssetBody(request) {
 export async function handlePersonalAssetsRequest({ request, response, stateDir, requireAllowedOrigin }) {
   const path = new URL(request.url, "http://localhost").pathname;
   const assetApi = ["/api/assets", "/api/assets/snapshots", "/api/assets/rates/refresh", "/api/assets/funds/configure"].includes(path);
-  const syncAction = path.match(/^\/api\/assets\/sync\/(okx|futu|polymarket|future|okxweb3|tokenpocket|binanceagentic|okxagentic)\/(bind|connect|authorize|preview|apply|disconnect)$/);
+  const syncAction = path.match(/^\/api\/assets\/sync\/(okx|futu|polymarket|future|okxweb3|tokenpocket|binanceagentic|okxagentic)\/(bind|connect|authorize|accounts|preview|apply|disconnect)$/);
   const aiApi = ["/api/assets/ai", "/api/assets/ai/review", "/api/assets/ai/configure"].includes(path);
   const syncApi = path === "/api/assets/sync" || path === "/api/assets/sync/futu/callback" || syncAction;
   const file = files.get(path);

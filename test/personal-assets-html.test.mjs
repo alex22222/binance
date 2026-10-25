@@ -1016,6 +1016,30 @@ test("Futu callback opens sync and only confirms authorization using freshly rea
   assert.doesNotMatch(failed.get("asset-message").textContent, /授权已完成/);
 });
 
+test("Futu account-list failures retain the grant and offer a read-only retry without another login", async () => {
+  const initial = stateWith([entry()]);
+  const waiting = syncStatus({ futu: { connected: true, enabled: false, accounts: [], lastError: "富途账户列表读取未完成，请重试读取账户。" } });
+  const ready = syncStatus({ futu: { connected: true, enabled: false, accounts: [{ id: "123", label: "Synthetic real account" }], lastError: null } });
+  const ui = await view(initial, async url => syncResponse(url === "/api/assets" ? initial : url.endsWith("/accounts") ? ready : waiting), { search: "?sync=futu-error" });
+  assert.match(ui.get("dialog-body").innerHTML, /账户列表读取未完成/);
+  assert.match(ui.get("dialog-body").innerHTML, /重新读取账户/);
+  assert.doesNotMatch(ui.get("asset-message").textContent, /授权已完成/);
+  await ui.listeners.click({ target: { closest: () => ({ disabled: false, dataset: { action: "sync-futu-accounts" } }) } });
+  assert.equal(ui.requests.filter(v => v.url.endsWith("/accounts") && v.options.method === "POST").length, 1);
+  assert.equal(ui.requests.filter(v => v.url.endsWith("/authorize") || v.url.endsWith("/preview") || v.url.endsWith("/apply")).length, 0);
+  assert.equal(ui.navigations.length, 0); assert.equal(ui.run("state.revision"), 0);
+  assert.match(ui.get("dialog-body").innerHTML, /Synthetic real account/);
+  assert.equal(ui.run("syncState.providers.futu.enabled"), false);
+});
+
+test("a Futu callback success parameter cannot claim a usable account when the real list is empty", async () => {
+  const connected = syncStatus({ futu: { connected: true, enabled: false, accounts: [], lastError: "未返回可用的真实证券账户，请核对账户授权。" } });
+  const ui = await view(stateWith(), async url => syncResponse(url === "/api/assets" ? stateWith() : connected), { search: "?sync=futu-authorized" });
+  assert.doesNotMatch(ui.get("asset-message").textContent, /授权已完成/);
+  assert.match(ui.get("dialog-body").innerHTML, /未返回可用的真实证券账户/);
+  assert.match(ui.get("dialog-body").innerHTML, /重新读取账户/);
+});
+
 test("Polymarket connects a public address to an explicit local target without writing the ledger", async () => {
   const initial = stateWith();
   initial.portfolio.accounts = initial.portfolio.accounts.filter((account) => account.platform !== "Polymarket");

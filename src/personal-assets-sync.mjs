@@ -9,7 +9,7 @@ import { fetchOkxAssets } from "./personal-assets-okx.mjs";
 import { fetchPolymarketAssets } from "./personal-assets-polymarket.mjs";
 import { fetchWalletAssets } from "./personal-assets-wallets.mjs";
 import { valuePersonalAssetState } from "./personal-assets-fx.mjs";
-import { registerFutuClient, createFutuAuthorization, exchangeFutuCode, refreshFutuToken, fetchFutuAccounts, fetchFutuAssets } from "./personal-assets-futu.mjs";
+import { FutuAssetsError, registerFutuClient, createFutuAuthorization, exchangeFutuCode, refreshFutuToken, fetchFutuAccounts, fetchFutuAssets } from "./personal-assets-futu.mjs";
 
 const PROVIDERS = { okx: { id: "okx-exchange", platform: "OKX", name: "OKX · 交易所" }, futu: { id: "futu-hk", platform: "富途", name: "富途 · 证券账户" },
   polymarket: { id: "polymarket-main", platform: "Polymarket", name: "Polymarket · 资产账户" }, future: { id: "future-main", platform: "Future", name: "Future · Polygon 交易账户" },
@@ -588,6 +588,30 @@ async function applyPreview({ stateDir, data, provider, previewId, revision, now
   return assets;
 }
 
+const futuFailure = (stage, error) => `富途${stage}未完成：${error instanceof FutuAssetsError ? error.message : "请稍后重试，原资产记录已保留。"}`;
+
+async function readFutuAccountList(data, api, persist, clock) {
+  const value = data.providers.futu;
+  if (!value?.tokens) throw syncError("请先完成富途只读授权。");
+  let stage = "账户列表读取";
+  try {
+    if (Date.parse(value.tokens.expiresAt) <= clock().getTime() + 60_000) {
+      stage = "令牌刷新";
+      value.tokens = await api.refreshFutuToken({ clientId: data.futuClient.clientId, refreshToken: value.tokens.refreshToken, now: clock });
+      await persist(data);
+      stage = "账户列表读取";
+    }
+    value.accounts = await api.fetchFutuAccounts({ accessToken: value.tokens.accessToken });
+    value.lastError = value.accounts.length ? null : "未返回可用的真实证券账户，请在富途核对账户授权。";
+    if (value.preview && !value.accounts.some(account => account.id === value.preview.externalAccountId)) delete value.preview;
+    if (value.enabled && !value.accounts.some(account => account.id === value.externalAccountId)) value.enabled = false;
+  } catch (error) {
+    value.lastError = futuFailure(stage, error);
+    await persist(data);
+    throw error;
+  }
+}
+
 export async function performAssetSyncAction({ stateDir, provider, action, body = {}, sessionBinding = "", api = adapters, now, clock = now ? advancingClock(now) : () => new Date() }) {
   now ??= clock();
   if (!Object.hasOwn(PROVIDERS, provider)) throw syncError("不支持此同步平台。", 404);
@@ -696,6 +720,8 @@ export async function performAssetSyncAction({ stateDir, provider, action, body 
       if (target.origin !== "https://webapi.futunn.com" || target.pathname !== "/oauth2/authorize/confirm") throw syncError("富途授权地址校验失败。", 502);
       await persist(data);
       return { authorizationUrl };
+    } else if (provider === "futu" && action === "accounts") {
+      await readFutuAccountList(data, api, persist, clock);
     } else if (action === "preview") {
       const accountId = body.accountId || data.providers.futu?.externalAccountId;
       const previousAccountId = data.providers.futu?.externalAccountId || data.providers.futu?.preview?.externalAccountId;
@@ -714,18 +740,27 @@ export async function performAssetSyncAction({ stateDir, provider, action, body 
   });
 }
 
-export async function completeFutuAuthorization({ stateDir, query, sessionBinding = "", api = adapters, now = new Date() }) {
+export async function completeFutuAuthorization({ stateDir, query, sessionBinding = "", api = adapters, now, clock = now ? advancingClock(now) : () => new Date() }) {
   return locked(stateDir, async (data, persist) => {
     const pending = data.oauth;
-    if (!pending || !sessionBinding || typeof query.state !== "string" || digest(query.state) !== pending.stateHash || digest(sessionBinding) !== pending.bindingHash || Date.parse(pending.expiresAt) < now.getTime()) throw syncError("富途授权已过期或会话不匹配，请重新授权。", 403);
+    if (!pending || !sessionBinding || typeof query.state !== "string" || digest(query.state) !== pending.stateHash || digest(sessionBinding) !== pending.bindingHash || Date.parse(pending.expiresAt) < clock().getTime()) throw syncError("富途授权已过期或会话不匹配，请重新授权。", 403);
     delete data.oauth;
     await persist(data);
-    if (query.error || typeof query.code !== "string" || !query.code || query.code.length > 2000) throw syncError("富途授权未完成，请重新发起并仅选择读取权限。");
-    const tokens = await api.exchangeFutuCode({ clientId: data.futuClient.clientId, redirectUri: callbackUri, code: query.code, codeVerifier: pending.codeVerifier, now: () => now });
-    const accounts = await api.fetchFutuAccounts({ accessToken: tokens.accessToken });
-    data.providers.futu = { ...data.providers.futu, tokens, accounts, enabled: false, lastError: null };
+    let tokens;
+    try {
+      if (query.error || typeof query.code !== "string" || !query.code || query.code.length > 2000) throw new FutuAssetsError("富途授权未完成，请重新发起并仅选择读取权限。", 400);
+      tokens = await api.exchangeFutuCode({ clientId: data.futuClient.clientId, redirectUri: callbackUri, code: query.code, codeVerifier: pending.codeVerifier, now: clock });
+    } catch (error) {
+      data.providers.futu = { ...data.providers.futu, lastError: futuFailure("授权验证", error) };
+      await persist(data);
+      throw error;
+    }
+    data.providers.futu = { ...data.providers.futu, tokens, accounts: [], enabled: false, lastError: null };
+    delete data.providers.futu.preview;
     await persist(data);
-    return status(data, now);
+    await readFutuAccountList(data, api, persist, clock);
+    await persist(data);
+    return status(data, clock());
   });
 }
 
