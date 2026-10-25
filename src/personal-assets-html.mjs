@@ -33,6 +33,7 @@ const SETTINGS_MENU = `<div class="settings-menu"><button type="button" class="s
   + `<button type="button" class="settings-item primary" role="menuitem" data-action="import" data-needs-data disabled>${icon('<path d="M12 15V3M7 8l5-5 5 5M5 21h14"/>')}导入资产</button>`
   + `<button type="button" class="settings-item" role="menuitem" data-action="sync" data-needs-data disabled>${icon('<path d="M21 12a9 9 0 0 1-15.5 6.3L3 16M3 12a9 9 0 0 1 15.5-6.3L21 8M21 3v5h-5M3 21v-5h5"/>')}只读同步</button>`
   + `<button type="button" class="settings-item" role="menuitem" data-action="export" data-needs-data disabled>${icon('<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>')}导出备份</button>`
+  + `<button type="button" class="settings-item" role="menuitem" data-action="ai-settings">${icon('<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2M16 7l3 3M18.5 4.5l2 2"/>')}Moonshot 配置</button>`
   + `<button type="button" class="settings-item" role="menuitem" id="theme-toggle" aria-pressed="false">${icon('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>')}<span id="theme-toggle-label">明亮模式</span></button>`
   + `</div></div>`;
 
@@ -45,7 +46,7 @@ export function personalAssetsHtml({ nonce }) {
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<title>个人资产 · Agentic Wallet</title>
+<title>个人资产 · HQ Capital</title>
 <script nonce="${safeNonce}">{let theme="light";try{if(localStorage.getItem("assets-theme")==="dark")theme="dark"}catch{}document.documentElement.dataset.theme=theme}</script>
 <style>
 ${SITE_CSS}
@@ -92,7 +93,7 @@ ${siteHeader("/assets", SETTINGS_MENU)}
   <div id="asset-message" role="status" aria-live="polite" hidden></div>
   <div id="asset-error" role="alert" hidden></div>
   <div id="asset-content"><div class="loading" role="status">正在读取你的资产记录…</div></div>
-  <footer class="asset-footer"><span>手动录入 / 只读同步 · 首次核对后更新 · 无自动交易</span><span>Agentic Wallet / 个人资产工作台</span></footer>
+  <footer class="asset-footer"><span>手动录入 / 只读同步 · 首次核对后更新 · 无自动交易</span><span>HQ Capital / 个人资产工作台</span></footer>
 </main>
 <dialog id="asset-dialog" aria-labelledby="dialog-title"><header class="dialog-header"><div><h2 id="dialog-title"></h2><p id="dialog-description"></p></div><button type="button" data-action="close-dialog" aria-label="关闭窗口">×</button></header><div class="dialog-body" id="dialog-body"></div><footer class="dialog-footer" id="dialog-footer"></footer></dialog>
 <script type="module" nonce="${safeNonce}" src="/assets/app.mjs"></script>

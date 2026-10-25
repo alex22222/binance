@@ -85,6 +85,18 @@ async function readAssetBody(request) {
 // Called only after the Dashboard's shared authentication gate.
 export async function handlePersonalAssetsRequest({ request, response, stateDir, requireAllowedOrigin }) {
   const path = new URL(request.url, "http://localhost").pathname;
+  // The site lands on personal assets. The trading dashboard moved to
+  // /dashboard, but the Dashboard entry's own "/" route (which the
+  // authorization loader extends) still renders it, so hand the request back.
+  if (request.method === "GET" && path === "/") {
+    response.writeHead(302, { Location: "/assets", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+    response.end();
+    return true;
+  }
+  if (request.method === "GET" && ["/dashboard", "/dashboard/"].includes(path)) {
+    request.url = "/";
+    return false;
+  }
   const assetApi = ["/api/assets", "/api/assets/snapshots", "/api/assets/rates/refresh", "/api/assets/funds/configure"].includes(path);
   const syncAction = path.match(/^\/api\/assets\/sync\/(okx|futu|polymarket|future|okxweb3|tokenpocket|binanceagentic|okxagentic)\/(bind|connect|authorize|accounts|preview|apply|disconnect)$/);
   const aiApi = ["/api/assets/ai", "/api/assets/ai/review", "/api/assets/ai/configure"].includes(path);

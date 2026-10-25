@@ -68,7 +68,7 @@ async function view(initial = stateWith(), handleRequest = null, { search = "", 
 
 test("mounts a native assets page in the shared shell and safely quotes the CSP nonce", () => {
   const html = personalAssetsHtml({ nonce: 'test"><script>alert(1)</script>' });
-  assert.match(html, /Agentic Wallet/);
+  assert.match(html, /<title>个人资产 · HQ Capital<\/title>/);
   assert.match(html, /<dialog id="asset-dialog" aria-labelledby="dialog-title">/);
   assert.match(html, /type="module" nonce="test&quot;&gt;&lt;script&gt;alert\(1\)&lt;\/script&gt;" src="\/assets\/app\.mjs"/);
   assert.doesNotMatch(html, /<script>alert\(1\)<\/script>|react|cdn\./i);
@@ -834,6 +834,7 @@ test("page tools sit in a gear menu in the top bar and the eye beside the total 
   assert.match(actions, /id="settings-toggle" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-panel" aria-label="设置"/);
   assert.match(actions, /id="settings-panel" role="menu"[^>]* hidden>/);
   for (const action of ["import", "sync", "export"]) assert.match(actions, new RegExp(`role="menuitem" data-action="${action}" data-needs-data disabled>`));
+  assert.match(actions, /role="menuitem" data-action="ai-settings">[\s\S]*?Moonshot 配置<\/button>/);
   assert.match(actions, /role="menuitem" id="theme-toggle"/);
   assert.doesNotMatch(html.match(/<header class="asset-head">[\s\S]*?<\/header>/)[0], /<button[^>]*(data-action|privacy-toggle|theme-toggle)/);
   assert.doesNotMatch(actions, /privacy-toggle/);
@@ -1428,6 +1429,17 @@ test("Moonshot configuration clears secrets immediately and preserves assets whe
  assert.equal(ui.run("state.revision"),3);
  assert.match(ui.get("dialog-error").innerHTML,/认证失败/);
  assert.equal(ui.requests.some(row=>row.options.method==="PUT"),false);
+});
+
+test("Moonshot configuration opens from the settings menu instead of the review panel", async () => {
+  const ui = await view(displayState(), null, { aiHandler: async () => syncResponse({ configured: false, status: "unconfigured", review: null }) });
+  const content = ui.get("asset-content").innerHTML;
+  assert.match(content, /AI 资产点评/);
+  assert.doesNotMatch(content, /data-action="ai-settings"|配置 Moonshot<\/button>/);
+  assert.match(content, /设置 → Moonshot 配置/);
+  await ui.listeners.click({ target: { closest: () => ({ dataset: { action: "ai-settings" }, disabled: false }) } });
+  assert.match(ui.get("dialog-title").textContent, /Moonshot/);
+  assert.match(ui.get("dialog-body").innerHTML, /id="ai-api-key" type="password"/);
 });
 
 

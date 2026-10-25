@@ -1,6 +1,14 @@
 # 个人资产页面
 
-入口：Binance Dashboard 顶部 **个人资产**，路径 `/assets`。
+入口：站点首页 `/` 登录后跳转到这里，顶部导航 **个人资产** 也指向这里，路径 `/assets`。顶部品牌为 **HQ Capital**。
+
+原来在 `/` 的币安 Agent Wallet 交易看板改为 `/dashboard`，导航「币安Agent Wallet」指向新地址。交易看板页面属于 Live 代码身份，仍由 Dashboard 入口原有的 `/` 路由渲染：资产路由只把 `/dashboard` 交回该路由，不改入口文件和授权固定哈希。因此：
+
+- 机器人飞书消息里的「打开手机 Dashboard」仍是站点首页链接，打开后先到个人资产页；
+- 未登录直接打开 `/dashboard` 会收到 401（浏览器弹出登录框），而不是跳转 `/login`；登录后回到首页，即个人资产页；
+- 登录页、交易看板等页面的浏览器标题仍写 Agentic Wallet。
+
+改这三处需要修改 Dashboard 入口或 `src/` 交易代码，须另行审核。
 
 ## 总览布局与股票盈亏
 
@@ -138,7 +146,7 @@ node --test --test-timeout=30000 test/*.test.mjs
 - 每日北京时间 23:55 由 `binance-personal-assets-daily-snapshot.timer` 保存一份。服务停机恢复时只保存实际运行当日，不伪造缺失日期；同一北京日并发或重复执行幂等。快照冻结当时已入账资产、自动汇率和只读来源覆盖；未更新账户仍为旧记录，不声称日终实时市值。既有历史不删除，沿用 500 份上限，到限会明确失败并保留数据。
 - `scripts/snapshot-personal-assets.mjs` 可由同一专用服务用户执行验收；它不修改资产金额和修订号，不读取外部钱包登录会话。
 - 每次打开页面读取／请求今日点评；普通资产轮询不触发 AI。按北京时间每天最多发起一次 Moonshot 上游请求，失败也消耗当天次数；重复打开、重新点评、换 Key、并发或重启不能增加额度。未配置、未发起上游请求不消耗次数。保留旧点评的真实供应商、生成日期及资产版本，数据变化时明确旧版本。
-- 「AI 资产点评 → 配置 Moonshot」调用受登录、同源与 JSON 约束的 `/api/assets/ai/configure`。Moonshot API Key 仅存 `state/personal-assets-ai-moonshot.json`（0600）；旧 OpenAI 配置与历史点评保留，不作为 Moonshot 凭据复用。`personal-assets-ai-attempts/` 以私有每日凭证限制调用，部署、换 Key 和回滚都不能删除或重置此目录。Key 不进浏览器存储、备份导出、快照或日志。
+- 右上角「设置 → Moonshot 配置」（不再放在 AI 资产点评卡片里）调用受登录、同源与 JSON 约束的 `/api/assets/ai/configure`。Moonshot API Key 仅存 `state/personal-assets-ai-moonshot.json`（0600）；旧 OpenAI 配置与历史点评保留，不作为 Moonshot 凭据复用。`personal-assets-ai-attempts/` 以私有每日凭证限制调用，部署、换 Key 和回滚都不能删除或重置此目录。Key 不进浏览器存储、备份导出、快照或日志。
 - 使用 [Moonshot 中国区 Chat Completions API](https://platform.kimi.com/docs/guide/kimi-k3-1-pro-quickstart)，模型 `kimi-k3.1-pro`，低推理、最多 2400 completion tokens、无工具调用、无重试或供应商回退。只发送平台、资产类型、报表币种的汇总金额和数据覆盖/时间；不发送账户名、持仓名、备注、钱包地址、截图或其他平台凭据。点评按 CNY，区分部分估值、未同步与陈旧数据，不把快照变化当收益，不生成交易指令。真实点评须在用户安全填写 Key 后验收。
 - 新增「币安Agentic Wallet」「OKX Agentic Wallet」平台选项，与交易所、Web3 账户分别记录；新增选项不自动登录或绑定外部钱包。
 

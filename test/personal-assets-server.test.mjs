@@ -49,6 +49,19 @@ test("personal assets share Dashboard authentication and persist isolated review
     assert.match(page.headers.get("content-security-policy"), /wasm-unsafe-eval/);
     const html = await page.text();
     assert.match(html, /href="\/assets" aria-current="page"/);
+    const landing = await fetch(`${origin}/`, { headers, redirect: "manual" });
+    assert.equal(landing.status, 302);
+    assert.equal(landing.headers.get("location"), "/assets");
+    assert.equal(landing.headers.get("cache-control"), "no-store");
+    for (const path of ["/dashboard", "/dashboard/"]) {
+      const dashboard = await fetch(origin + path, { headers, redirect: "manual" });
+      assert.equal(dashboard.status, 200, path);
+      assert.equal(dashboard.headers.get("cache-control"), "no-store", path);
+      const dashboardHtml = await dashboard.text();
+      assert.match(dashboardHtml, /<a href="\/dashboard" aria-current="page">币安Agent Wallet<\/a>/, path);
+      assert.match(dashboardHtml, /id="autoApprovalToggle"/, path);
+    }
+    assert.equal((await fetch(`${origin}/dashboard`, { redirect: "manual" })).status, 401);
     assert.match(html, /个人资产/);
     assert.match(html, /\/assets\/app\.mjs/);
     const core = await fetch(`${origin}/assets/core.mjs`, { headers });

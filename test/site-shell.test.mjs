@@ -24,17 +24,22 @@ test("light is the default theme, dark stays behind data-theme, and dark-era pag
   const fixes = SITE_CSS.split("\n").filter((line) => line.includes("body:has("));
   assert.ok(fixes.length > 20);
   for (const line of fixes) {
-    assert.match(line, /^html:not\(\[data-theme=dark\]\) body:has\((\.site-nav a\[aria-current\]\[href="(\/|\/strategies|\/fund-manager|\/btc-radar)"\]|form\[action="\/login"\])\)/, line);
+    assert.match(line, /^html:not\(\[data-theme=dark\]\) body:has\((\.site-nav a\[aria-current\]\[href="(\/dashboard|\/strategies|\/fund-manager|\/btc-radar)"\]|form\[action="\/login"\])\)/, line);
   }
 });
 
-test("navigation leads with personal assets and names the Binance wallet without changing its route", () => {
-  const html = siteHeader("/");
-  const links = [...html.matchAll(/<a href="([^"]+)"(?: aria-current="page")?>([^<]+)<\/a>/g)]
-    .map(([, href, label]) => [href, label]);
-  assert.deepEqual(links.slice(0, 2), [["/assets", "个人资产"], ["/", "币安Agent Wallet"]]);
-  assert.match(html, /<a href="\/" aria-current="page">币安Agent Wallet<\/a>/);
-  assert.match(html, /class="site-name">Agentic Wallet<\/span>/);
+test("navigation leads with personal assets and moves the Binance wallet to /dashboard", () => {
+  for (const active of ["/", "/dashboard"]) {
+    const html = siteHeader(active);
+    const links = [...html.matchAll(/<a href="([^"]+)"(?: aria-current="page")?>([^<]+)<\/a>/g)]
+      .map(([, href, label]) => [href, label]);
+    assert.deepEqual(links.slice(0, 2), [["/assets", "个人资产"], ["/dashboard", "币安Agent Wallet"]], active);
+    assert.match(html, /<a href="\/dashboard" aria-current="page">币安Agent Wallet<\/a>/, active);
+    assert.equal(html.match(/aria-current="page"/g)?.length, 1, active);
+  }
+  const html = siteHeader("/assets");
+  assert.match(html, /<a class="site-brand" href="\/"><span class="site-mark" aria-hidden="true">H<\/span><span class="site-name">HQ Capital<\/span><\/a>/);
+  assert.doesNotMatch(html, /Agentic Wallet<\/span>/);
 });
 
 test("polymarket is a plain external navigation link, not an embedded or authenticated integration", () => {
@@ -47,7 +52,7 @@ test("polymarket is a plain external navigation link, not an embedded or authent
 
 test("every dashboard page uses the shared shell with the right section highlighted", () => {
   const pages = [
-    ["/", liveDashboardHtml()],
+    ["/dashboard", liveDashboardHtml()],
     ["/strategies", strategyLabHtml()],
     ["/reviews", tradeReviewHtml()],
     ["/fund-manager", fundManagerHtml({ date: null })],

@@ -5,7 +5,7 @@
 
 export const SITE_NAV = Object.freeze([
   ["/assets", "个人资产"],
-  ["/", "币安Agent Wallet"],
+  ["/dashboard", "币安Agent Wallet"],
   ["/strategies", "策略"],
   ["/reviews", "复盘"],
   ["/fund-manager", "基金经理"],
@@ -16,11 +16,14 @@ export const SITE_NAV = Object.freeze([
 
 // `actions` is page-owned trusted markup shown on the right of the bar.
 export function siteHeader(active, actions = "") {
+  // "/" now lands on personal assets and the trading dashboard lives at
+  // /dashboard, but that page (part of the Live code identity) still says "/".
+  const current = active === "/" ? "/dashboard" : active;
   const links = SITE_NAV
-    .map(([href, label]) => `<a href="${href}"${href === active ? ' aria-current="page"' : ""}>${label}</a>`)
+    .map(([href, label]) => `<a href="${href}"${href === current ? ' aria-current="page"' : ""}>${label}</a>`)
     .join("");
   return `<header class="site-header"><div class="site-bar">`
-    + `<a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">A</span><span class="site-name">Agentic Wallet</span></a>`
+    + `<a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">H</span><span class="site-name">HQ Capital</span></a>`
     + `<nav class="site-nav" aria-label="主导航">${links}</nav>`
     + (actions ? `<div class="site-actions">${actions}</div>` : "")
     + `</div></header>`;
@@ -52,23 +55,23 @@ const DARK_TOKENS = `color-scheme:dark;
 // :not([data-theme=dark]) prefix also outranks the page's own later rules.
 const onPage = (href) => `html:not([data-theme=dark]) body:has(.site-nav a[aria-current][href="${href}"])`;
 const PAGE_LIGHT_CSS = `
-${onPage("/")} :is(.panel,.approval-summary){border-color:var(--line);background:var(--surface)}
-${onPage("/")} .wallet-login{border-color:rgba(217,45,58,.4)}
-${onPage("/")} :is(.top-asset-trend,.top-stat,.signal-ticker,.policy-item){background:var(--surface);border-color:var(--line);box-shadow:none}
-${onPage("/")} :is(.badge,.section-refresh,.signal-stage:not(.failed,.passed,.pending),.signal-table-head,.timeline-filters,.approval-addresses,.event-raw pre,.workflow-step){background:var(--surface-2)}
-${onPage("/")} .workflow-step.active{background:var(--gold-soft)}
-${onPage("/")} .approval-count{background:var(--surface-3)}
-${onPage("/")} :is(.control-button:not(.stop,.resume,.auto-on),.section-refresh):hover{border-color:var(--faint);background:var(--surface-3)}
-${onPage("/")} :is(.asset-trend-tooltip,.signal-stage-tooltip){background:rgba(255,255,255,.97);box-shadow:var(--shadow)}
-${onPage("/")} :is(.approval-button.reject,.control-button.auto-on,.control-button.stop){color:var(--red)}
-${onPage("/")} :is(.signal-strong,.has-approval .approval-count,.wallet-login a,.approval-button.approve){color:#fff}
-${onPage("/")} .approval-check{color:#7a5410}
-${onPage("/")} :is(.lead,.event time,.event-raw){color:var(--muted)}
-${onPage("/")} :is(.signal,.signal-journey){border-color:var(--line-soft)}
-${onPage("/")} .signal:hover{background:rgba(0,122,255,.04)}
-${onPage("/")} .timeline-filter.active{background:var(--surface);box-shadow:0 1px 3px rgba(23,23,33,.12)}
-${onPage("/")} .section-head::after{background:linear-gradient(90deg,var(--line),transparent)}
-${onPage("/")} .empty{background:none}
+${onPage("/dashboard")} :is(.panel,.approval-summary){border-color:var(--line);background:var(--surface)}
+${onPage("/dashboard")} .wallet-login{border-color:rgba(217,45,58,.4)}
+${onPage("/dashboard")} :is(.top-asset-trend,.top-stat,.signal-ticker,.policy-item){background:var(--surface);border-color:var(--line);box-shadow:none}
+${onPage("/dashboard")} :is(.badge,.section-refresh,.signal-stage:not(.failed,.passed,.pending),.signal-table-head,.timeline-filters,.approval-addresses,.event-raw pre,.workflow-step){background:var(--surface-2)}
+${onPage("/dashboard")} .workflow-step.active{background:var(--gold-soft)}
+${onPage("/dashboard")} .approval-count{background:var(--surface-3)}
+${onPage("/dashboard")} :is(.control-button:not(.stop,.resume,.auto-on),.section-refresh):hover{border-color:var(--faint);background:var(--surface-3)}
+${onPage("/dashboard")} :is(.asset-trend-tooltip,.signal-stage-tooltip){background:rgba(255,255,255,.97);box-shadow:var(--shadow)}
+${onPage("/dashboard")} :is(.approval-button.reject,.control-button.auto-on,.control-button.stop){color:var(--red)}
+${onPage("/dashboard")} :is(.signal-strong,.has-approval .approval-count,.wallet-login a,.approval-button.approve){color:#fff}
+${onPage("/dashboard")} .approval-check{color:#7a5410}
+${onPage("/dashboard")} :is(.lead,.event time,.event-raw){color:var(--muted)}
+${onPage("/dashboard")} :is(.signal,.signal-journey){border-color:var(--line-soft)}
+${onPage("/dashboard")} .signal:hover{background:rgba(0,122,255,.04)}
+${onPage("/dashboard")} .timeline-filter.active{background:var(--surface);box-shadow:0 1px 3px rgba(23,23,33,.12)}
+${onPage("/dashboard")} .section-head::after{background:linear-gradient(90deg,var(--line),transparent)}
+${onPage("/dashboard")} .empty{background:none}
 ${onPage("/strategies")} .badge{color:var(--blue);border-color:rgba(0,122,255,.25);background:var(--blue-soft)}
 ${onPage("/strategies")} .badge.gold{color:var(--gold);border-color:rgba(183,121,31,.3);background:var(--gold-soft)}
 ${onPage("/strategies")} .badge.green{color:var(--green);border-color:rgba(31,157,85,.3);background:var(--green-soft)}
