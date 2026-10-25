@@ -78,7 +78,7 @@ test("mounts a native assets page in the shared shell and safely quotes the CSP 
 test("loads the real API and shows all supported empty platforms without invented zero balances", async () => {
   const ui = await view();
   assert.equal(ui.requests[0].url, "/api/assets");
-  assert.match(ui.get("asset-content").innerHTML, /尚未录入真实金额/);
+  assert.match(ui.get("asset-content").innerHTML, /暂无可绘制的资产类型金额/);
   for (const platform of core.PLATFORMS) assert.ok(ui.get("asset-content").innerHTML.includes(platform));
   assert.equal((ui.get("asset-content").innerHTML.match(/class="platform-number">—/g) || []).length, core.PLATFORMS.length);
   assert.doesNotMatch(ui.get("asset-content").innerHTML, /¥<\/small>0\.00/);
@@ -163,6 +163,10 @@ function displayState() {
   initial.fx = { mode: "automatic", status: "fresh", fetchedAt: "2026-10-24T12:00:00.000Z", source: "Coinbase", rates: { USD: { value: 7, date: entry().asOf, asOf: null, fetchedAt: "2026-10-24T12:00:00.000Z", timeBasis: "retrieved", source: "Coinbase" } } };
   return initial;
 }
+// The overview total lives in the centre of the asset-type pie.
+function pieTotal(currency, amount) {
+  return new RegExp(`已核算资产 · ${currency}</text><text[^>]*class="type-pie-total">${amount.replace(/[.$]/g, "\\$&")}</text>`);
+}
 function clickCurrency(ui, currency) { return ui.listeners.click({ target: { closest: () => ({ disabled: false, dataset: { action: "display-currency", currency } }) } }); }
 
 test("currency buttons convert every current view without changing ratios, original amounts, ledger revision or snapshot values", async () => {
@@ -174,7 +178,7 @@ test("currency buttons convert every current view without changing ratios, origi
   await clickCurrency(ui, "USD");
   const html = ui.get("asset-content").innerHTML;
   assert.match(html, /data-currency="USD" aria-pressed="true"/);
-  assert.match(html, /<small>\$<\/small>150\.00/);
+  assert.match(html, pieTotal("USD", "150.00"));
   assert.match(html, /USD 100\.00/);
   assert.match(html, /已核算资产 · USD/);
   assert.match(html, /折合 USD 100\.00/);
@@ -201,7 +205,7 @@ test("currency buttons convert every current view without changing ratios, origi
   assert.equal(ui.run("state.portfolio.entries[0].amount"), 700);
   ui.run('page="overview"; render()');
   await clickCurrency(ui, "CNY");
-  assert.match(ui.get("asset-content").innerHTML, /<small>¥<\/small>1,050\.00/);
+  assert.match(ui.get("asset-content").innerHTML, pieTotal("CNY", "1,050.00"));
   assert.match(ui.get("asset-message").textContent, /重新折合 CNY/);
   assert.equal(ui.requests.filter((item) => item.url === "/api/assets/rates/refresh").length, 2);
   assert.equal(ui.requests.filter((item) => item.options.method === "PUT").length, 0);
@@ -216,11 +220,11 @@ test("USD switching uses the existing quote immediately and reprices after the r
   const ui = await view(initial, async (url) => url.endsWith("/rates/refresh") ? new Promise((resolve) => { release = () => resolve(syncResponse(latest)); }) : syncResponse(initial));
   ui.run('openEntry(); draft.amount=123; draft.currency="CNY"');
   const pending = clickCurrency(ui, "USD");
-  assert.match(ui.get("asset-content").innerHTML, /<small>\$<\/small>150\.00/);
+  assert.match(ui.get("asset-content").innerHTML, pieTotal("USD", "150.00"));
   assert.equal(ui.run("draft.amount"), 123);
   release();
   await pending;
-  assert.match(ui.get("asset-content").innerHTML, /<small>\$<\/small>105\.00/);
+  assert.match(ui.get("asset-content").innerHTML, pieTotal("USD", "105.00"));
   assert.equal(ui.run("draft.amount"), 123);
   assert.equal(ui.run("modal"), "manual");
   assert.equal(ui.run("state.revision"), 3);
@@ -234,12 +238,12 @@ test("missing USD FX never relabels a CNY value and users can switch back to CNY
   const ui = await view(initial);
   await clickCurrency(ui, "USD");
   const html = ui.get("asset-content").innerHTML;
-  assert.match(html, /<small>\$<\/small>—/);
+  assert.match(html, pieTotal("USD", "—"));
   assert.match(html, /USD\/CNY 自动汇率暂不可用/);
   assert.doesNotMatch(html, /USD 1,050\.00|USD 700\.00|USD 350\.00/);
   assert.match(html, /折合 USD 待换算/);
   await clickCurrency(ui, "CNY");
-  assert.match(ui.get("asset-content").innerHTML, /<small>¥<\/small>1,050\.00/);
+  assert.match(ui.get("asset-content").innerHTML, pieTotal("CNY", "1,050.00"));
 });
 
 test("invalid or overflowing USD exchange rates never produce a numeric USD valuation", async () => {
@@ -247,7 +251,7 @@ test("invalid or overflowing USD exchange rates never produce a numeric USD valu
   for (const value of ["0", "-7", "NaN", "Infinity", '"7"', "1e10", "Number.MIN_VALUE"]) {
     ui.run(`displayCurrency="USD"; state.portfolio.rates.USD.value=${value}; render()`);
     assert.equal(ui.run("displayValue(1050)"), null);
-    assert.match(ui.get("asset-content").innerHTML, /<small>\$<\/small>—/);
+    assert.match(ui.get("asset-content").innerHTML, pieTotal("USD", "—"));
     assert.doesNotMatch(ui.get("asset-content").innerHTML, /USD (?:1,050\.00|700\.00|350\.00|NaN|Infinity|∞)/);
   }
 });
@@ -256,18 +260,18 @@ test("display currency preference is local, restores safely and amount privacy a
   const writes = [];
   const storage = { getItem: () => "USD", setItem: (key, value) => writes.push([key, value]) };
   const ui = await view(displayState(), null, { storage });
-  assert.match(ui.get("asset-content").innerHTML, /<small>\$<\/small>150\.00/);
+  assert.match(ui.get("asset-content").innerHTML, pieTotal("USD", "150.00"));
   ui.run("hidden=true; render()");
   assert.doesNotMatch(ui.get("asset-content").innerHTML, /150\.00|100\.00|50\.00|66\.7%|700\.00/);
   await clickCurrency(ui, "CNY");
   assert.deepEqual(writes, [["personal-assets-display-currency", "CNY"]]);
   const unavailable = { getItem() { throw new Error("unavailable"); }, setItem() { throw new Error("unavailable"); } };
   const noStorage = await view(displayState(), null, { storage: unavailable });
-  assert.match(noStorage.get("asset-content").innerHTML, /<small>¥<\/small>1,050\.00/);
+  assert.match(noStorage.get("asset-content").innerHTML, pieTotal("CNY", "1,050.00"));
   await clickCurrency(noStorage, "USD");
-  assert.match(noStorage.get("asset-content").innerHTML, /<small>\$<\/small>150\.00/);
+  assert.match(noStorage.get("asset-content").innerHTML, pieTotal("USD", "150.00"));
   const invalidStorage = await view(displayState(), null, { storage: { getItem: () => "BTC" } });
-  assert.match(invalidStorage.get("asset-content").innerHTML, /<small>¥<\/small>1,050\.00/);
+  assert.match(invalidStorage.get("asset-content").innerHTML, pieTotal("CNY", "1,050.00"));
 });
 
 test("a load failure remains distinct from an empty portfolio", async () => {
@@ -530,7 +534,7 @@ test("daily page refresh reads only visible pages without pending drafts, writes
   assert.equal(ui.requests.at(-1).options.method, undefined);
 });
 
-test("overview leads with total, floating stock PnL and distributions before AI and collapsed source details", async () => {
+test("overview leads with the asset-type panel holding total, currency, privacy and stock PnL before AI and collapsed source details", async () => {
   const initial = stateWith([entry({ amount: 500 })]);
   initial.portfolio.stockPnl = [{ accountId: "account-1", amount: -123.45, currency: "CNY", asOf: entry().asOf, source: "screenshot", asOfBasis: "imported" }];
   const ui = await view(initial);
@@ -538,11 +542,11 @@ test("overview leads with total, floating stock PnL and distributions before AI 
   assert.match(html, /股票浮动盈亏[\s\S]*-123\.45/);
   assert.match(html, /已含在当前市值中，不重复加减/);
   assert.match(html, /截图核对[\s\S]*截图时点未核实/);
-  assert.ok(html.indexOf('class="metrics"') < html.indexOf('aria-label="资产类型"'));
-  assert.ok(html.indexOf('aria-label="资产类型"') < html.indexOf('aria-label="AI 资产点评"'));
+  const order = ['aria-label="资产类型"', 'class="currency-toggle"', 'id="privacy-toggle"', 'class="type-pie-total">500.00<', 'class="stock-pnl"', 'aria-label="平台分布"', 'aria-label="AI 资产点评"'].map((marker) => html.indexOf(marker));
+  assert.ok(order.every((index, position) => index > (position ? order[position - 1] : -1)), JSON.stringify(order));
+  assert.doesNotMatch(html, /class="metrics"|已录入账户 \/ 全部账户|自动更新计划|管理只读同步 →/);
   assert.match(html, /<details class="source-details">/);
-  assert.match(html, /07:00/);
-  assert.match(html, /每天一次/);
+  assert.match(html, /每天 07:00/);
   assert.equal(ui.run("summarize(portfolio()).total"), 500);
   ui.run("hidden=true;render()");
   assert.doesNotMatch(ui.get("asset-content").innerHTML, /123\.45|500\.00/);
@@ -848,8 +852,8 @@ test("page tools sit in a gear menu in the top bar and the eye beside the total 
   await ui.listeners.click({ target: { closest: () => null } });
   assert.equal(panel.hidden, true);
 
-  const total = () => ui.get("asset-content").innerHTML.match(/<div class="total-line">[\s\S]*?<\/button><\/div>/)[0];
-  assert.match(total(), /1,234\.56[\s\S]*id="privacy-toggle" aria-pressed="false" aria-label="隐藏金额"/);
+  const total = () => ui.get("asset-content").innerHTML.match(/<section class="panel" aria-label="资产类型"[\s\S]*?<\/section>/)[0];
+  assert.match(total(), /id="privacy-toggle" aria-pressed="false" aria-label="隐藏金额"[\s\S]*1,234\.56/);
   await ui.listeners.click({ target: { closest: () => ({ id: "privacy-toggle", dataset: {} }) } });
   assert.match(total(), /id="privacy-toggle" aria-pressed="true" aria-label="显示金额"/);
   assert.doesNotMatch(total(), /1,234\.56/);
@@ -1296,12 +1300,12 @@ test("applied partial valuation changes overview coverage and preserves unknown 
   initial.sync = walletStatus({ connected: true, enabled: true, lastAppliedAt: "2026-10-24T12:00:00Z", lastValuationComplete: false, lastUnpricedAssets: [unpricedFixture()] });
   const ui = await view(initial);
   const html = ui.get("asset-content").innerHTML;
-  assert.match(html, /已核算资产 · 部分估值/);
-  assert.match(html, /<small>¥<\/small>—/);
+  assert.match(html, /<h2>资产类型 <span class="pill">部分估值<\/span><\/h2>/);
+  assert.match(html, /暂无可绘制的资产类型金额/);
   assert.match(html, /1 项未估值/);
   assert.match(html, /协议资产待核实/);
   assert.match(html, /1 \/ 1 个已录入账户完成首次同步/);
-  assert.doesNotMatch(html, /尚未录入真实金额|<small>¥<\/small>0\.00/);
+  assert.doesNotMatch(html, /type-pie-total">0\.00</);
   const card = ui.run('platformCard("OKX",4,summarize(portfolio()))');
   assert.match(card, /已记录未估值资产/);
   assert.doesNotMatch(card, /尚未录入|USD 0\.00|CNY 0\.00/);
@@ -1318,8 +1322,8 @@ test("partial priced ledgers keep chart totals numeric and exports disclose thei
   initial.sync = walletStatus({ connected: false, enabled: false, lastAppliedAt: "2026-10-24T12:00:00Z", lastValuationComplete: false, lastUnpricedAssets: [unpricedFixture()] });
   const ui = await view(initial);
   assert.equal(ui.run("summarize(portfolio()).total"), 50);
-  assert.match(ui.get("asset-content").innerHTML, /已核算资产 · 部分估值/);
-  assert.match(ui.get("asset-content").innerHTML, /<small>¥<\/small>50\.00/);
+  assert.match(ui.get("asset-content").innerHTML, /<h2>资产类型 <span class="pill">部分估值<\/span><\/h2>/);
+  assert.match(ui.get("asset-content").innerHTML, /class="type-pie-total">50\.00</);
   ui.run('page="analysis"; render()');
   assert.match(ui.get("asset-content").innerHTML, /仅含已定价/);
   ui.run("openExport()");
@@ -1364,7 +1368,7 @@ test("applying an unknown-only wallet preview adopts its source metadata without
   assert.equal(ui.run("state.revision"), 1);
   assert.equal(ui.run("state.portfolio.entries.length"), 0);
   assert.equal(ui.run("state.sync.providers.okxweb3.lastValuationComplete"), false);
-  assert.match(ui.get("asset-content").innerHTML, /<small>¥<\/small>—/);
+  assert.match(ui.get("asset-content").innerHTML, /暂无可绘制的资产类型金额/);
   assert.match(ui.get("dialog-body").innerHTML, /自动同步已开启/);
 });
 
@@ -1382,7 +1386,7 @@ test("disconnected wallet cards retain the last applied unknown quantities and t
   assert.match(card, /上次入账网络范围/);
   assert.match(card, /id="sync-okxweb3-key" type="password"/);
   assert.doesNotMatch(card, /自动同步已开启|data-action="sync-apply"|<img/);
-  assert.match(ui.get("asset-content").innerHTML, /<small>¥<\/small>—/);
+  assert.match(ui.get("asset-content").innerHTML, /暂无可绘制的资产类型金额/);
   assert.equal(ui.requests.filter((item) => item.options.method).length, 0);
   ui.run("hidden=true; renderSync()");
   const hiddenCard = ui.run('syncProviderCard("okxweb3")');
@@ -1397,13 +1401,13 @@ test("HKD base uses the current quote across views and preserves native records 
   const ui = await view(initial);
   await clickCurrency(ui, "HKD");
   assert.match(ui.get("asset-content").innerHTML, /data-currency="HKD" aria-pressed="true"/);
-  assert.match(ui.get("asset-content").innerHTML, /<small>HK\$<\/small>1,200\.00/);
+  assert.match(ui.get("asset-content").innerHTML, pieTotal("HKD", "1,200.00"));
   ui.run('page="holdings"; render()');
   assert.match(ui.get("asset-content").innerHTML, /<th>折合 HKD<\/th>/);
   assert.equal(ui.run("state.revision"), 3);
   assert.equal(ui.run("state.portfolio.entries[0].amount"), 700);
   ui.run('delete state.portfolio.rates.HKD; page="overview"; render()');
-  assert.match(ui.get("asset-content").innerHTML, /<small>HK\$<\/small>—/);
+  assert.match(ui.get("asset-content").innerHTML, pieTotal("HKD", "—"));
   assert.match(ui.get("asset-content").innerHTML, /HKD\/CNY 自动汇率暂不可用/);
   const restored = await view(initial, null, { storage: {getItem:()=>"HKD"} });
   assert.equal(restored.run("displayCurrency"), "HKD");

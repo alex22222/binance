@@ -264,8 +264,11 @@ function categoryDescription(category) {
 function assetTypeGuide() {
   return '<p class="footnote">货币基金与现金分开；稳定币与银行存款分开；股票ETF与个股分开。组合资产待拆分，不能据此判断底层股票或债券敞口。稳定币仅统计已识别部分，未展开的加密资产中也可能含稳定币。分类金额各自四舍五入，显示合计可能有尾差。</p>';
 }
-function assetTypesPanel(summary, compact = false) {
-  return `<section class="panel" aria-label="资产类型" style="margin:0"><div class="section-head"><div><h2>资产类型</h2><span class="muted small">仅统计已确认、已换算且符合账户口径的记录 · 点击图例查看明细</span></div><button class="button small quiet" data-action="clear-category">查看全部资产 →</button></div>${assetTypeChart(summary, compact)}${compact ? `<details class="pnl-sources"><summary>资产分类说明</summary>${assetTypeGuide()}</details>` : assetTypeGuide()}</section>`;
+// The overview's lead panel: total (pie centre), display currency, privacy
+// toggle and recorded stock PnL sit together with the asset-type split.
+function assetTypesPanel(summary) {
+  const partial = partialValuationSources().length > 0 || summary.missing.length || summary.pending.length;
+  return `<section class="panel" aria-label="资产类型" style="margin:0"><div class="section-head"><div><h2>资产类型${partial ? ' <span class="pill">部分估值</span>' : ""}</h2><span class="muted small">仅统计已确认、已换算且符合账户口径的记录 · 点击图例查看明细</span></div><div class="type-controls">${displayCurrencyControl()}${privacyToggle()}</div></div>${assetTypeChart(summary, true)}<button class="button small quiet type-all" data-action="clear-category">查看全部资产 →</button>${stockPnlPanel(summary)}<details class="pnl-sources"><summary>资产分类说明</summary>${assetTypeGuide()}</details></section>`;
 }
 function assetTypeChart(summary, compact = false) {
   const color = (name) => `var(--cat-${Math.max(0, CATEGORIES.indexOf(name))})`;
@@ -587,12 +590,8 @@ async function saveStockPnl() {
   if (await save({ ...portfolio(), stockPnl: [...untouched, ...rows] }, "股票盈亏已保存，总资产继续按市值统计")) closeDialog();
 }
 function renderOverview(summary) {
-  const active = portfolio().accounts.filter(accountHasRecords).length;
-  const partial = partialValuationSources().length > 0;
-  const initial = !active;
-  const automatic = Object.values(state.sync?.providers || {}).filter(row => row.connected && row.enabled && row.lastAppliedAt).length;
-  return `<div class="metrics"><section class="panel metric total"><div class="row"><span class="metric-label">${partial || summary.missing.length || summary.pending.length ? "已核算资产 · 部分估值" : "已录入资产总额"}</span>${displayCurrencyControl()}</div><div class="total-line"><div class="metric-value"><small>${displayCurrency === "USD" ? "$" : displayCurrency === "HKD" ? "HK$" : "¥"}</small>${displayAmount(partial && !summary.included.length ? null : summary.total)}</div>${privacyToggle()}</div><div class="metric-foot">${initial ? "尚未录入真实金额" : "当前市值 · 按最新可用汇率折算"}${partial ? " · 仅含已定价记录" : ""}</div>${stockPnlPanel(summary)}</section><section class="panel metric overview-status"><div><span class="metric-label">已录入账户 / 全部账户</span><div class="metric-value">${active}<span class="muted"> / ${portfolio().accounts.length}</span></div><span class="metric-foot">${automatic} 个账户已开启只读同步</span></div><div class="summary-update"><span class="metric-label">最近保存</span><div class="small num">${escape(state.updatedAt ? dateTime(state.updatedAt) : "尚未录入")}</div><span class="metric-foot">${summary.included.length} 条计入 · ${summary.missing.length} 条缺汇率 · ${summary.pending.length} 条待确认</span></div></section><section class="panel metric overview-status"><div><span class="metric-label">自动更新计划 · 北京时间</span><div class="refresh-times num">${escape(refreshTime())}</div><span class="metric-foot">每天一次 · 仅刷新已接入的资产来源</span><a class="metric-foot" href="/assets?settings=refresh-schedule">设置更新时间 →</a></div><div class="summary-update"><span class="metric-label">${displayCurrency} 汇率</span><p class="metric-foot">${escape(fxStatusText())}</p><button class="button small quiet" data-action="sync">管理只读同步 →</button></div></section></div>
-  <div class="overview-distributions">${assetTypesPanel(summary, true)}<section class="panel"><div class="section-head"><h2>平台分布</h2><span class="pill">按已核算 ${displayCurrency}</span></div>${distribution(summary.byPlatform, summary.total)}</section></div>
+  const initial = !portfolio().accounts.some(accountHasRecords);
+  return `<div class="overview-distributions">${assetTypesPanel(summary)}<section class="panel" aria-label="平台分布"><div class="section-head"><h2>平台分布</h2><span class="pill">按已核算 ${displayCurrency}</span></div>${distribution(summary.byPlatform, summary.total)}</section></div>
   ${displayCurrency !== "CNY" && displayValue(1) === null ? `<div class="notice">${displayCurrency}/CNY 自动汇率暂不可用，总额待换算。可切回 CNY 查看人民币金额。</div>` : ""}${summary.missing.length ? `<div class="notice">${displayCurrency} 合计仅覆盖已完成换算的记录，其余资产见原币参考。缺汇率记录和待确认账户均未计入总额与分布。</div>` : ""}${partialValuationNotice()}${aiPanel()}${pendingAccountsPanel()}
   ${platformAtlas(summary)}
   <details class="source-details"><summary>数据更新与来源 <span>每天 ${escape(refreshTime())} · 汇率、连接状态与基金估值明细</span></summary><div class="source-details-body">${originalCurrencyPanel()}${syncCoveragePanel()}${fundValuationPanel()}</div></details>${initial ? '<div class="notice">从一个真实数字开始：可先录入账户总额，也可导入截图或 CSV。</div>' : ""}`;
