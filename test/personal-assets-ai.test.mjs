@@ -46,24 +46,27 @@ test("Moonshot configuration makes one bounded inference and caches the whole Be
  const changed=assets();changed.revision=3;
  const outdated=await reviewPersonalAssets({stateDir,assets:changed,now:new Date(now.getTime()+60*60_000),fetchImpl});
  assert.equal(outdated.status,"outdated");assert.equal(outdated.review.revision,2);assert.equal(calls,1);
- const switched=await configureAssetAi({stateDir,apiKey:key+"-replacement",assets:changed,now:new Date("2026-10-24T15:59:59Z"),fetchImpl:async()=>{throw Error("daily quota cannot be bypassed by key change");}});
- assert.equal(switched.configurationSaved,true);assert.equal(switched.quota.remaining,0);assert.equal(switched.status,"outdated");
+ const switched=await configureAssetAi({stateDir,apiKey:key+"-replacement",assets:changed,now:new Date("2026-10-24T15:59:59Z"),fetchImpl:async()=>{calls++;throw Error("network down");}});
+ assert.equal(calls,2);assert.equal(switched.configurationSaved,true);assert.equal(switched.quota.remaining,0);assert.equal(switched.status,"unavailable");
+ assert.equal(switched.lastAttemptStatus,"failed");assert.equal(switched.review.revision,2);assert.match(switched.error,/重新保存 Moonshot 配置可立即再试/);
  assert.equal(JSON.stringify(await readAssetAiStatus({stateDir,now})).includes(key),false);
  const tomorrow=await reviewPersonalAssets({stateDir,assets:changed,now:new Date("2026-10-24T16:00:00Z"),fetchImpl:async(url,init)=>{calls++;assert.equal(init.headers.Authorization,"Bearer "+key+"-replacement");return response("新一天的点评。");}});
- assert.equal(tomorrow.status,"fresh");assert.equal(calls,2);assert.equal(tomorrow.quota.date,"2026-10-25");
+ assert.equal(tomorrow.status,"fresh");assert.equal(calls,3);assert.equal(tomorrow.quota.date,"2026-10-25");
 });
-test("failed attempts consume the day, retain previous review, and reject force or key-change bypass",async t=>{
+test("failed attempts consume the automatic day and retain previous review, while saving a key retries at once",async t=>{
  const stateDir=await dir(t);let calls=0;
  const first=await configureAssetAi({stateDir,apiKey:key,assets:assets(),now,fetchImpl:async()=>{calls++;return new Response(key,{status:401});}});
  assert.equal(first.status,"unavailable");assert.equal(first.configured,true);assert.equal(first.lastAttemptStatus,"failed");assert.equal(first.quota.remaining,0);assert.equal(JSON.stringify(first).includes(key),false);
- const retry=await configureAssetAi({stateDir,apiKey:key+"-new",assets:assets(),now:new Date(now.getTime()+1000),force:true,fetchImpl:async()=>{calls++;return response();}});
- assert.equal(calls,1);assert.equal(retry.status,"unavailable");assert.equal(retry.configurationSaved,true);
+ const automatic=await reviewPersonalAssets({stateDir,assets:assets(),now:new Date(now.getTime()+500),force:true,fetchImpl:async()=>{calls++;return response();}});
+ assert.equal(calls,1);assert.equal(automatic.status,"unavailable");
+ const retry=await configureAssetAi({stateDir,apiKey:key+"-new",assets:assets(),now:new Date(now.getTime()+1000),fetchImpl:async()=>{calls++;return response();}});
+ assert.equal(calls,2);assert.equal(retry.status,"fresh");assert.equal(retry.lastAttemptStatus,"succeeded");assert.equal(retry.configurationSaved,true);assert.equal(retry.error,undefined);
  const tomorrow=new Date("2026-10-24T16:00:00Z");
  const valid=await reviewPersonalAssets({stateDir,assets:assets(),now:tomorrow,fetchImpl:async()=>{calls++;return response("保留的有效点评。");}});
  const failed=await reviewPersonalAssets({stateDir,assets:assets(),now:new Date("2026-10-25T16:00:00Z"),fetchImpl:async()=>{calls++;return new Response("upstream secret "+key,{status:429});}});
  assert.equal(failed.status,"unavailable");assert.equal(failed.review.text,valid.review.text);assert.equal(failed.review.generatedAt,valid.review.generatedAt);assert.equal(JSON.stringify(failed).includes(key),false);
  const status=await readAssetAiStatus({stateDir,now:new Date("2026-10-25T17:00:00Z")});assert.equal(status.lastAttemptStatus,"failed");assert.equal(status.quota.remaining,0);assert.equal(status.review.text,valid.review.text);
- assert.equal(calls,3);
+ assert.equal(calls,4);
 });
 test("old OpenAI credentials are neither reused as Moonshot nor overwritten; cached review keeps original provenance",async t=>{
  const stateDir=await dir(t);const old=JSON.stringify({schemaVersion:1,apiKey:"old-openai-secret"})+"\n";
@@ -73,20 +76,20 @@ test("old OpenAI credentials are neither reused as Moonshot nor overwritten; cac
  let calls=0;const result=await reviewPersonalAssets({stateDir,assets:assets(),now,fetchImpl:async()=>{calls++;return response();}});
  assert.equal(result.status,"unconfigured");assert.equal(result.review.text,"旧 OpenAI 点评");assert.equal(calls,0);
  const configured=await configureAssetAi({stateDir,apiKey:key,assets:assets(),now,fetchImpl:async()=>{calls++;return response();}});
- assert.equal(configured.quota.remaining,0);assert.equal(calls,0);assert.equal(await readFile(join(stateDir,"personal-assets-ai.json"),"utf8"),old);
+ assert.equal(configured.quota.remaining,0);assert.equal(calls,1);assert.equal(configured.status,"fresh");assert.equal(configured.review.provider,"moonshot");assert.equal(await readFile(join(stateDir,"personal-assets-ai.json"),"utf8"),old);
 });
-test("concurrent requests and a persisted attempt after process loss cannot create another daily inference",async t=>{
+test("concurrent automatic requests and a persisted attempt after process loss cannot create another daily inference",async t=>{
  const stateDir=await dir(t);let release;const wait=new Promise(resolve=>release=resolve);let entered;const started=new Promise(resolve=>entered=resolve);let calls=0;
  const first=configureAssetAi({stateDir,apiKey:key,assets:assets(),now,fetchImpl:async()=>{calls++;entered();await wait;return response();}});
  await started;
  const parallel=await Promise.allSettled([reviewPersonalAssets({stateDir,assets:assets(),now,force:true,fetchImpl:async()=>{calls++;return response();}}),configureAssetAi({stateDir,apiKey:key+"-other",assets:assets(),now,fetchImpl:async()=>{calls++;return response();}})]);
- assert.equal(calls,1);assert.ok(parallel.every(row=>row.status==="fulfilled"?row.value.quota.remaining===0:row.reason.statusCode===429));release();await first;
+ assert.equal(calls,2);assert.equal(parallel[0].status,"fulfilled");assert.equal(parallel[0].value.quota.remaining,0);assert.equal(parallel[1].value.status,"fresh");release();await first;
  const restarted=await import("../src/personal-assets-ai.mjs?restart="+Date.now());
- const cached=await restarted.reviewPersonalAssets({stateDir,assets:assets(),now,fetchImpl:async()=>{calls++;return response();}});assert.equal(cached.quota.remaining,0);assert.equal(calls,1);
+ const cached=await restarted.reviewPersonalAssets({stateDir,assets:assets(),now,fetchImpl:async()=>{calls++;return response();}});assert.equal(cached.quota.remaining,0);assert.equal(calls,2);
  const orphan=await dir(t);await writeFile(join(orphan,"personal-assets-ai-moonshot.json"),JSON.stringify({schemaVersion:1,provider:"moonshot",apiKey:key}),{mode:0o600});
  await mkdir(join(orphan,"personal-assets-ai-attempts"),{mode:0o700});
  await writeFile(join(orphan,"personal-assets-ai-attempts/2026-10-24.json"),JSON.stringify({schemaVersion:1,date:"2026-10-24",attemptedAt:now.toISOString(),provider:"moonshot",model:"kimi-k3.1-pro"}),{mode:0o600});
- const recovered=await restarted.reviewPersonalAssets({stateDir:orphan,assets:assets(),now,fetchImpl:async()=>{calls++;return response();}});assert.equal(calls,1);assert.equal(recovered.quota.remaining,0);assert.equal(recovered.lastAttemptStatus,"attempted");assert.equal(recovered.status,"unavailable");
+ const recovered=await restarted.reviewPersonalAssets({stateDir:orphan,assets:assets(),now,fetchImpl:async()=>{calls++;return response();}});assert.equal(calls,2);assert.equal(recovered.quota.remaining,0);assert.equal(recovered.lastAttemptStatus,"attempted");assert.equal(recovered.status,"unavailable");
 });
 test("local invalid key and missing config never consume quota; corrupt attempt files fail closed",async t=>{
  const stateDir=await dir(t);let calls=0;
@@ -109,7 +112,8 @@ test("a clock rollover after durable reservation never sends under yesterday's q
  assert.equal(calls,0);assert.equal(result.status,"unavailable");assert.match(result.error,/跨日/);
  const next=await reviewPersonalAssets({stateDir,assets:assets(),clock:()=>after,fetchImpl:async()=>{calls++;return response();}});
  assert.equal(next.status,"fresh");assert.equal(calls,1);assert.equal(next.quota.date,"2026-10-25");
- await configureAssetAi({stateDir,apiKey:key+"-new",assets:assets(),clock:()=>after,fetchImpl:async()=>{calls++;return response();}});assert.equal(calls,1);
+ await reviewPersonalAssets({stateDir,assets:assets(),clock:()=>after,fetchImpl:async()=>{calls++;return response();}});assert.equal(calls,1);
+ await configureAssetAi({stateDir,apiKey:key+"-new",assets:assets(),clock:()=>after,fetchImpl:async()=>{calls++;return response();}});assert.equal(calls,2);
 });
 test("crashing after an upstream attempt and a legacy stale lock cannot reset quota or block the next day",async t=>{
  const stateDir=await dir(t);
@@ -132,9 +136,11 @@ test("overlapping days and key replacement retain the latest successful daily re
  const status=await readAssetAiStatus({stateDir,now:current});assert.equal(status.review.text,"最新一天的点评");assert.equal(status.review.revision,3);assert.equal(status.lastAttemptStatus,"succeeded");assert.equal(status.quota.remaining,0);
  assert.equal(JSON.parse(await readFile(join(stateDir,"personal-assets-ai-moonshot.json"),"utf8")).apiKey,key+"-latest");
 });
-test("persisted reservations keep their cap across provider or model changes without blocking later days",async t=>{
+test("persisted reservations cap automatic reviews across provider changes, allow an explicit save, and never block later days",async t=>{
  const stateDir=await dir(t);await mkdir(join(stateDir,"personal-assets-ai-attempts"),{mode:0o700});
  await writeFile(join(stateDir,"personal-assets-ai-attempts/2026-10-24.json"),JSON.stringify({schemaVersion:1,date:"2026-10-24",attemptedAt:now.toISOString(),provider:"earlier-provider",model:"earlier-model"}),{mode:0o600});
- let calls=0;const blocked=await configureAssetAi({stateDir,apiKey:key,assets:assets(),now,fetchImpl:async()=>{calls++;return response();}});assert.equal(blocked.quota.remaining,0);assert.equal(calls,0);
- const next=await reviewPersonalAssets({stateDir,assets:assets(),now:new Date("2026-10-24T16:00:00Z"),fetchImpl:async()=>{calls++;return response();}});assert.equal(next.status,"fresh");assert.equal(calls,1);
+ await writeFile(join(stateDir,"personal-assets-ai-moonshot.json"),JSON.stringify({schemaVersion:1,provider:"moonshot",apiKey:key}),{mode:0o600});
+ let calls=0;const blocked=await reviewPersonalAssets({stateDir,assets:assets(),now,fetchImpl:async()=>{calls++;return response();}});assert.equal(blocked.quota.remaining,0);assert.equal(calls,0);
+ const saved=await configureAssetAi({stateDir,apiKey:key,assets:assets(),now:new Date(now.getTime()+1000),fetchImpl:async()=>{calls++;return response();}});assert.equal(saved.status,"fresh");assert.equal(saved.lastAttemptStatus,"succeeded");assert.equal(calls,1);
+ const next=await reviewPersonalAssets({stateDir,assets:assets(),now:new Date("2026-10-24T16:00:00Z"),fetchImpl:async()=>{calls++;return response();}});assert.equal(next.status,"fresh");assert.equal(calls,2);
 });

@@ -113,7 +113,7 @@ async function dailyQuota(directory, cache, now) {
   const date = beijingDay(now);
   const record = await readPrivate(join(directory, "personal-assets-ai-attempts", `${date}.json`));
   if (record) validClaim(record, date);
-  // Legacy provider attempts also consume the day; changing keys or provider cannot reset the limit.
+  // Legacy provider attempts also consume the day for automatic reviews.
   const legacyAttempt = timestamp(cache?.lastAttemptAt);
   const attemptedAt = record?.attemptedAt || (legacyAttempt && beijingDay(new Date(legacyAttempt)) === date ? legacyAttempt : null);
   return { quota: { limit: 1, timeZone: "Asia/Shanghai", date, used: attemptedAt ? 1 : 0, remaining: attemptedAt ? 0 : 1,
@@ -121,7 +121,8 @@ async function dailyQuota(directory, cache, now) {
 }
 function publicStatus(config, cache, daily, fingerprint) {
   const review = publicReview(cache);
-  const attemptedAt = daily.attemptedAt || timestamp(cache?.lastAttemptAt);
+  // A saved configuration may run after the day's reservation, so report whichever attempt is newer.
+  const attemptedAt = [daily.attemptedAt, timestamp(cache?.lastAttemptAt)].filter(Boolean).sort((a, b) => Date.parse(b) - Date.parse(a))[0] || null;
   const matching = attemptedAt && attemptedAt === cache?.lastAttemptAt;
   const lastAttemptStatus = !attemptedAt ? null : matching ? cache.lastAttemptStatus || (cache.lastError ? "failed" : review ? "succeeded" : "attempted") : "attempted";
   const error = matching && cache?.lastError ? cache.lastError : daily.attemptedAt && lastAttemptStatus === "attempted" ? "今天的调用已登记，结果尚未完成或无法确认；为避免重复计费，明天再尝试。" : null;
@@ -149,7 +150,7 @@ async function responseJson(response) {
 }
 async function generate(apiKey, input, fetchImpl, clock, reservedDay) {
   try {
-    const request = { method: "POST", redirect: "error", signal: AbortSignal.timeout(25_000),
+    const request = { method: "POST", redirect: "error", signal: AbortSignal.timeout(120_000),
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: MODEL, stream: false, max_completion_tokens: 2400, reasoning_effort: "low",
         messages: [{ role: "system", content: instructions }, { role: "user", content: JSON.stringify(input) }] }) };
@@ -158,25 +159,29 @@ async function generate(apiKey, input, fetchImpl, clock, reservedDay) {
     const response = await fetchImpl("https://api.moonshot.cn/v1/chat/completions", request);
     if (!response.ok) {
       await response.body?.cancel().catch(() => {});
-      if ([401, 403].includes(response.status)) throw fail("Moonshot API Key 或模型访问权限未通过，请核对；今天不再重试。", 400);
-      throw fail(response.status === 429 ? "Moonshot 额度或访问频率受限，请检查 API 额度；今天不再重试。" : "Moonshot 暂时无法完成点评；今天不再重试。");
+      if ([401, 403].includes(response.status)) throw fail("Moonshot API Key 或模型访问权限未通过，请核对是否为国内平台 platform.moonshot.cn 的 Key；修正后重新保存配置即可重试。", 400);
+      throw fail(response.status === 429 ? "Moonshot 额度或访问频率受限，请检查 API 额度；今天不再自动重试。" : "Moonshot 暂时无法完成点评；今天不再自动重试，重新保存配置可立即再试。");
     }
     const data = await responseJson(response);
     const choice = data?.choices?.[0];
     const text = choice?.message?.content;
     if (!Array.isArray(data?.choices) || data.choices.length !== 1 || choice.finish_reason !== "stop" || choice.message?.role !== "assistant"
-      || choice.message.tool_calls?.length || typeof text !== "string" || !text.trim() || text.length > 12000) throw fail("Moonshot 未返回完整点评，未替换上次结果；今天不再重试。");
+      || choice.message.tool_calls?.length || typeof text !== "string" || !text.trim() || text.length > 12000) throw fail("Moonshot 未返回完整点评，未替换上次结果；今天不再自动重试。");
     return text.trim();
   } catch (error) {
     if (error.assetAiError) throw error;
-    throw fail("AI 请求超时或响应无法核验；已计入今天的一次调用，明天再尝试。");
+    throw fail("AI 请求超时或响应无法核验；今天不再自动重试，重新保存 Moonshot 配置可立即再试。");
   }
 }
-async function claimDay(directory, daily, now) {
+async function attemptsDirectory(directory) {
   const path = join(directory, "personal-assets-ai-attempts");
   await mkdir(path, { recursive: true, mode: 0o700 });
   const info = await lstat(path);
   if (!info.isDirectory() || info.isSymbolicLink() || (info.mode & 0o077)) throw fail("AI 每日调用目录不安全，未发起新调用。");
+  return path;
+}
+async function claimDay(directory, daily, now) {
+  const path = await attemptsDirectory(directory);
   let handle;
   try {
     handle = await open(join(path, `${daily.quota.date}.json`), "wx", 0o600);
@@ -212,13 +217,18 @@ async function run({ stateDir, assets, apiKey, now, clock = () => now || new Dat
   if (!configured(config)) return result();
   const key = config.apiKey;
   if (typeof key !== "string" || key.length < 20 || key.length > 500 || /\s/.test(key)) throw fail("请输入有效的 Moonshot API Key。", 400);
-  // Daily reservations serialize billable work. Results have separate daily files, so neither
-  // a process crash nor an older request finishing after midnight can overwrite a newer result.
-  if (daily.quota.used || !await claimDay(directory, daily, attemptTime)) {
+  // Daily reservations serialize automatic billable work. Results have separate daily files, so
+  // neither a process crash nor an older request finishing after midnight can overwrite a newer
+  // result. Saving a configuration is an explicit request to test that key now, so it still runs
+  // after the day's automatic review has been used.
+  const configuring = apiKey !== undefined;
+  const claimed = !daily.quota.used && await claimDay(directory, daily, attemptTime);
+  if (!claimed && !configuring) {
     cache = await reviewCache(directory);
     daily = await dailyQuota(directory, cache, clock());
     return result();
   }
+  if (!claimed) await attemptsDirectory(directory);
   const next = { schemaVersion: 2, date: daily.quota.date, lastAttemptAt: attemptTime.toISOString(), lastAttemptStatus: "attempted", review: null, lastError: null };
   let fresh = false;
   try {
@@ -230,7 +240,10 @@ async function run({ stateDir, assets, apiKey, now, clock = () => now || new Dat
     next.lastError = error.assetAiError ? error.message : "AI 结果保存失败，请检查服务器存储；今天不再重试。";
     next.lastAttemptStatus = "failed";
   }
-  await writePrivate(join(directory, "personal-assets-ai-attempts", `${next.date}-result.json`), next);
+  const resultPath = join(directory, "personal-assets-ai-attempts", `${next.date}-result.json`);
+  // A saved configuration can retry within the day; a failed retry must not erase that day's earlier review.
+  if (!fresh) next.review = (await readPrivate(resultPath))?.review || null;
+  await writePrivate(resultPath, next);
   cache = await reviewCache(directory);
   daily = await dailyQuota(directory, cache, clock());
   return { ...result(), ...(fresh && cache.review?.generatedAt === next.review.generatedAt && cache.review?.fingerprint === next.review.fingerprint ? { status: "fresh" } : {}) };
