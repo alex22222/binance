@@ -68,7 +68,7 @@ test("explicit account binding replaces the existing same exchange instead of du
   assert.equal(result.assets.portfolio.entries.some((row) => row.accountId === "okx-exchange"), false);
   assert.equal(result.assets.portfolio.entries.find((row) => row.accountId === "existing-exchange").source, "api");
   assert.equal(result.sync.providers.okx.targetAccountId, "existing-exchange");
-  const cycle = await runAssetSyncCycle({ stateDir, now: later, api: { fetchOkxAssets: async () => synthetic({ total: 120, holdings: [], fetchedAt: later.toISOString() }) } });
+  const cycle = await runAssetSyncCycle({ stateDir, now: later, api: { fetchOkxAssets: async () => synthetic({ total: 120, holdings: [{ ...synthetic().holdings[0], amount: 120 }], fetchedAt: later.toISOString() }) } });
   assert.deepEqual(cycle, { attempted: 1, applied: 1, failed: 0 });
   const latest = await readPersonalAssets({ stateDir });
   assert.equal(latest.portfolio.entries.find((row) => row.accountId === "existing-exchange").amount, 120);
@@ -482,7 +482,7 @@ test("Polymarket binds an explicitly selected existing account, normalizes addre
   assert.deepEqual(failed, { attempted: 1, applied: 0, failed: 1 });
   assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
   assert.doesNotMatch(JSON.stringify(await readAssetSyncStatus({ stateDir })), /SENSITIVE/);
-  const succeeded = await runAssetSyncCycle({ stateDir, now: later, api: predictionApi({ total: 120, holdings: [], fetchedAt: later.toISOString() }) });
+  const succeeded = await runAssetSyncCycle({ stateDir, now: later, api: predictionApi({ total: 120, holdings: [{ ...synthetic().holdings[0], amount: 120 }], fetchedAt: later.toISOString() }) });
   assert.deepEqual(succeeded, { attempted: 1, applied: 1, failed: 0 });
   assert.equal((await readPersonalAssets({ stateDir })).portfolio.entries.find((entry) => entry.accountId === targetAccountId).amount, 120);
   await action(stateDir, "polymarket", "disconnect");
@@ -702,7 +702,7 @@ test("automatic collector keeps last good data on upstream failure and preserves
   const status = await readAssetSyncStatus({ stateDir });
   assert.match(status.providers.okx.lastError, /未完成/);
   assert.doesNotMatch(JSON.stringify(status), /SENSITIVE/);
-  assert.deepEqual(await runAssetSyncCycle({ stateDir, now: later, api: { fetchOkxAssets: async () => synthetic({ total: 120, holdings: [], fetchedAt: later.toISOString() }) } }), { attempted: 1, applied: 1, failed: 0 });
+  assert.deepEqual(await runAssetSyncCycle({ stateDir, now: later, api: { fetchOkxAssets: async () => synthetic({ total: 120, holdings: [{ ...synthetic().holdings[0], amount: 120 }], fetchedAt: later.toISOString() }) } }), { attempted: 1, applied: 1, failed: 0 });
   const state = await readPersonalAssets({ stateDir });
   assert.equal(state.snapshots.length, 1);
   assert.equal(state.portfolio.entries.find((row) => row.id === "sync-okx-total").amount, 120);
@@ -1012,4 +1012,40 @@ test("changing the daily time after an automatic run reports tomorrow rather tha
   await configureAssetRefreshSchedule({ stateDir, time: "22:00", now: later });
   const status = await readAssetSyncStatus({ stateDir, now: later });
   assert.equal(status.providers.okx.dueAt, "2026-10-25T14:00:00.000Z");
+});
+
+test("automatic partial breakdowns retain the confirmed holdings basis and prior ledger", async context => {
+  const stateDir = await fixture(context);
+  await enabled(stateDir);
+  const before = await readFile(join(stateDir, "personal-assets.json"), "utf8");
+  const appliedAt = (await readAssetSyncStatus({ stateDir, now: at })).providers.okx.lastAppliedAt;
+  const result = await runAssetSyncCycle({ stateDir, now: later, api: { fetchOkxAssets: async () => synthetic({ breakdownComplete: false, fetchedAt: later.toISOString() }) } });
+  assert.deepEqual(result, { attempted: 1, applied: 0, failed: 1 });
+  assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
+  const status = (await readAssetSyncStatus({ stateDir, now: later })).providers.okx;
+  assert.equal(status.lastAppliedAt, appliedAt);
+  assert.equal(status.lastFetchedAt, later.toISOString());
+  assert.match(status.lastError, /统计口径|持仓明细/);
+});
+
+test("automatic complete breakdowns preserve a confirmed net total basis without counting details twice", async context => {
+  const stateDir = await fixture(context);
+  const preview = await connected(stateDir, { api: { fetchOkxAssets: async () => synthetic({ breakdownComplete: false }) } });
+  await action(stateDir, "okx", "apply", { previewId: preview.id, revision: preview.revision });
+  const result = await runAssetSyncCycle({ stateDir, now: later, api: { fetchOkxAssets: async () => synthetic({ total: 120, holdings: [{ ...synthetic().holdings[0], amount: 120 }], fetchedAt: later.toISOString() }) } });
+  assert.deepEqual(result, { attempted: 1, applied: 1, failed: 0 });
+  const current = await readPersonalAssets({ stateDir });
+  assert.equal(current.portfolio.accounts.find(row => row.id === "okx-exchange").basis, "total");
+  assert.equal(current.portfolio.entries.find(row => row.accountId === "okx-exchange" && row.kind === "total").amount, 120);
+  assert.equal(current.portfolio.entries.find(row => row.accountId === "okx-exchange" && row.kind === "holding").amount, 120);
+});
+
+test("a verified complete empty account refresh preserves holdings basis and clears old holdings", async context => {
+  const stateDir = await fixture(context);
+  await enabled(stateDir);
+  const result = await runAssetSyncCycle({ stateDir, now: later, api: { fetchOkxAssets: async () => synthetic({ total: 0, holdings: [], breakdownComplete: true, fetchedAt: later.toISOString() }) } });
+  assert.deepEqual(result, { attempted: 1, applied: 1, failed: 0 });
+  const current = await readPersonalAssets({ stateDir });
+  assert.equal(current.portfolio.accounts.find(row => row.id === "okx-exchange").basis, "holdings");
+  assert.equal(current.portfolio.entries.some(row => row.accountId === "okx-exchange" && row.kind === "holding"), false);
 });

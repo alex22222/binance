@@ -451,6 +451,7 @@ function makePreview(result, provider, revision, now, targetAccountId, wallets, 
   const warnings = (result.warnings || []).filter((value) => typeof value === "string").map((value) => value.slice(0, 500)).slice(0, 20);
   if (countedBasis === "total") warnings.push("净资产总额作为统计口径；明细仅供对账，不与总额相加。未对齐部分不推定为现金或负债。");
   return { id: randomUUID(), provider, currency: result.currency, total: result.total, asOf: result.asOf, fetchedAt: result.fetchedAt,
+    breakdownComplete: result.breakdownComplete === true,
     ...(stockPnl ? { stockPnl } : {}),
     observedAt: result.observedAt || null, timeBasis: result.observedAt ? result.timeBasis || "source" : "retrieved",
     ...(result.valuation !== undefined ? { valuation: valuationSummary(result.valuation) } : {}),
@@ -570,7 +571,12 @@ async function applyPreview({ stateDir, data, provider, previewId, revision, now
   }
   if (current.revision !== revision || preview.revision !== revision) throw syncError("资产版本已更新，请重新拉取预览。", 409);
   retainPricedWalletAssets(current, preview);
-  const portfolio = updatedPortfolio(current, preview);
+  const account = current.portfolio.accounts.find(row => row.id === preview.targetAccountId);
+  if (automatic && account?.basis === "holdings" && !walletProvider(provider) && preview.countedBasis !== "holdings"
+    && !(preview.breakdownComplete && preview.total === 0 && !preview.holdings.length)) {
+    throw syncError("本次持仓明细不完整或未与净资产对齐，保留原统计口径及上次资产；请核对新的只读预览。", 409);
+  }
+  const portfolio = updatedPortfolio(current, automatic ? { ...preview, countedBasis: account.basis } : preview);
   if (walletProvider(provider) && preview.derivedWallets?.length) {
     rememberWalletScope(data, provider, preview.targetAccountId, walletList(value.wallets), derivedWalletList(preview.derivedWallets, walletList(value.wallets)));
     await persist(data);
