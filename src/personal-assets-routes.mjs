@@ -3,8 +3,8 @@ import { readAssetFundStatus, configureAssetFund } from "./personal-assets-funds
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { personalAssetsHtml, statementPasswordsHtml } from "./personal-assets-html.mjs";
-import { readPersonalAssets, savePersonalAssets, createPersonalAssetsSnapshot, readStatementPasswordStatus, configureStatementPassword } from "./personal-assets.mjs";
+import { personalAssetsHtml, statementPasswordsHtml, refreshScheduleHtml } from "./personal-assets-html.mjs";
+import { readPersonalAssets, savePersonalAssets, createPersonalAssetsSnapshot, readStatementPasswordStatus, configureStatementPassword, readAssetRefreshSchedule, configureAssetRefreshSchedule } from "./personal-assets.mjs";
 import { valuePersonalAssetState } from "./personal-assets-fx.mjs";
 import { readAssetSyncStatus, performAssetSyncAction, completeFutuAuthorization } from "./personal-assets-sync.mjs";
 
@@ -43,11 +43,11 @@ function sessionBinding(request) {
 }
 
 async function assetView(state, options) {
-  const [valued, sync] = await Promise.all([valuePersonalAssetState(state, options), readAssetSyncStatus({ stateDir: options.stateDir }).catch(() => ({
+  const [valued, sync, refreshSchedule] = await Promise.all([valuePersonalAssetState(state, options), readAssetSyncStatus({ stateDir: options.stateDir }).catch(() => ({
     status: "unavailable", error: "同步状态暂不可用，请检查同步配置；已保存资产仍可查看。", providers: {},
-  }))]);
+  })), readAssetRefreshSchedule({ stateDir: options.stateDir }).catch(() => ({ status: "unavailable" }))]);
   const funds = await readAssetFundStatus({ stateDir: options.stateDir, state }).catch(() => ({ status: "unavailable", bindings: [] }));
-  return { ...valued, funds, sync: { ...sync, providers: Object.fromEntries(Object.entries(sync.providers).map(([name, details]) => {
+  return { ...valued, funds, refreshSchedule, sync: { ...sync, providers: Object.fromEntries(Object.entries(sync.providers).map(([name, details]) => {
     const { preview, accounts, selectedAccountId, wallets, ...summary } = details;
     return [name, summary];
   })) } };
@@ -101,13 +101,15 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
     return false;
   }
   const assetApi = ["/api/assets", "/api/assets/snapshots", "/api/assets/rates/refresh", "/api/assets/funds/configure"].includes(path);
+  const refreshApi = path === "/api/assets/refresh-schedule";
+  const refreshPage = ["/assets", "/assets/"].includes(path) && new URL(request.url, "http://localhost").searchParams.get("settings") === "refresh-schedule";
   const statementApi = path === "/api/assets/statement-passwords";
   const statementPage = ["/assets", "/assets/"].includes(path) && new URL(request.url, "http://localhost").searchParams.get("settings") === "statement-passwords";
   const syncAction = path.match(/^\/api\/assets\/sync\/(okx|futu|polymarket|future|okxweb3|tokenpocket|binanceagentic|okxagentic)\/(bind|connect|authorize|accounts|preview|apply|disconnect)$/);
   const aiApi = ["/api/assets/ai", "/api/assets/ai/review", "/api/assets/ai/configure"].includes(path);
   const syncApi = path === "/api/assets/sync" || path === "/api/assets/sync/futu/callback" || syncAction;
   const file = files.get(path);
-  if (!["/assets", "/assets/"].includes(path) && !assetApi && !syncApi && !aiApi && !statementApi && !file) return false;
+  if (!["/assets", "/assets/"].includes(path) && !assetApi && !syncApi && !aiApi && !statementApi && !refreshApi && !file) return false;
   try {
     if (request.method === "GET" && path === "/api/assets/sync/futu/callback") {
       let success = false;
@@ -128,7 +130,7 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
         "Content-Security-Policy": `default-src 'none'; script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'unsafe-inline'; img-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
         "X-Content-Type-Options": "nosniff"
       });
-      response.end(statementPage ? statementPasswordsHtml({ nonce }) : personalAssetsHtml({ nonce }));
+      response.end(refreshPage ? refreshScheduleHtml({ nonce }) : statementPage ? statementPasswordsHtml({ nonce }) : personalAssetsHtml({ nonce }));
       return true;
     }
     if (request.method === "GET" && file) {
@@ -144,6 +146,18 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
     }
     if (request.method === "GET" && path === "/api/assets") {
       json(response, await assetView(await readPersonalAssets({ stateDir }), { stateDir }));
+      return true;
+    }
+    if (request.method === "GET" && refreshApi) {
+      json(response, await readAssetRefreshSchedule({ stateDir }));
+      return true;
+    }
+    if (request.method === "POST" && refreshApi) {
+      if (!request.headers.origin) throw requestError("请从自动更新设置页面提交。", 403);
+      requireAllowedOrigin(request);
+      const body = await readAssetBody(request);
+      if (Object.keys(body).some(key => key !== "time")) throw requestError("自动更新配置字段无效。", 400);
+      json(response, await configureAssetRefreshSchedule({ stateDir, time: body.time }));
       return true;
     }
     if (request.method === "GET" && statementApi) {

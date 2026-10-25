@@ -32,6 +32,7 @@ const SETTINGS_MENU = `<div class="settings-menu"><button type="button" class="s
   + `<div class="settings-panel" id="settings-panel" role="menu" aria-label="资产页设置" hidden>`
   + `<button type="button" class="settings-item primary" role="menuitem" data-action="import" data-needs-data disabled>${icon('<path d="M12 15V3M7 8l5-5 5 5M5 21h14"/>')}导入资产</button>`
   + `<button type="button" class="settings-item" role="menuitem" data-action="sync" data-needs-data disabled>${icon('<path d="M21 12a9 9 0 0 1-15.5 6.3L3 16M3 12a9 9 0 0 1 15.5-6.3L21 8M21 3v5h-5M3 21v-5h5"/>')}只读同步</button>`
+  + `<a class="settings-item" role="menuitem" href="/assets?settings=refresh-schedule">${icon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>')}自动更新</a>`
   + `<a class="settings-item" role="menuitem" href="/assets?settings=statement-passwords">${icon('<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>')}结单密码</a>`
   + `<button type="button" class="settings-item" role="menuitem" data-action="export" data-needs-data disabled>${icon('<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>')}导出备份</button>`
   + `<button type="button" class="settings-item" role="menuitem" data-action="ai-settings">${icon('<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2M16 7l3 3M18.5 4.5l2 2"/>')}Moonshot 配置</button>`
@@ -146,5 +147,38 @@ document.querySelectorAll("form[data-provider]").forEach(form => {
 });
 request().then(data => { showStatus(data); ready = true; notify("配置状态已读取。请在对应账户下填写结单密码。"); }).catch(error => notify(error.message, true));
 window.addEventListener("pagehide", () => { document.querySelectorAll("form input").forEach(input => { input.value = ""; }); });
+</script></body></html>`;
+}
+
+export function refreshScheduleHtml({ nonce }) {
+  const safeNonce = String(nonce).replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>自动更新 · HQ Capital</title>
+<style>${SITE_CSS}
+.schedule-wrap{max-width:660px;margin:36px auto;padding:0 20px 40px}.schedule-wrap h1{font-size:26px;margin:20px 0 10px}.schedule-wrap p{color:var(--muted);line-height:1.7}.schedule-card{margin:20px 0;padding:24px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}.schedule-card label{display:block;font-size:14px}.schedule-card input{display:block;box-sizing:border-box;width:100%;max-width:240px;padding:12px;margin:12px 0 20px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}.schedule-card button,.back-link{font:inherit;padding:10px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--text);text-decoration:none}.schedule-card button{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}button:disabled,input:disabled{opacity:.5}#schedule-message[data-error=true]{color:var(--red)}#schedule-status{white-space:pre-line;font-size:13px}
+</style></head><body>${siteHeader("/assets")}<main class="schedule-wrap"><a class="back-link" href="/assets">← 返回个人资产</a><h1>自动更新</h1><p>每天自动更新一次已接入的资产来源、基金和股票估值，统一使用北京时间。</p><form class="schedule-card" id="schedule-form"><label for="refresh-time">每日更新时间 · 北京时间（UTC+8）</label><input id="refresh-time" name="time" type="time" step="60" value="07:00" required disabled><button type="submit" id="schedule-save" disabled>保存更新时间</button><p id="schedule-status">正在读取更新计划…</p></form><p id="schedule-message" role="status" aria-live="polite"></p><p>当天已自动执行后，修改时间不会再次刷新。执行失败保留上次有效数据，下个更新时间再尝试。服务器恢复后会补做当天尚未执行的任务。</p><p>此设置控制服务器资产刷新。邮箱结单由本机任务每天 07:00 独立检查，需要本机和邮箱会话可用。每日资产快照仍在 23:55 保存。</p></main>
+<script nonce="${safeNonce}">
+const form = document.getElementById("schedule-form"), input = document.getElementById("refresh-time"), button = document.getElementById("schedule-save"), message = document.getElementById("schedule-message");
+const format = value => value ? new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : "尚未记录";
+let ready = false;
+function notify(text, error = false) { message.textContent = text; message.dataset.error = String(error); }
+function show(data) {
+  input.value = data.time;
+  document.getElementById("schedule-status").textContent = "每天一次 · 北京时间 " + data.time + "\\n下次执行：" + format(data.nextRunAt) + "\\n最近开始：" + format(data.lastAttemptAt) + "\\n最近完成：" + format(data.lastCompletedAt) + (data.lastError ? "\\n" + data.lastError : "");
+}
+async function request(body) {
+  const response = await fetch("/api/assets/refresh-schedule", { method: body ? "POST" : "GET", cache: "no-store", credentials: "same-origin", headers: body ? { "Content-Type": "application/json" } : {}, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "更新时间未保存，请重新登录后重试。");
+  return data;
+}
+form.addEventListener("submit", async event => {
+  event.preventDefault(); if (!ready) return;
+  const body = { time: input.value }; ready = false; input.disabled = button.disabled = true;
+  notify("正在保存…");
+  try { show(await request(body)); notify("更新时间已保存，服务器将按新计划执行。保存设置不会立即拉取资产。"); }
+  catch (error) { notify(error.message, true); }
+  finally { ready = true; input.disabled = button.disabled = false; }
+});
+request().then(data => { show(data); ready = true; input.disabled = button.disabled = false; }).catch(error => notify(error.message, true));
 </script></body></html>`;
 }

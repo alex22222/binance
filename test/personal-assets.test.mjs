@@ -25,11 +25,11 @@ import {
 
 const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
 
-test("asset refresh slots are 09:00 and 21:00 Beijing time across midnight", () => {
-  assert.equal(nextAssetRefreshAt("2026-10-24T00:59:59Z"), "2026-10-24T01:00:00.000Z");
-  assert.equal(nextAssetRefreshAt("2026-10-24T01:00:00Z"), "2026-10-24T13:00:00.000Z");
-  assert.equal(nextAssetRefreshAt("2026-10-24T12:59:59Z"), "2026-10-24T13:00:00.000Z");
-  assert.equal(nextAssetRefreshAt("2026-10-24T13:00:00Z"), "2026-10-25T01:00:00.000Z");
+test("asset refresh has one daily Beijing slot across UTC midnight", () => {
+  assert.equal(nextAssetRefreshAt("2026-10-24T22:59:59Z"), "2026-10-24T23:00:00.000Z");
+  assert.equal(nextAssetRefreshAt("2026-10-24T23:00:00Z"), "2026-10-25T23:00:00.000Z");
+  assert.equal(nextAssetRefreshAt("2026-10-24T12:59:59Z"), "2026-10-24T23:00:00.000Z");
+  assert.equal(nextAssetRefreshAt("2026-10-24T13:00:00Z"), "2026-10-24T23:00:00.000Z");
 });
 
 test("stock floating PnL is signed reference data, counted once per confirmed account and never added to assets", () => {

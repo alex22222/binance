@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { createContext, runInContext } from "node:vm";
-import { personalAssetsHtml } from "../src/personal-assets-html.mjs";
+import { personalAssetsHtml, refreshScheduleHtml } from "../src/personal-assets-html.mjs";
 import * as core from "../src/personal-assets-core.mjs";
 
 const source = await readFile(new URL("../src/personal-assets-client.mjs", import.meta.url), "utf8");
@@ -512,9 +512,9 @@ test("automatic rates distinguish retrieval time, daily references and independe
   assert.doesNotMatch(html, /<img|尚未更新/);
 });
 
-test("twice-daily page refresh reads only visible pages without pending drafts, writes or conflicts", async () => {
+test("daily page refresh reads only visible pages without pending drafts, writes or conflicts", async () => {
   const ui = await view(stateWith());
-  const timer = ui.intervals.find((item) => item.delay === 12 * 60 * 60 * 1000);
+  const timer = ui.intervals.find((item) => item.delay === 24 * 60 * 60 * 1000);
   assert.ok(timer);
   const initialReads = ui.requests.length;
   for (const condition of ['modal="manual"', "saving=true", "loading=true", "conflict=true", 'document.visibilityState="hidden"']) {
@@ -541,7 +541,8 @@ test("overview leads with total, floating stock PnL and distributions before AI 
   assert.ok(html.indexOf('class="metrics"') < html.indexOf('aria-label="资产类型"'));
   assert.ok(html.indexOf('aria-label="资产类型"') < html.indexOf('aria-label="AI 资产点评"'));
   assert.match(html, /<details class="source-details">/);
-  assert.match(html, /09:00.*21:00/);
+  assert.match(html, /07:00/);
+  assert.match(html, /每天一次/);
   assert.equal(ui.run("summarize(portfolio()).total"), 500);
   ui.run("hidden=true;render()");
   assert.doesNotMatch(ui.get("asset-content").innerHTML, /123\.45|500\.00/);
@@ -1612,4 +1613,16 @@ test("all supported platform bubbles pack deterministically without overlap for 
   assert.equal(ui.run(`JSON.stringify(${expression})`),JSON.stringify(layout));
   for(const node of layout.nodes)for(const other of layout.nodes)if(node!==other)assert.ok(Math.hypot(node.x-other.x,node.y-other.y)>node.r+other.r);
  }
+});
+
+
+test("overview uses the saved daily time and settings provide an isolated schedule page", async () => {
+  const initial = stateWith([entry()]); initial.refreshSchedule = { time: "08:15" };
+  const ui = await view(initial), html = ui.get("asset-content").innerHTML;
+  assert.match(html, /08:15/); assert.doesNotMatch(html, /09:00.*21:00|每天两次/);
+  assert.match(personalAssetsHtml({ nonce: "test" }), /href="\/assets\?settings=refresh-schedule"/);
+  const page = refreshScheduleHtml({ nonce: 'test"><script>' });
+  assert.match(page, /type="time"/); assert.match(page, /每天自动更新一次/);
+  assert.match(page, /\/api\/assets\/refresh-schedule/); assert.match(page, /nonce="test&quot;&gt;&lt;script&gt;"/);
+  assert.doesNotMatch(page, /\/assets\/app.mjs|\/api\/assets\/ai|localStorage|sessionStorage/);
 });

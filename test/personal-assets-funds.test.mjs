@@ -106,7 +106,7 @@ test("US shares accept manually confirmed fractional quantities while an ETF can
   await assert.rejects(configureAssetFund({ stateDir, entryId: "us-one", symbol: "usSPY", quantity: "2", confirmedOn: "2026-10-24", revision: next.revision + 1, fetchImpl: usSource("usSPY"), now }), /证券类型/);
 });
 
-test("fund checking respects the twice-daily schedule and normal intervals are not marked delayed", async t => {
+test("fund checking respects the daily schedule and normal intervals are not marked delayed", async t => {
   const stateDir = await fixture(t); await bind(stateDir);
   let called = false;
   assert.deepEqual(await runAssetFundCycle({ stateDir, now: new Date(now.getTime() + 60 * 60_000), fetchImpl: async () => { called = true; throw Error(); } }), { attempted: 0, applied: 0, failed: 0 });
@@ -180,7 +180,7 @@ test("unchanged NAV is idempotent, a new NAV updates only its holding and long-t
   const later = new Date("2026-10-25T01:00:00Z");
   assert.deepEqual(await runAssetFundCycle({ stateDir, now: later, fetchImpl: source() }), { attempted: 1, applied: 0, failed: 0 });
   assert.equal((await readPersonalAssets({ stateDir })).revision, 2);
-  const monthsLater = new Date("2026-10-25T13:00:00Z");
+  const monthsLater = new Date("2026-10-26T01:00:00Z");
   assert.deepEqual(await runAssetFundCycle({ stateDir, now: monthsLater, fetchImpl: source({ nav: "12.2" }) }), { attempted: 1, applied: 1, failed: 0 });
   assert.equal((await readPersonalAssets({ stateDir })).portfolio.entries[0].amount, 30.5);
   assert.equal((await readAssetFundStatus({ stateDir, now: monthsLater })).bindings[0].enabled, true);
@@ -190,7 +190,7 @@ test("failed, stale and regressing NAV preserves the exact ledger and last succe
   const stateDir = await fixture(t); await bind(stateDir); const ledger = await readFile(join(stateDir, "personal-assets.json"), "utf8");
   const lastGoodFetchedAt = (await readAssetFundStatus({ stateDir, now })).bindings[0].lastFetchedAt;
   for (const [i, options] of [{ fail: true }, { date: "2026-10-01" }, { date: "2026-10-22" }].entries()) {
-    const result = await runAssetFundCycle({ stateDir, now: new Date(Date.parse("2026-10-25T01:00:00Z") + i * 12 * 60 * 60_000), fetchImpl: source(options) });
+    const result = await runAssetFundCycle({ stateDir, now: new Date(Date.parse("2026-10-25T01:00:00Z") + i * 24 * 60 * 60_000), fetchImpl: source(options) });
     assert.equal(result.failed, 1); assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), ledger);
     const status = await readAssetFundStatus({ stateDir, now }); assert.equal(status.bindings[0].lastFetchedAt, lastGoodFetchedAt); assert.ok(status.bindings[0].lastError);
     assert.doesNotMatch(JSON.stringify(status), /private upstream body/);
@@ -202,7 +202,7 @@ test("manual changes pause automatic overwrite, while unrelated changes do not",
   const later = new Date("2026-10-25T01:00:00Z"); assert.equal((await runAssetFundCycle({ stateDir, now: later, fetchImpl: source() })).failed, 0);
   current = await readPersonalAssets({ stateDir }); current.portfolio.entries[0].amount = 88; await savePersonalAssets({ stateDir, revision: current.revision, portfolio: current.portfolio });
   const untouched = await readFile(join(stateDir, "personal-assets.json"), "utf8");
-  const result = await runAssetFundCycle({ stateDir, now: new Date(later.getTime() + 12 * 60 * 60_000), fetchImpl: source({ nav: "99" }) });
+  const result = await runAssetFundCycle({ stateDir, now: new Date(later.getTime() + 24 * 60 * 60_000), fetchImpl: source({ nav: "99" }) });
   assert.equal(result.failed, 1); assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), untouched);
   assert.equal((await readAssetFundStatus({ stateDir })).bindings[0].enabled, false);
 });
@@ -270,7 +270,7 @@ test("HSBC public token and NAV failures never retry, expose tokens or overwrite
   for (const [index, options] of [{ tokenResponse: () => new Response("private upstream secret", { status: 429 }) }, { tokenResponse: () => new Response("<html>blocked</html>") },
     { dataResponse: () => new Response("anonymous.public.token", { status: 400 }) }, { dataResponse: () => new Response("broken") }].entries()) {
     const bad = hsbcSource(() => {}, options);
-    const result = await runAssetFundCycle({ stateDir, fetchImpl: bad.fetchImpl, now: new Date(Date.parse("2026-10-25T01:00:00Z") + index * 12 * 60 * 60_000) });
+    const result = await runAssetFundCycle({ stateDir, fetchImpl: bad.fetchImpl, now: new Date(Date.parse("2026-10-25T01:00:00Z") + index * 24 * 60 * 60_000) });
     assert.deepEqual(result, { attempted: 1, applied: 0, failed: 1 }); assert.ok(bad.calls.length <= 2);
     assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
     const status = await readAssetFundStatus({ stateDir }); assert.doesNotMatch(JSON.stringify(status), /private upstream secret|anonymous\.public\.token/); assert.equal(status.bindings[0].lastFetchedAt, lastGoodFetchedAt);

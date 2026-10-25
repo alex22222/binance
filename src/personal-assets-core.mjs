@@ -6,10 +6,11 @@ const MAX_AMOUNT = 1_000_000_000_000;
 const DAY_MS = 86_400_000;
 const dateFormatter = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" });
 
-export function nextAssetRefreshAt(value) {
+export function nextAssetRefreshAt(value, time = "07:00") {
+  if (typeof time !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("更新时间须为 HH:mm");
   const at = new Date(value).getTime();
-  const midnight = Math.floor(at / DAY_MS) * DAY_MS;
-  return new Date([midnight + 3_600_000, midnight + 13 * 3_600_000, midnight + DAY_MS + 3_600_000].find(slot => slot > at)).toISOString();
+  const slot = Date.parse(`${dateFormatter.format(at)}T${time}:00+08:00`);
+  return new Date(slot > at ? slot : slot + DAY_MS).toISOString();
 }
 
 function today() {

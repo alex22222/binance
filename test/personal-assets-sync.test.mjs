@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { emptyPortfolio, summarize } from "../src/personal-assets-core.mjs";
-import { readPersonalAssets, savePersonalAssets } from "../src/personal-assets.mjs";
+import { readPersonalAssets, savePersonalAssets, configureAssetRefreshSchedule, claimAssetRefresh } from "../src/personal-assets.mjs";
 import { performAssetSyncAction, completeFutuAuthorization, readAssetSyncStatus, runAssetSyncCycle } from "../src/personal-assets-sync.mjs";
 
 process.env.PERSONAL_ASSETS_FX_DISABLED = "1";
@@ -26,6 +26,7 @@ async function fixture(context) {
   portfolio.accounts.push({ id: "other", platform: "OKX", name: "Web3 stays separate", basis: "total" });
   portfolio.entries.push({ id: "other-total", accountId: "other", kind: "total", name: "Synthetic existing", currency: "CNY", category: "现金", amount: 7, source: "manual", asOf: "2026-10-24" });
   await savePersonalAssets({ stateDir, portfolio, revision: 0 });
+  await configureAssetRefreshSchedule({ stateDir, time: "21:00", now: at });
   return stateDir;
 }
 const action = (stateDir, provider, name, body = {}, options = {}) => performAssetSyncAction({ stateDir, provider, action: name, body, api, now: at, ...options });
@@ -48,8 +49,8 @@ test("automatic collectors skip intra-slot requests and refresh at the next Beij
   assert.deepEqual(await runAssetSyncCycle({ stateDir, now: later, api: source }), { attempted: 1, applied: 1, failed: 0 });
   assert.deepEqual(await runAssetSyncCycle({ stateDir, now: new Date("2026-10-24T13:16:00Z"), api: source }), { attempted: 0, applied: 0, failed: 0 });
   const status = await readAssetSyncStatus({ stateDir, now: later });
-  assert.equal(status.providers.okx.dueAt, "2026-10-25T01:00:00.000Z");
-  assert.equal(status.intervalMinutes, 720);
+  assert.equal(status.providers.okx.dueAt, "2026-10-25T13:00:00.000Z");
+  assert.equal(status.intervalMinutes, 1440);
   assert.equal(calls, 1);
 });
 
@@ -137,7 +138,7 @@ test("source observation time and overdue status distinguish current reads from 
   const row = result.assets.portfolio.entries.find((entry) => entry.id === "sync-okx-total");
   assert.equal(row.asOfBasis, "statement");
   assert.match(row.note, new RegExp(observedAt.replaceAll(".", "\\.")));
-  const status = (await readAssetSyncStatus({ stateDir, now: new Date(at.getTime() + 13 * 60 * 60_000 + 60_000) })).providers.okx;
+  const status = (await readAssetSyncStatus({ stateDir, now: new Date(at.getTime() + 25 * 60 * 60_000 + 60_000) })).providers.okx;
   assert.equal(status.observedAt, observedAt);
   assert.equal(status.timeBasis, "source");
   assert.equal(status.lastAttemptAt, at.toISOString());
@@ -241,7 +242,7 @@ test("agentic wallets reuse only the saved developer credential reference and re
     assert.equal(applied.assets.portfolio.entries.find(row=>row.id==="other-total").amount,7);
     const cycle=await runAssetSyncCycle({stateDir,now:later,api:walletApi({fetchedAt:later.toISOString()},request=>assert.equal(request.credentials.secret,credentials.secret))});assert.deepEqual(cycle,{attempted:1,applied:1,failed:0});
     await action(stateDir,"okxweb3","disconnect");assert.equal((await readAssetSyncStatus({stateDir})).providers[provider].connected,false);
-    const before=await readFile(join(stateDir,"personal-assets.json"),"utf8");const failed=await runAssetSyncCycle({stateDir,now:new Date("2026-10-25T01:00:00Z"),api:walletApi()});assert.deepEqual(failed,{attempted:1,applied:0,failed:1});assert.equal(await readFile(join(stateDir,"personal-assets.json"),"utf8"),before);
+    const before=await readFile(join(stateDir,"personal-assets.json"),"utf8");const failed=await runAssetSyncCycle({stateDir,now:new Date("2026-10-25T13:00:00Z"),api:walletApi()});assert.deepEqual(failed,{attempted:1,applied:0,failed:1});assert.equal(await readFile(join(stateDir,"personal-assets.json"),"utf8"),before);
     await action(stateDir,provider,"disconnect");const disconnected=JSON.parse(await readFile(privateFile(stateDir),"utf8"));assert.equal(disconnected.providers[provider].credentialRef,undefined);
   }
 });
@@ -601,7 +602,7 @@ test("Futu preview and scheduled apply refresh only its signed PnL with retrieva
   pnl = { amount: 0, currency: "HKD" }; fetchedAt = later.toISOString();
   assert.deepEqual(await runAssetSyncCycle({ stateDir, now: later, api: futu }), { attempted: 1, applied: 1, failed: 0 });
   let current = await readPersonalAssets({ stateDir }); assert.equal(current.portfolio.stockPnl.find(row => row.accountId === "account-3").amount, 0);
-  const saved = current.portfolio.stockPnl; pnl = undefined; fetchedAt = "2026-10-25T01:00:00.000Z";
+  const saved = current.portfolio.stockPnl; pnl = undefined; fetchedAt = "2026-10-25T13:00:00.000Z";
   await runAssetSyncCycle({ stateDir, now: new Date(fetchedAt), api: futu });
   current = await readPersonalAssets({ stateDir }); assert.deepEqual(current.portfolio.stockPnl, saved);
   const unchanged = await readFile(join(stateDir, "personal-assets.json"), "utf8");
@@ -613,7 +614,7 @@ test("Futu preview and scheduled apply refresh only its signed PnL with retrieva
   current.portfolio.stockPnl.find(row => row.accountId === "account-3").amount = 4;
   await savePersonalAssets({ stateDir, portfolio: current.portfolio, revision: current.revision });
   let calls = 0;
-  const cycle = await runAssetSyncCycle({ stateDir, now: new Date("2026-10-25T13:00:00Z"), api: { fetchFutuAssets: async () => { calls++; return synthetic({ provider: "futu", externalAccountId: "123", currency: "HKD", holdings: [], stockPnl: { amount: -1, currency: "HKD" } }); } } });
+  const cycle = await runAssetSyncCycle({ stateDir, now: new Date("2026-10-26T13:00:00Z"), api: { fetchFutuAssets: async () => { calls++; return synthetic({ provider: "futu", externalAccountId: "123", currency: "HKD", holdings: [], stockPnl: { amount: -1, currency: "HKD" } }); } } });
   assert.deepEqual(cycle, { attempted: 1, applied: 0, failed: 1 }); assert.equal(calls, 0);
   assert.equal((await readPersonalAssets({ stateDir })).portfolio.stockPnl.find(row => row.accountId === "account-3").amount, 4);
   assert.equal((await readAssetSyncStatus({ stateDir })).providers.futu.enabled, false);
@@ -1001,4 +1002,14 @@ test("reserving a Safe leaves unrelated legacy wallet binding records unchanged"
   await action(stateDir, "tokenpocket", "apply", { previewId: preview.id, revision: preview.revision });
   const config = JSON.parse(await readFile(privateFile(stateDir), "utf8"));
   assert.deepEqual(config.walletBindings.find(row => row.targetAccountId === "other"), legacy);
+});
+
+
+test("changing the daily time after an automatic run reports tomorrow rather than a second run today", async context => {
+  const stateDir = await fixture(context); await enabled(stateDir);
+  assert.ok(await claimAssetRefresh({ stateDir, now: later }));
+  await runAssetSyncCycle({ stateDir, now: later, api: { fetchOkxAssets: async () => synthetic({ fetchedAt: later.toISOString() }) } });
+  await configureAssetRefreshSchedule({ stateDir, time: "22:00", now: later });
+  const status = await readAssetSyncStatus({ stateDir, now: later });
+  assert.equal(status.providers.okx.dueAt, "2026-10-25T14:00:00.000Z");
 });

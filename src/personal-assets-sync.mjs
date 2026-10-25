@@ -4,7 +4,7 @@ import { lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { CATEGORIES, CURRENCIES, validatePortfolio, nextAssetRefreshAt } from "./personal-assets-core.mjs";
-import { readPersonalAssets, savePersonalAssets, createPersonalAssetsSnapshot } from "./personal-assets.mjs";
+import { readPersonalAssets, savePersonalAssets, createPersonalAssetsSnapshot, readAssetRefreshSchedule } from "./personal-assets.mjs";
 import { fetchOkxAssets } from "./personal-assets-okx.mjs";
 import { fetchPolymarketAssets } from "./personal-assets-polymarket.mjs";
 import { fetchWalletAssets } from "./personal-assets-wallets.mjs";
@@ -16,7 +16,7 @@ const PROVIDERS = { okx: { id: "okx-exchange", platform: "OKX", name: "OKX · �
   okxweb3: { id: "okx-web3", platform: "OKX", name: "OKX · Web3 钱包" }, tokenpocket: { id: "tokenpocket-main", platform: "TokenPocket", name: "TokenPocket · 钱包" },
   binanceagentic: { id: "binance-agentic-wallet", platform: "币安Agentic Wallet", name: "币安 Agentic Wallet" }, okxagentic: { id: "okx-agentic-wallet", platform: "OKX Agentic Wallet", name: "OKX Agentic Wallet" } };
 const adapters = { fetchOkxAssets, fetchPolymarketAssets, fetchWalletAssets, registerFutuClient, createFutuAuthorization, exchangeFutuCode, refreshFutuToken, fetchFutuAccounts, fetchFutuAssets };
-const INTERVAL = 12 * 60 * 60_000;
+const INTERVAL = 24 * 60 * 60_000;
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const failureText = "只读同步未完成，请检查授权、账户地区和网络，并核对最近入账状态。";
 const callbackUri = "https://spaceflag.site/api/assets/sync/futu/callback";
@@ -335,11 +335,15 @@ async function locked(stateDir, update) {
   finally { await lock.close(); await unlink(`${path}.lock`); }
 }
 
-function status(data, now = new Date()) {
+function status(data, now = new Date(), schedule = { time: "07:00" }) {
+  const time = schedule.time;
+  const day = value => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date(value));
+  const ranToday = schedule.lastAttemptAt && day(schedule.lastAttemptAt) === day(now);
   const providers = {};
   for (const name of Object.keys(PROVIDERS)) {
     const value = data.providers[name] || {};
-    const dueAt = value.enabled && Number.isFinite(Date.parse(value.lastFetchedAt)) ? nextAssetRefreshAt(value.lastFetchedAt) : null;
+    let dueAt = value.enabled && Number.isFinite(Date.parse(value.lastFetchedAt)) ? nextAssetRefreshAt(value.lastFetchedAt, time) : null;
+    if (dueAt && ranToday && Date.parse(schedule.nextRunAt) > Date.parse(dueAt)) dueAt = schedule.nextRunAt;
     providers[name] = {
       connected: name === "okx" ? Boolean(value.credentials) : walletProvider(name) ? Boolean(walletCredentials(data, value)) : predictionProvider(name) ? Boolean(value.address) : Boolean(value.tokens),
       enabled: value.enabled === true,
@@ -363,10 +367,10 @@ function status(data, now = new Date()) {
       ...(name === "futu" ? { accounts: value.accounts || [], selectedAccountId: value.externalAccountId || null } : {})
     };
   }
-  return { providers, developerCredentialsAvailable: Boolean(data.providers.okxweb3?.credentials), serverIp: "173.199.122.23", intervalMinutes: 720, schedule: "北京时间每天 09:00、21:00" };
+  return { providers, developerCredentialsAvailable: Boolean(data.providers.okxweb3?.credentials), serverIp: "173.199.122.23", intervalMinutes: 1440, schedule: `北京时间每天 ${time}` };
 }
 
-export async function readAssetSyncStatus({ stateDir, now = new Date() }) { return status(await readPrivate(pathFor(stateDir)), now); }
+export async function readAssetSyncStatus({ stateDir, now = new Date() }) { return status(await readPrivate(pathFor(stateDir)), now, await readAssetRefreshSchedule({ stateDir, now })); }
 
 function targetAccount(current, provider, requested, value = {}) {
   const mapping = PROVIDERS[provider];
@@ -627,6 +631,7 @@ async function readFutuAccountList(data, api, persist, clock) {
 
 export async function performAssetSyncAction({ stateDir, provider, action, body = {}, sessionBinding = "", api = adapters, now, clock = now ? advancingClock(now) : () => new Date() }) {
   now ??= clock();
+  const schedule = await readAssetRefreshSchedule({ stateDir, now });
   if (!Object.hasOwn(PROVIDERS, provider)) throw syncError("不支持此同步平台。", 404);
   return locked(stateDir, async (data, persist) => {
     let assets;
@@ -749,11 +754,12 @@ export async function performAssetSyncAction({ stateDir, provider, action, body 
       assets = await applyPreview({ stateDir, data, provider, previewId: body.previewId, revision: body.revision, now: clock(), clock, persist });
     } else throw syncError("不支持这个同步操作。", 404);
     await persist(data);
-    return assets ? { sync: status(data, clock()), assets } : status(data, clock());
+    return assets ? { sync: status(data, clock(), schedule), assets } : status(data, clock(), schedule);
   });
 }
 
 export async function completeFutuAuthorization({ stateDir, query, sessionBinding = "", api = adapters, now, clock = now ? advancingClock(now) : () => new Date() }) {
+  const schedule = await readAssetRefreshSchedule({ stateDir, now: clock() });
   return locked(stateDir, async (data, persist) => {
     const pending = data.oauth;
     if (!pending || !sessionBinding || typeof query.state !== "string" || digest(query.state) !== pending.stateHash || digest(sessionBinding) !== pending.bindingHash || Date.parse(pending.expiresAt) < clock().getTime()) throw syncError("富途授权已过期或会话不匹配，请重新授权。", 403);
@@ -773,19 +779,20 @@ export async function completeFutuAuthorization({ stateDir, query, sessionBindin
     await persist(data);
     await readFutuAccountList(data, api, persist, clock);
     await persist(data);
-    return status(data, clock());
+    return status(data, clock(), schedule);
   });
 }
 
 export async function runAssetSyncCycle({ stateDir, api = adapters, now, clock = now ? advancingClock(now) : () => new Date() }) {
   now ??= clock();
+  const { time } = await readAssetRefreshSchedule({ stateDir, now });
   // Reading an unconfigured collector never creates credential or financial files.
   if (!Object.values((await readPrivate(pathFor(stateDir))).providers).some((value) => value.enabled)) return { attempted: 0, applied: 0, failed: 0 };
   return locked(stateDir, async (data, persist) => {
     const result = { attempted: 0, applied: 0, failed: 0 };
     for (const provider of Object.keys(PROVIDERS)) {
       const value = data.providers[provider];
-      if (!value?.enabled || value.lastFetchedAt && now.getTime() < Date.parse(nextAssetRefreshAt(value.lastFetchedAt))) continue;
+      if (!value?.enabled || value.lastFetchedAt && now.getTime() < Date.parse(nextAssetRefreshAt(value.lastFetchedAt, time))) continue;
       result.attempted += 1;
       value.lastAttemptAt = clock().toISOString();
       try {

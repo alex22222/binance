@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { mkdir, open, rename, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { emptyPortfolio, summarize, validatePortfolio } from "./personal-assets-core.mjs";
+import { emptyPortfolio, summarize, validatePortfolio, nextAssetRefreshAt } from "./personal-assets-core.mjs";
 
 export * from "./personal-assets-core.mjs";
 
@@ -108,6 +108,72 @@ async function withWriteLock(stateDir, update) {
     await handle.close();
     await unlink(lockPath);
   }
+}
+
+const refreshDay = value => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date(value));
+const validRefreshTime = value => typeof value === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
+const refreshPath = stateDir => join(resolve(stateDir), "personal-assets-refresh.json");
+
+async function refreshConfig(stateDir) {
+  statePath(stateDir);
+  let handle;
+  try {
+    handle = await open(refreshPath(stateDir), constants.O_RDONLY | constants.O_NOFOLLOW);
+    const info = await handle.stat();
+    if (!info.isFile() || (info.mode & 0o077) || info.size > 10_000) throw new Error();
+    const value = JSON.parse(await handle.readFile("utf8"));
+    if (value?.schemaVersion !== 1 || !validRefreshTime(value.time)
+      || [value.updatedAt, value.lastAttemptAt, value.lastCompletedAt].some(at => at !== null && (typeof at !== "string" || !Number.isFinite(Date.parse(at))))
+      || value.lastError !== null && (typeof value.lastError !== "string" || value.lastError.length > 200)) throw new Error();
+    return value;
+  } catch (error) {
+    if (error.code === "ENOENT") return { schemaVersion: 1, time: "07:00", updatedAt: null, lastAttemptAt: null, lastCompletedAt: null, lastError: null };
+    throw new PersonalAssetsError("自动更新配置无法读取，已停止自动刷新；现有资产未被覆盖", 500);
+  } finally { await handle?.close(); }
+}
+
+function refreshStatus(config, now) {
+  const date = refreshDay(now);
+  const ranToday = Boolean(config.lastAttemptAt && refreshDay(config.lastAttemptAt) >= date);
+  const today = `${date}T${config.time}:00+08:00`;
+  return { frequency: "daily", timeZone: "Asia/Shanghai", time: config.time, updatedAt: config.updatedAt,
+    nextRunAt: ranToday ? nextAssetRefreshAt(today, config.time) : new Date(today).toISOString(),
+    lastAttemptAt: config.lastAttemptAt, lastCompletedAt: config.lastCompletedAt, lastError: config.lastError };
+}
+
+export async function readAssetRefreshSchedule({ stateDir, now = new Date() }) {
+  return refreshStatus(await refreshConfig(stateDir), now);
+}
+
+export async function configureAssetRefreshSchedule({ stateDir, time, now = new Date() }) {
+  if (!validRefreshTime(time)) throw new PersonalAssetsError("请选择有效的每日更新时间（HH:mm）");
+  return withWriteLock(stateDir, async () => {
+    const config = { ...await refreshConfig(stateDir), time, updatedAt: now.toISOString() };
+    await atomicWrite(refreshPath(stateDir), config);
+    return refreshStatus(config, now);
+  });
+}
+
+export async function claimAssetRefresh({ stateDir, now = new Date() }) {
+  return withWriteLock(stateDir, async () => {
+    const config = await refreshConfig(stateDir);
+    const schedule = refreshStatus(config, now);
+    if (now.getTime() < Date.parse(schedule.nextRunAt)) return null;
+    config.lastAttemptAt = now.toISOString(); config.lastError = null;
+    await atomicWrite(refreshPath(stateDir), config);
+    return { attemptedAt: config.lastAttemptAt };
+  });
+}
+
+export async function completeAssetRefresh({ stateDir, attemptedAt, failed = false, now = new Date() }) {
+  return withWriteLock(stateDir, async () => {
+    const config = await refreshConfig(stateDir);
+    if (attemptedAt !== config.lastAttemptAt) throw new PersonalAssetsError("自动更新任务已变化，不能覆盖较新的运行结果", 409);
+    config.lastCompletedAt = now.toISOString();
+    config.lastError = failed ? "部分资产更新失败，已保留上次有效数据；下个更新时间再尝试。" : null;
+    await atomicWrite(refreshPath(stateDir), config);
+    return refreshStatus(config, now);
+  });
 }
 
 const statementProviders = ["usmart-hk", "usmart-sg"];

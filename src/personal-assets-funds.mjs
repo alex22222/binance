@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { readPersonalAssets, savePersonalAssets, createPersonalAssetsSnapshot } from "./personal-assets.mjs";
+import { readPersonalAssets, savePersonalAssets, createPersonalAssetsSnapshot, readAssetRefreshSchedule } from "./personal-assets.mjs";
 import { valuePersonalAssetState } from "./personal-assets-fx.mjs";
 import { nextAssetRefreshAt } from "./personal-assets-core.mjs";
 
@@ -26,7 +26,7 @@ const STOCKS = {
 };
 const instrument = row => row.symbol === undefined ? CATALOG[row.isin] : STOCKS[row.symbol];
 const validInstrument = row => row.symbol === undefined ? typeof row.isin === "string" && Object.hasOwn(CATALOG, row.isin) : row.isin === undefined && typeof row.symbol === "string" && Object.hasOwn(STOCKS, row.symbol);
-const INTERVAL = 12 * 60 * 60_000;
+const INTERVAL = 24 * 60 * 60_000;
 const fail = (message, statusCode = 502) => Object.assign(new Error(message), { statusCode, fundError: true });
 const day = at => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(at);
 const validDate = value => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
@@ -247,11 +247,12 @@ export async function configureAssetFund({ stateDir, entryId, isin, symbol, quan
 
 export async function runAssetFundCycle({ stateDir, fetchImpl = fetch, now, clock = now ? advancingClock(now) : () => new Date() }) {
   now ??= clock();
+  const { time } = await readAssetRefreshSchedule({ stateDir, now });
   if (!(await readConfig(filePath(stateDir))).bindings.some(row => row.enabled)) return { attempted: 0, applied: 0, failed: 0 };
   return locked(stateDir, async (config, persist) => {
     const result = { attempted: 0, applied: 0, failed: 0 };
     for (const binding of config.bindings) {
-      if (!binding.enabled || binding.lastAttemptAt && now.getTime() < Date.parse(nextAssetRefreshAt(binding.lastAttemptAt))) continue;
+      if (!binding.enabled || binding.lastAttemptAt && now.getTime() < Date.parse(nextAssetRefreshAt(binding.lastAttemptAt, time))) continue;
       result.attempted++; binding.lastAttemptAt = clock().toISOString();
       try {
         let current = await readPersonalAssets({ stateDir });

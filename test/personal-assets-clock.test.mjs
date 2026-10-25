@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { emptyPortfolio, readPersonalAssets, savePersonalAssets } from "../src/personal-assets.mjs";
+import { emptyPortfolio, readPersonalAssets, savePersonalAssets, configureAssetRefreshSchedule } from "../src/personal-assets.mjs";
 import { performAssetSyncAction, readAssetSyncStatus, runAssetSyncCycle } from "../src/personal-assets-sync.mjs";
 import { fetchOkxAssets } from "../src/personal-assets-okx.mjs";
 import { configureAssetFund, fetchAssetHoldingQuote, readAssetFundStatus, runAssetFundCycle } from "../src/personal-assets-funds.mjs";
@@ -24,7 +24,8 @@ async function fixture(t) {
   const portfolio = emptyPortfolio(); portfolio.accounts[0].basis = "holdings";
   portfolio.accounts.push({ id: "exchange", platform: "OKX", name: "Synthetic exchange", basis: "total" }, { id: "wallet", platform: "TokenPocket", name: "Synthetic wallet", basis: "holdings" });
   portfolio.entries.push(...["one", "two"].map(id => ({ id: `fund-${id}`, accountId: "account-1", kind: "holding", name: `Synthetic ${id}`, category: "货币基金", currency: "USD", amount: 1, asOf: "2026-10-24", source: "manual" })));
-  await savePersonalAssets({ stateDir, portfolio, revision: 0 }); return stateDir;
+  await savePersonalAssets({ stateDir, portfolio, revision: 0 });
+  await configureAssetRefreshSchedule({ stateDir, time: "21:00", now: at }); return stateDir;
 }
 function assets(provider, now) {
   const wallet = provider === "tokenpocket";
@@ -58,7 +59,7 @@ test("one cycle clock advances across providers and through each actual source r
   assert.equal(status.providers.tokenpocket.lastAttemptAt, "2026-10-24T13:00:02.000Z");
   assert.equal(status.providers.tokenpocket.lastFetchedAt, "2026-10-24T13:00:05.000Z");
   assert.equal(status.providers.tokenpocket.lastAppliedAt, "2026-10-24T13:00:05.000Z");
-  assert.equal(status.providers.tokenpocket.dueAt, "2026-10-25T01:00:00.000Z");
+  assert.equal(status.providers.tokenpocket.dueAt, "2026-10-25T13:00:00.000Z");
   const ledger = await readFile(join(stateDir, "personal-assets.json"), "utf8");
   clock.tick(60000);
   assert.deepEqual(await runAssetSyncCycle({ stateDir, api: source, now: clock.read(), clock: clock.read }), { attempted: 0, applied: 0, failed: 0 });
@@ -122,13 +123,13 @@ test("fund clocks span configure and sequential valuations without rewriting unc
   assert.equal(status.bindings[0].lastAttemptAt, slot.toISOString()); assert.equal(status.bindings[0].lastFetchedAt, "2026-10-24T13:00:02.000Z");
   assert.equal(status.bindings[1].lastAttemptAt, "2026-10-24T13:00:02.000Z"); assert.equal(status.bindings[1].lastFetchedAt, "2026-10-24T13:00:03.000Z");
   const applied = status.bindings.map(row => row.lastAppliedAt), ledger = await readFile(join(stateDir, "personal-assets.json"), "utf8");
-  clock.set(new Date("2026-10-25T01:00:00Z"));
+  clock.set(new Date("2026-10-25T13:00:00Z"));
   assert.deepEqual(await runAssetFundCycle({ stateDir, now: clock.read(), clock: clock.read, fetchImpl: navHttp(clock, "12.2") }), { attempted: 2, applied: 0, failed: 0 });
   assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), ledger);
   status = await readAssetFundStatus({ stateDir }); assert.deepEqual(status.bindings.map(row => row.lastAppliedAt), applied);
-  assert.equal(status.bindings[0].lastFetchedAt, "2026-10-25T01:00:02.000Z");
+  assert.equal(status.bindings[0].lastFetchedAt, "2026-10-25T13:00:02.000Z");
   const fetched = status.bindings.map(row => row.lastFetchedAt);
-  clock.set(new Date("2026-10-25T13:00:00Z"));
+  clock.set(new Date("2026-10-26T13:00:00Z"));
   assert.deepEqual(await runAssetFundCycle({ stateDir, now: clock.read(), clock: clock.read, fetchImpl: async () => { clock.tick(1000); throw Error("private source error"); } }), { attempted: 2, applied: 0, failed: 2 });
   status = await readAssetFundStatus({ stateDir }); assert.deepEqual(status.bindings.map(row => row.lastAppliedAt), applied); assert.deepEqual(status.bindings.map(row => row.lastFetchedAt), fetched);
   assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), ledger);
