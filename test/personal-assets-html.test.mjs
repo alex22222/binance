@@ -61,7 +61,7 @@ async function view(initial = stateWith(), handleRequest = null, { search = "", 
       return { ok: true, status: 200, json: async () => initial };
     }
   });
-  runInContext(source.replace(/^import[^\n]+\n/, "const { PLATFORMS, CURRENCIES, CATEGORIES, emptyPortfolio, entryIdentity, validatePortfolio, summarize, parseCsv, csvTemplate, extractOcrCandidates, detectCurrency } = core;\n"), context);
+  runInContext(source.replace(/^import \{([^}]+)\} from[^\n]+\n/, "const {$1} = core;\n"), context);
   for (let tick = 0; tick < 5; tick++) await new Promise((resolve) => setImmediate(resolve));
   return { get, listeners, requests, aiRequests, navigations, intervals, run: (code) => runInContext(code, context) };
 }
@@ -550,6 +550,29 @@ test("overview leads with the asset-type panel holding total, currency, privacy 
   assert.equal(ui.run("summarize(portfolio()).total"), 500);
   ui.run("hidden=true;render()");
   assert.doesNotMatch(ui.get("asset-content").innerHTML, /123\.45|500\.00/);
+});
+
+test("overview measures core and satellite against the 50/50 rule and keeps mixed records apart", async () => {
+  const holding = (id, name, category, amount) => entry({ id, kind: "holding", name, category, amount });
+  const initial = stateWith([
+    holding("mmf", "汇丰环球货币基金", "货币基金", 300), holding("voo", "Vanguard 标普500 ETF（VOO）", "股票ETF", 100),
+    holding("btc", "BTC（交易账户）", "加密资产", 50), holding("a", "隆基绿能", "股票", 400), holding("doge", "DOGE", "加密资产", 50),
+    holding("mix", "账户净值", "组合资产", 100),
+  ]);
+  initial.portfolio.accounts[0].basis = "holdings";
+  const ui = await view(initial);
+  const html = ui.get("asset-content").innerHTML;
+  assert.ok(html.indexOf('aria-label="平台分布"') < html.indexOf('aria-label="核心与卫星"'));
+  assert.match(html, /核心<\/span><strong class="num">45\.0%/);
+  assert.match(html, /卫星<\/span><strong class="num">45\.0%/);
+  assert.match(html, /待拆分<\/span><strong class="num">10\.0%/);
+  assert.match(html, /核心比目标低 5\.0 个百分点 · 另有 10\.0% 为组合资产或未分类/);
+  assert.match(html, /现金类 66\.7% · BTC 与指数 33\.3%（占核心）/);
+  assert.match(html, /class="sleeve-target" style="left:50%"/);
+  ui.run("hidden=true;render()");
+  const hiddenHtml = ui.get("asset-content").innerHTML;
+  assert.match(hiddenHtml, /aria-label="核心与卫星"[\s\S]*分布及占比已隐藏/);
+  assert.doesNotMatch(hiddenHtml, /45\.0%|66\.7%|个百分点|sleeve-bar/);
 });
 
 test("API PnL shows read time and unknown source time in overview and preview without leaking hidden amounts", async () => {

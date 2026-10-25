@@ -9,6 +9,7 @@ import {
   CATEGORIES,
   CURRENCIES,
   PLATFORMS,
+  assetSleeve,
   csvTemplate,
   detectCurrency,
   emptyPortfolio,
@@ -231,6 +232,45 @@ test("category distributions separate stock ETFs, stablecoins, deposits and mixe
   const explicit = validatePortfolio(portfolio([entry({ name: "USDT现金股票ETF", category: "未分类" })]));
   assert.equal(explicit.entries[0].category, "未分类");
   assert.deepEqual(summarize(explicit).byCategory, [{ name: "未分类", value: 100 }]);
+});
+
+test("the core/satellite rule classifies by category and index exposure and leaves mixed records unassigned", () => {
+  const sleeve = (name, category, platform = "OKX") => {
+    const { sleeve, group } = assetSleeve({ name, category }, { platform });
+    return `${sleeve}:${group}`;
+  };
+  assert.equal(sleeve("汇丰环球货币基金", "货币基金"), "core:货币基金");
+  assert.equal(sleeve("定期存款", "定期存款"), "core:现金与定期");
+  assert.equal(sleeve("USDT0（X Layer）", "稳定币"), "core:USDT");
+  assert.equal(sleeve("USDC", "稳定币"), "core:USDC");
+  assert.equal(sleeve("Polymarket 资金（pUSD）", "稳定币"), "core:其他稳定币");
+  assert.equal(sleeve("BTC（交易账户）", "加密资产"), "core:BTC");
+  assert.equal(sleeve("WBTC", "加密资产"), "core:BTC");
+  assert.equal(sleeve("BTCST", "加密资产"), "satellite:代币");
+  assert.equal(sleeve("OKSOL", "加密资产"), "satellite:代币");
+  assert.equal(sleeve("Vanguard 标普500 ETF（VOO）", "股票ETF"), "core:标普500");
+  assert.equal(sleeve("SPYon · Ondo 代币化ETF（BNB Chain）", "股票ETF", "TokenPocket"), "core:标普500");
+  assert.equal(sleeve("Invesco QQQ Trust", "股票ETF"), "core:纳指100");
+  assert.equal(sleeve("SPYD 高股息", "股票ETF"), "satellite:股票与ETF");
+  assert.equal(sleeve("隆基绿能", "股票"), "satellite:股票与ETF");
+  assert.equal(sleeve("TSLAon", "股票", "币安Agentic Wallet"), "satellite:链上股票代币");
+  for (const category of ["组合资产", "未分类", "基金", "债券", "其他"]) assert.equal(sleeve("账户净值", category), `unassigned:${category}`);
+
+  const value = portfolio([
+    entry({ id: "mmf", kind: "holding", name: "货基", category: "货币基金", amount: 60 }),
+    entry({ id: "btc", kind: "holding", name: "BTC", category: "加密资产", amount: 10, currency: "USD" }),
+    entry({ id: "stock", kind: "holding", name: "隆基绿能", category: "股票", amount: 50 }),
+    entry({ id: "mix", kind: "holding", name: "账户净值", category: "组合资产", amount: 20 }),
+  ]);
+  value.accounts[0].basis = "holdings";
+  value.rates.USD = { value: 7, date: today };
+  const { total, sleeves } = summarize(validatePortfolio(value));
+  assert.equal(total, 200);
+  assert.deepEqual(sleeves.core, { value: 130, groups: [{ name: "BTC", value: 70 }, { name: "货币基金", value: 60 }] });
+  assert.deepEqual(sleeves.satellite, { value: 50, groups: [{ name: "股票与ETF", value: 50 }] });
+  assert.deepEqual(sleeves.unassigned, { value: 20, groups: [{ name: "组合资产", value: 20 }] });
+  const empty = summarize(emptyPortfolio()).sleeves;
+  assert.deepEqual(empty.core, { value: 0, groups: [] });
 });
 
 test("new categories retain account-basis and pending-account exclusions", () => {

@@ -141,6 +141,32 @@ export function validatePortfolio(input) {
   return result;
 }
 
+// The owner's allocation rule: BTC, money-market funds, cash, S&P 500, QQQ,
+// USDT and USDC are core; other stocks and tokens are satellite. Index
+// trackers count by exposure, so an on-chain S&P 500 token is still core.
+// Mixed or unclassified records stay out of both sides until split.
+export const CORE_GROUPS = ["货币基金", "现金与定期", "USDT", "USDC", "其他稳定币", "BTC", "标普500", "纳指100"];
+export const CORE_CASH_GROUPS = ["货币基金", "现金与定期", "USDT", "USDC", "其他稳定币"];
+export const SATELLITE_GROUPS = ["股票与ETF", "链上股票代币", "代币"];
+const WALLET_PLATFORMS = ["TokenPocket", "币安Agentic Wallet", "OKX Agentic Wallet"];
+const BTC_NAME = /^(?:BTC|WBTC|BTCB|cbBTC)(?![A-Za-z])/i;
+const SP500_NAME = /标普\s*500|S&P\s*500|(?<![A-Za-z])(?:VOO|SPY|IVV|SPLG|SPYon|CSPX|VUAA)(?![A-Za-z])/i;
+const NDX_NAME = /纳斯达克\s*100|纳指\s*100|Nasdaq[\s-]*100|(?<![A-Za-z])(?:QQQ|QQQM|QQQon)(?![A-Za-z])/i;
+
+export function assetSleeve(entry, account) {
+  const { category, name } = entry;
+  if (category === "货币基金") return { sleeve: "core", group: "货币基金" };
+  if (category === "现金" || category === "定期存款") return { sleeve: "core", group: "现金与定期" };
+  if (category === "稳定币") return { sleeve: "core", group: /USDT/i.test(name) ? "USDT" : /USDC/i.test(name) ? "USDC" : "其他稳定币" };
+  if (category === "加密资产") return BTC_NAME.test(name) ? { sleeve: "core", group: "BTC" } : { sleeve: "satellite", group: "代币" };
+  if (category === "股票" || category === "股票ETF") {
+    if (SP500_NAME.test(name)) return { sleeve: "core", group: "标普500" };
+    if (NDX_NAME.test(name)) return { sleeve: "core", group: "纳指100" };
+    return { sleeve: "satellite", group: WALLET_PLATFORMS.includes(account?.platform) || /代币化|tokeni[sz]ed/i.test(name) ? "链上股票代币" : "股票与ETF" };
+  }
+  return { sleeve: "unassigned", group: category };
+}
+
 export function summarize(portfolio) {
   const included = [];
   const excluded = [];
@@ -150,6 +176,7 @@ export function summarize(portfolio) {
   const byPlatform = new Map();
   const byCategory = new Map();
   const byCurrency = new Map();
+  const bySleeve = { core: new Map(), satellite: new Map(), unassigned: new Map() };
   const accounts = new Map(portfolio.accounts.map((account) => [account.id, account]));
   const usedTotals = new Set();
   let total = 0;
@@ -178,8 +205,11 @@ export function summarize(portfolio) {
     byPlatform.set(account.platform, (byPlatform.get(account.platform) ?? 0) + value);
     byCategory.set(entry.category, (byCategory.get(entry.category) ?? 0) + value);
     byCurrency.set(entry.currency, (byCurrency.get(entry.currency) ?? 0) + value);
+    const { sleeve, group } = assetSleeve(entry, account);
+    bySleeve[sleeve].set(group, (bySleeve[sleeve].get(group) ?? 0) + value);
   }
   const groups = (map) => Array.from(map, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+  const sleeve = (map) => ({ value: [...map.values()].reduce((sum, value) => sum + value, 0), groups: groups(map) });
   const countedAccounts = new Set([...included, ...missing].map(row => row.accountId));
   const stockPnl = { total: null, included: [], missing: [], excluded: [] };
   for (const row of portfolio.stockPnl || []) {
@@ -189,7 +219,8 @@ export function summarize(portfolio) {
     stockPnl.total = (stockPnl.total ?? 0) + row.amount * rate;
     stockPnl.included.push(row);
   }
-  return { total: included.length ? total : null, included, excluded, missing, stale, pending, stockPnl, byPlatform: groups(byPlatform), byCategory: groups(byCategory), byCurrency: groups(byCurrency) };
+  return { total: included.length ? total : null, included, excluded, missing, stale, pending, stockPnl, byPlatform: groups(byPlatform), byCategory: groups(byCategory), byCurrency: groups(byCurrency),
+    sleeves: { core: sleeve(bySleeve.core), satellite: sleeve(bySleeve.satellite), unassigned: sleeve(bySleeve.unassigned) } };
 }
 
 function csvRows(text) {
