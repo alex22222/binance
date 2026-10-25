@@ -28,15 +28,25 @@ test("light is the default theme, dark stays behind data-theme, and dark-era pag
   }
 });
 
-test("navigation leads with personal assets and moves the Binance wallet to /dashboard", () => {
+test("navigation leads with personal assets and groups the Binance wallet pages in one dropdown", () => {
   for (const active of ["/", "/dashboard"]) {
     const html = siteHeader(active);
     const links = [...html.matchAll(/<a href="([^"]+)"(?: aria-current="page")?>([^<]+)<\/a>/g)]
       .map(([, href, label]) => [href, label]);
-    assert.deepEqual(links.slice(0, 2), [["/assets", "个人资产"], ["/dashboard", "币安Agent Wallet"]], active);
-    assert.match(html, /<a href="\/dashboard" aria-current="page">币安Agent Wallet<\/a>/, active);
+    assert.deepEqual(links.slice(0, 2), [["/assets", "个人资产"], ["/dashboard", "交易总览"]], active);
+    assert.match(html, /<a href="\/dashboard" aria-current="page">交易总览<\/a>/, active);
     assert.equal(html.match(/aria-current="page"/g)?.length, 1, active);
   }
+  const top = (html) => [...html.replace(/<div class="site-submenu">[\s\S]*?<\/div>/g, "").matchAll(/<a href="([^"]+)"[^>]*>|<summary>([^<]+)<\/summary>/g)].map(([, href, group]) => href || group);
+  assert.deepEqual(top(siteHeader("/assets")), ["/assets", "币安Agent Wallet", "/btc-radar", "/gmgn/", "https://polyhermes.107-191-42-75.sslip.io/future-btc5m-bridge"]);
+  const menu = siteHeader("/assets").match(/<details class="site-group"><summary>币安Agent Wallet<\/summary><div class="site-submenu">([\s\S]*?)<\/div><\/details>/)[1];
+  assert.deepEqual([...menu.matchAll(/<a href="([^"]+)">([^<]+)<\/a>/g)].map(([, href, label]) => [href, label]),
+    [["/dashboard", "交易总览"], ["/strategies", "策略"], ["/reviews", "复盘"], ["/fund-manager", "基金经理"], ["/operations", "运行总览"]]);
+  for (const active of ["/strategies", "/reviews", "/fund-manager", "/operations"]) {
+    assert.match(siteHeader(active), new RegExp(`<details class="site-group is-current"><summary>币安Agent Wallet</summary>[^]*<a href="${active}" aria-current="page">`), active);
+  }
+  assert.doesNotMatch(siteHeader("/btc-radar"), /site-group is-current/);
+  assert.doesNotMatch(SITE_CSS, /\.site-nav\{[^}]*overflow/);
   const html = siteHeader("/assets");
   assert.match(html, /<a class="site-brand" href="\/"><span class="site-mark" aria-hidden="true">H<\/span><span class="site-name">HQ Capital<\/span><\/a>/);
   assert.doesNotMatch(html, /Agentic Wallet<\/span>/);

@@ -3,14 +3,17 @@
 // renders siteHeader() as the first element of <body>. The brand mark is text,
 // so the header also renders under CSPs that block images.
 
+// Links in display order. Consecutive links naming the same group (third field)
+// share one dropdown in the bar, labelled with that group name.
+const WALLET_GROUP = "币安Agent Wallet";
 export const SITE_NAV = Object.freeze([
   ["/assets", "个人资产"],
-  ["/dashboard", "币安Agent Wallet"],
-  ["/strategies", "策略"],
-  ["/reviews", "复盘"],
-  ["/fund-manager", "基金经理"],
+  ["/dashboard", "交易总览", WALLET_GROUP],
+  ["/strategies", "策略", WALLET_GROUP],
+  ["/reviews", "复盘", WALLET_GROUP],
+  ["/fund-manager", "基金经理", WALLET_GROUP],
+  ["/operations", "运行总览", WALLET_GROUP],
   ["/btc-radar", "BTC 风控"],
-  ["/operations", "运行总览"],
   ["/gmgn/", "GMGN"],
   ["https://polyhermes.107-191-42-75.sslip.io/future-btc5m-bridge", "polymarket"]
 ]);
@@ -20,9 +23,17 @@ export function siteHeader(active, actions = "") {
   // "/" now lands on personal assets and the trading dashboard lives at
   // /dashboard, but that page (part of the Live code identity) still says "/".
   const current = active === "/" ? "/dashboard" : active;
-  const links = SITE_NAV
-    .map(([href, label]) => `<a href="${href}"${href === current ? ' aria-current="page"' : ""}>${label}</a>`)
-    .join("");
+  const link = ([href, label]) => `<a href="${href}"${href === current ? ' aria-current="page"' : ""}>${label}</a>`;
+  let links = "";
+  for (let index = 0; index < SITE_NAV.length;) {
+    const group = SITE_NAV[index][2];
+    if (!group) { links += link(SITE_NAV[index++]); continue; }
+    const members = [];
+    while (index < SITE_NAV.length && SITE_NAV[index][2] === group) members.push(SITE_NAV[index++]);
+    // A <details> menu needs no script, so it works under every page's CSP.
+    const here = members.some(([href]) => href === current);
+    links += `<details class="site-group${here ? " is-current" : ""}"><summary>${group}</summary><div class="site-submenu">${members.map(link).join("")}</div></details>`;
+  }
   return `<header class="site-header"><div class="site-bar">`
     + `<a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">H</span><span class="site-name">HQ Capital</span></a>`
     + `<nav class="site-nav" aria-label="主导航">${links}</nav>`
@@ -111,13 +122,25 @@ background-size:auto,auto,32px 32px,32px 32px,auto;background-attachment:fixed}
 .site-brand{display:flex;align-items:center;gap:10px;color:var(--text);font-size:15px;font-weight:750;text-decoration:none;white-space:nowrap}
 .site-mark{width:34px;height:34px;display:grid;place-items:center;border-radius:11px;background:var(--brand);color:var(--brand-ink);font-weight:900}
 [data-theme=dark] .site-mark{box-shadow:0 0 24px rgba(245,193,79,.18)}
-.site-nav{display:flex;gap:4px;min-width:0;overflow-x:auto;scrollbar-width:none}
+.site-nav{display:flex;align-items:center;gap:4px;min-width:0;flex-wrap:wrap}
 .site-nav::-webkit-scrollbar{display:none}
 .site-nav a{padding:8px 12px;border-radius:var(--radius-sm);color:var(--muted);font-size:13px;font-weight:650;text-decoration:none;white-space:nowrap;transition:color .15s,background-color .15s}
 .site-nav a:hover{color:var(--text);background:rgba(23,23,33,.05);text-decoration:none}
 [data-theme=dark] .site-nav a:hover{background:rgba(255,255,255,.05)}
 .site-nav a[aria-current]{color:var(--brand);background:var(--brand-soft)}
-.site-brand:focus-visible,.site-nav a:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.site-brand:focus-visible,.site-nav a:focus-visible,.site-group>summary:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.site-group{position:relative}
+.site-group>summary{display:flex;align-items:center;gap:6px;padding:8px 12px;border-radius:var(--radius-sm);color:var(--muted);font-size:13px;font-weight:650;white-space:nowrap;cursor:pointer;list-style:none;transition:color .15s,background-color .15s}
+.site-group>summary::-webkit-details-marker{display:none}
+.site-group>summary::after{content:"";width:6px;height:6px;margin-top:-3px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg)}
+.site-group>summary:hover{color:var(--text);background:rgba(23,23,33,.05)}
+[data-theme=dark] .site-group>summary:hover{background:rgba(255,255,255,.05)}
+.site-group.is-current>summary{color:var(--brand);background:var(--brand-soft)}
+.site-submenu{display:none;position:absolute;left:0;top:calc(100% + 6px);z-index:40;min-width:168px;padding:6px;border:1px solid var(--line);border-radius:12px;background:var(--surface);box-shadow:var(--shadow);flex-direction:column;gap:2px}
+.site-group[open] .site-submenu{display:flex}
+.site-submenu a{display:block}
+/* With a mouse the menu follows hover and focus, so a click never leaves it stuck open. */
+@media (hover:hover) and (pointer:fine){.site-group[open] .site-submenu{display:none}.site-group:hover .site-submenu,.site-group:focus-within .site-submenu{display:flex}.site-group::after{content:"";position:absolute;left:0;right:0;top:100%;height:8px}}
 .site-actions{margin-left:auto;display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
 @media (max-width:760px){
 .site-header{position:static;padding:calc(8px + env(safe-area-inset-top)) 12px 0}
