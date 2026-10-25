@@ -300,19 +300,23 @@ test("old model snapshots fail closed and a model switch clears the previous his
   assert.doesNotMatch(view.get("hist").innerHTML, /<svg/);
 });
 
-test("organizes three named layers with in-page navigation and folded experimental evidence", () => {
+test("leads with the score and its market background, then daily history against real prices", () => {
   const html = btcRadarHtml({ nonce: "layout" });
-  const layers = ["market-background", "slow-trend", "account-risk"];
-  for (const id of layers) {
+  const sections = ["market-background", "score-history", "slow-trend", "account-risk"];
+  for (const id of sections) {
     assert.match(html, new RegExp('<a[^>]+href="#'+id+'"'));
     assert.match(html, new RegExp('<section[^>]+id="'+id+'"[^>]+aria-labelledby="'+id+'-title"'));
   }
-  assert.ok(html.indexOf('id="market-background"') < html.indexOf('id="slow-trend"'));
-  assert.ok(html.indexOf('id="slow-trend"') < html.indexOf('id="account-risk"'));
-  assert.match(html, /<details[^>]+id="experimental-pressure"[^>]*>\s*<summary>/);
-  assert.match(html, /<details[^>]+id="candidate-observations"[^>]*>\s*<summary>/);
-  assert.doesNotMatch(html, /id="experimental-pressure"[^>]*\bopen\b|id="candidate-observations"[^>]*\bopen\b/);
-  assert.doesNotMatch(html, /aria-label="评分仪表"/);
+  const at = (marker) => html.indexOf(marker);
+  assert.ok(sections.every((id, index) => !index || at('id="'+sections[index - 1]+'"') < at('id="'+id+'"')));
+  assert.ok(at('id="market-background"') < at('id="pressureValue"') && at('id="pressureValue"') < at('id="contrib"') && at('id="contrib"') < at('id="factors"'));
+  assert.ok(at('id="score-history"') < at('id="daily"') && at('id="daily"') < at('id="validity"') && at('id="validity"') < at('id="slow-trend"'));
+  for (const id of ["score-method", "intraday-history", "candidate-observations"]) {
+    assert.match(html, new RegExp('<details[^>]+id="'+id+'"[^>]*>\\s*<summary>'));
+    assert.doesNotMatch(html, new RegExp('id="'+id+'"[^>]*\\bopen\\b'));
+  }
+  assert.doesNotMatch(html, /id="experimental-pressure"/);
+  assert.match(html, /未验证 \/ 非预测/);
   assert.match(html, /只读.*不下单/);
 });
 
@@ -328,9 +332,87 @@ test("account attention remains visible above the three layers and is cleared as
   assert.match(view.get("accountAlert").textContent, /失效|未核实/);
 });
 
-test("background metrics stay primary while factor score explanations are explicitly experimental", async () => {
-  const view = await render({ status: "AVAILABLE", latest, history: [] });
-  assert.match(view.get("factors").innerHTML, /<details class="factor-method">/);
-  assert.match(view.get("factors").innerHTML, /模型解释.*未验证/);
-  assert.equal(view.get("pressureValue").textContent, "64");
+const v2Factors = [
+  { key: "poly", name: "预测市场 Polymarket", weight: 0, score: null, metrics: [["本周下沿触价盘", "$80,000 · Yes 20.0¢"]], note: "仅展示原始报价" },
+  { key: "fed", name: "美联储利率预期", weight: 20, score: 80, metrics: [["10月加息", "60%"]], note: "市场押注加息，流动性收紧" },
+  { key: "ust", name: "美债收益率", weight: 20, score: 70, metrics: [["10年期", "4.70%"]], note: "收益率平稳" },
+  { key: "gold", name: "黄金 (XAUT)", weight: 10, score: 50, metrics: [["10日变化", "+0.0%"]], note: "金价平稳" },
+  { key: "tech", name: "BTC 技术面", weight: 15, score: 40, metrics: [["7日涨跌", "+2.0%"]], note: "站上 20 日均线" },
+  { key: "deriv", name: "衍生品与情绪", weight: 10, score: 60, metrics: [["持仓量 7日", "+1.0%"]], note: "杠杆水平正常" }
+];
+const v2Latest = { ...latest, score: 62.7, level: "orange", level_name: "警戒", factors: v2Factors };
+
+test("factor cards show raw data, score, contribution and the scoring rule, and contributions add up to the total", async () => {
+  const view = await render({ status: "AVAILABLE", latest: v2Latest, history: [] });
+  assert.equal(view.get("pressureValue").textContent, "63");
+  const cards = view.get("factors").innerHTML;
+  assert.match(cards, /美联储利率预期[\s\S]*权重 20 \/ 75[\s\S]*lv-t-red">80<[\s\S]*贡献 \+8\.0 分[\s\S]*10月加息[\s\S]*评分规则 · 截断在 0–100[\s\S]*0\.6 ×（年内加息 − 年内降息概率）[\s\S]*模型解读（未验证）：市场押注加息/);
+  assert.match(cards, /BTC 技术面[\s\S]*贡献 −2\.0 分/);
+  assert.match(cards, /预测市场 Polymarket[\s\S]*原始盘口 · 不计分[\s\S]*不计分：只展示各合约区间的原始 Yes 报价/);
+  assert.doesNotMatch(cards, /Polymarket<\/h3><span class="tag">原始盘口 · 不计分<\/span><\/div><div class="fac-score">/);
+  const contrib = view.get("contrib").innerHTML;
+  assert.deepEqual([...contrib.matchAll(/<div class="contrib-row"><span>([^<]+)</g)].map(([, name]) => name), ["美联储利率预期", "美债收益率", "衍生品与情绪", "黄金 (XAUT)", "BTC 技术面"]);
+  assert.match(contrib, /中性 50 \+ 12\.7 = 62\.7 分/);
+  assert.match(contrib, /80 分 · 权重 27%/);
+  view.run('Date.now=()=>Date.parse(radar.ts)+9*3600000; updateHealth()');
+  assert.match(view.get("contrib").innerHTML, /数据失效，当前不显示分数构成/);
+  assert.doesNotMatch(view.get("factors").innerHTML, /lv-t-red">80</);
+});
+
+const dayOf = (offset) => new Date(Date.parse("2026-10-01T00:00:00Z") + offset * 86_400_000).toISOString().slice(0, 10);
+function dailyPayload({ snapshots = 3, matured = 2, spearman = null } = {}) {
+  const horizons = [1, 7, 30].map((days) => ({ days, matured: days === 1 ? matured : days === 7 ? matured : 0, mean: matured ? -0.012 : null, spearman: days === 7 ? spearman : null,
+    bands: [["green", 0, null], ["yellow", 0, null], ["orange", matured, -0.012], ["red", 0, null]].map(([level, n, mean]) => ({ level, n, mean, downShare: n ? 0.5 : null })) }));
+  return {
+    dailyHour: 8, minSamples: 20, modelVersion: "pressure-v2-no-touch-probability", otherVersionDays: 22, horizons,
+    closes: Array.from({ length: 40 }, (_, index) => ({ date: dayOf(index - 40), close: 80000 + index * 100 })),
+    snapshots: Array.from({ length: snapshots }, (_, index) => ({ date: dayOf(index - snapshots + 1), ts: dayOf(index - snapshots + 1) + "T08:43:00+08:00", score: 50 + index * 10, level: "orange",
+      price: 83000 + index * 50, forward: { 1: index < matured ? -0.01 : null, 7: null, 30: null }, ...(index === 0 ? { staleSources: ["treasury"] } : {}) }))
+  };
+}
+
+test("plots daily snapshots on real closes and keeps the validity verdict pending until enough days mature", async () => {
+  const view = await render({ status: "AVAILABLE", latest: v2Latest, history: [], daily: dailyPayload() });
+  const chart = view.get("daily").innerHTML;
+  assert.match(chart, /<svg[^>]+aria-label="每日评分与 BTC 日收盘价"/);
+  assert.equal(chart.match(/<circle /g)?.length, 6, "each snapshot marks both its price and its score");
+  assert.match(chart, /<title>2026-09-29 · 分数 50\.0 · BTC 83,000<\/title>/);
+  assert.match(chart, /另有 22 天旧版评分已保存，不与当前版本混用/);
+  assert.equal(view.get("dailyStamp").textContent, "当前版本 3 天快照");
+  const table = view.get("validity").innerHTML;
+  assert.match(table, /低压力 &lt;40<\/span>/);
+  assert.match(table, /警戒 55–70<\/span><\/td><td><span class="neg">-1\.2%<\/span><small>下跌 50% · 2 天<\/small>/);
+  assert.match(table, /需 20 天，现 2 天/);
+  assert.equal(view.get("validityPill").textContent, "样本积累中 · 7 天已到期 2 / 20");
+  assert.match(view.get("validityNote").textContent, /互相重叠[\s\S]*不是亏损概率/);
+  const rows = view.get("dailyTable").innerHTML;
+  assert.ok(rows.indexOf("2026-10-01") < rows.indexOf("2026-09-29"), "newest first");
+  assert.match(rows, /2026-09-29<small>部分来源沿用旧值<\/small>/);
+  assert.match(rows, /<small>未到期<\/small>/);
+});
+
+test("rescored legacy days are drawn hollow and labelled with their original legacy score", async () => {
+  const daily = dailyPayload();
+  daily.snapshots[0] = { ...daily.snapshots[0], rescoredFrom: { modelVersion: "legacy", score: 47.4 } };
+  daily.rescoredDays = 1;
+  const view = await render({ status: "AVAILABLE", latest: v2Latest, history: [], daily });
+  const chart = view.get("daily").innerHTML;
+  assert.equal(chart.match(/fill="var\(--panel\)" stroke=/g)?.length, 2);
+  assert.match(chart, /按新版规则重算，旧版原分 47\.4/);
+  assert.match(chart, /空心点是旧版时期的快照/);
+  assert.equal(view.get("dailyStamp").textContent, "当前版本 3 天快照 · 1 天重算");
+  assert.match(view.get("dailyTable").innerHTML, /按新版规则重算（旧版 47\.4）/);
+  assert.match(view.get("validityNote").textContent, /含 1 天按新版规则重算的旧版快照/);
+});
+
+test("the validity verdict follows the sign and size of the 7-day rank correlation", async () => {
+  const verdict = async (spearman) => (await render({ status: "AVAILABLE", latest: v2Latest, history: [], daily: dailyPayload({ matured: 25, spearman }) })).get("validityPill");
+  assert.equal((await verdict(-0.6)).textContent, "7 天：与模型方向一致");
+  assert.equal((await verdict(0.6)).textContent, "7 天：与模型方向相反");
+  assert.equal((await verdict(0.1)).textContent, "7 天：未见明显关系");
+  const empty = await render({ status: "AVAILABLE", latest: v2Latest, history: [], daily: dailyPayload({ snapshots: 0, matured: 0 }) });
+  assert.match(empty.get("daily").innerHTML, /当前版本尚无每日快照/);
+  assert.match(empty.get("dailyTable").innerHTML, /当前版本尚无每日快照/);
+  const missing = await render({ status: "AVAILABLE", latest: v2Latest, history: [] });
+  assert.match(missing.get("daily").innerHTML, /每日快照暂时读取失败/);
 });

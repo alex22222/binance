@@ -3,7 +3,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { btcRadarAlertReasons, btcRadarAlertText, loadBtcRadarSettings, loadBtcRadarView, runBtcRadar, saveBtcRadarSettings } from "../src/btc-radar.mjs";
+import { btcRadarAlertReasons, btcRadarAlertText, btcRadarDailyView, loadBtcRadarSettings, loadBtcRadarView, runBtcRadar, saveBtcRadarSettings, updateBtcRadarDaily } from "../src/btc-radar.mjs";
 
 const NOW = Date.parse("2026-10-01T13:00:00Z");
 const ladderMarket = (kind, level, yes) => ({
@@ -388,4 +388,107 @@ test("expired required cache is rejected and the API suppresses conclusions afte
   assert.equal(view.latest.score, null);
   assert.equal(view.latest.level_name, "数据失效");
   assert.equal((await readJson(directory, "latest")).ts, "2026-10-01T21:00:00+08:00", "history is preserved, not restamped");
+});
+
+test("keeps one snapshot per Beijing day from the first evaluation after 08:00, with merged daily closes", () => {
+  const entry = (ts, score, extra = {}) => ({ ts, modelVersion: "v2", price: 80000 + score, score, level: "yellow", f: { fed: 50 }, ...extra });
+  const daily = updateBtcRadarDaily(null, [
+    entry("2026-10-01T04:43:00+08:00", 41),
+    entry("2026-10-01T08:43:00+08:00", 42, { sourceErrors: [{ key: "treasury", since: null }] }),
+    entry("2026-10-01T12:43:00+08:00", 43),
+    { ts: "2026-10-02T08:43:00+08:00", price: 80100, score: 44, level: "yellow", f: {} },
+    entry("2026-10-03T09:00:00+08:00", null),
+    { ts: "12", score: 1, price: 1 }
+  ], [{ date: "2026-09-30", close: 79000 }, { date: "bad", close: 1 }, { date: "2026-10-01", close: 0 }]);
+  assert.deepEqual(daily.snapshots.map(({ date, score, modelVersion }) => [date, score, modelVersion]), [["2026-10-01", 42, "v2"], ["2026-10-02", 44, "legacy"]]);
+  assert.deepEqual(daily.snapshots[0].staleSources, ["treasury"]);
+  assert.deepEqual(daily.closes, [{ date: "2026-09-30", close: 79000 }]);
+  const next = updateBtcRadarDaily(daily, [entry("2026-10-01T16:43:00+08:00", 50), entry("2026-10-03T08:43:00+08:00", 45)], [{ date: "2026-09-30", close: 79500 }, { date: "2026-10-01", close: 80500 }]);
+  assert.deepEqual(next.snapshots.map(({ date, score }) => [date, score]), [["2026-10-01", 42], ["2026-10-02", 44], ["2026-10-03", 45]], "an existing day is never replaced");
+  assert.deepEqual(next.closes, [{ date: "2026-09-30", close: 79500 }, { date: "2026-10-01", close: 80500 }]);
+});
+
+test("measures returns after each current-version snapshot against the UTC close N days on", () => {
+  const day = (offset) => new Date(Date.parse("2026-10-01T00:00:00Z") + offset * 86_400_000).toISOString().slice(0, 10);
+  const closes = Array.from({ length: 80 }, (_, index) => ({ date: day(index - 1), close: 100 + index }));
+  const snapshots = Array.from({ length: 25 }, (_, index) => ({ date: day(index), ts: `${day(index)}T08:43:00+08:00`, modelVersion: "v2", score: 32 + index * 2, level: "red", price: 100 + index }));
+  const view = btcRadarDailyView({ closes, snapshots: [...snapshots, { date: day(30), modelVersion: "legacy", score: 50, price: 1 }] }, "v2");
+  assert.equal(view.otherVersionDays, 1);
+  assert.equal(view.snapshots.length, 25);
+  // Snapshot on day 0 follows the close of day -1 (100); one day on is the close of day 0 (101).
+  assert.ok(Math.abs(view.snapshots[0].forward[1] - 0.01) < 1e-12);
+  assert.ok(Math.abs(view.snapshots[0].forward[7] - 0.07) < 1e-12);
+  assert.ok(Math.abs(view.snapshots[0].forward[30] - 0.30) < 1e-12);
+  const week = view.horizons.find(({ days }) => days === 7);
+  assert.equal(week.matured, 25);
+  assert.ok(week.spearman < -0.99, "higher scores were followed by smaller rises here");
+  assert.deepEqual(week.bands.map(({ level, n }) => [level, n]), [["green", 4], ["yellow", 8], ["orange", 7], ["red", 6]]);
+  const short = btcRadarDailyView({ closes, snapshots: snapshots.slice(0, 5) }, "v2");
+  assert.equal(short.horizons[1].spearman, null, "no correlation below the minimum sample");
+  assert.equal(short.closes[0].date, day(-1), "closes start at the window or 30 days before the first snapshot");
+  const [late] = btcRadarDailyView({ closes, snapshots: [{ date: day(60), modelVersion: "v2", score: 50, price: 100 }] }, "v2").snapshots;
+  assert.ok(Math.abs(late.forward[1] - 0.61) < 1e-12);
+  assert.equal(late.forward[30], null, "a horizon past the last close stays empty");
+});
+
+test("each run adds today's daily snapshot, seeded from the four-hour history on the first run", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "btc-radar-daily-"));
+  await writeFile(join(directory, "history.json"), JSON.stringify([
+    { ts: "2026-09-30T08:43:00+08:00", modelVersion: "pressure-v2-no-touch-probability", price: 83000, score: 61, level: "orange", f: {} },
+    { ts: "2026-09-30T12:43:00+08:00", modelVersion: "pressure-v2-no-touch-probability", price: 83100, score: 62, level: "orange", f: {} }
+  ]));
+  const closes = Array.from({ length: 210 }, (_, index) => 60000 + index * 100);
+  const fetchImpl = responses({ "bar=1Dutc": dailyCandles(closes) });
+  await runBtcRadar({ directory, environment: {}, fetchImpl, nowMs: NOW });
+  let daily = await readJson(directory, "daily");
+  assert.deepEqual(daily.snapshots.map(({ date, ts }) => [date, ts]), [["2026-09-30", "2026-09-30T08:43:00+08:00"], ["2026-10-01", "2026-10-01T21:00:00+08:00"]]);
+  assert.equal(daily.closes.at(-1).date, "2026-09-30");
+  assert.equal(daily.closes.length, 210);
+  await runBtcRadar({ directory, environment: {}, fetchImpl, nowMs: NOW + 4 * HOUR });
+  assert.equal((await readJson(directory, "daily")).snapshots.length, 2, "01:00 Beijing is before the daily snapshot hour");
+  await runBtcRadar({ directory, environment: {}, fetchImpl, nowMs: NOW + 12 * HOUR });
+  daily = await readJson(directory, "daily");
+  assert.deepEqual(daily.snapshots.map(({ date }) => date), ["2026-09-30", "2026-10-01", "2026-10-02"]);
+  const view = await loadBtcRadarView(directory, NOW + 12 * HOUR);
+  assert.equal(view.daily.snapshots.length, 3);
+  assert.ok(Math.abs(view.daily.snapshots[0].forward[1] - (closes.at(-1) / 83000 - 1)) < 1e-12);
+});
+
+test("the API serves daily evidence from saved history before the first daily file and survives a broken one", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "btc-radar-daily-view-"));
+  await writeFile(join(directory, "latest.json"), JSON.stringify({ ts: "2026-10-01T21:00:00+08:00", modelVersion: "pressure-v2-no-touch-probability", score: 60 }));
+  await writeFile(join(directory, "history.json"), JSON.stringify([{ ts: "2026-10-01T08:43:00+08:00", modelVersion: "pressure-v2-no-touch-probability", price: 83000, score: 60, level: "orange", f: {} }]));
+  await writeFile(join(directory, "inputs.json"), JSON.stringify({ trend: { fetchedAt: "x", value: [{ date: "2026-09-30", close: 82000 }, { date: "2026-10-01", close: 84000 }] } }));
+  const seeded = await loadBtcRadarView(directory, NOW);
+  assert.equal(seeded.daily.snapshots.length, 1);
+  assert.ok(Math.abs(seeded.daily.snapshots[0].forward[1] - (84000 / 83000 - 1)) < 1e-12);
+  await writeFile(join(directory, "daily.json"), "{");
+  const broken = await loadBtcRadarView(directory, NOW);
+  assert.equal(broken.status, "AVAILABLE");
+  assert.equal(broken.daily, null);
+});
+
+test("legacy days are rescored exactly by the current rules from their saved factor scores", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "btc-radar-rescore-"));
+  const { snapshot } = await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW });
+  const [entry] = await readJson(directory, "history");
+  const asLegacy = { date: "2026-10-01", ts: entry.ts, modelVersion: "legacy", score: 1, level: "green", price: entry.price, f: entry.f };
+  const view = btcRadarDailyView({ snapshots: [asLegacy, { ...asLegacy, date: "2026-10-02", f: { fed: 50 } }], closes: [] }, snapshot.modelVersion);
+  assert.equal(view.snapshots.length, 1);
+  assert.equal(view.snapshots[0].score, snapshot.score, "the current model's own score is reproduced from its factor scores");
+  assert.deepEqual(view.snapshots[0].rescoredFrom, { modelVersion: "legacy", score: 1 });
+  assert.equal(view.snapshots[0].modelVersion, snapshot.modelVersion);
+  assert.deepEqual([view.rescoredDays, view.otherVersionDays], [1, 1]);
+  const manual = btcRadarDailyView({ snapshots: [{ ...asLegacy, f: { poly: 90, fed: 80, ust: 70, gold: 50, tech: 40, deriv: 60 } }], closes: [] }, "pressure-v2-no-touch-probability");
+  assert.equal(manual.snapshots[0].score, 62.7);
+  assert.equal(manual.snapshots[0].level, "orange");
+  assert.equal(btcRadarDailyView({ snapshots: [asLegacy], closes: [] }, "some-future-version").snapshots.length, 0, "only versions with unchanged factor formulas are rescored");
+});
+
+test("an unreadable daily file never stops the evaluation and is preserved for recovery", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "btc-radar-daily-broken-"));
+  await writeFile(join(directory, "daily.json"), "{broken");
+  const { snapshot } = await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW });
+  assert.equal((await readJson(directory, "latest")).ts, snapshot.ts);
+  assert.equal(await readFile(join(directory, "daily.json"), "utf8"), "{broken");
 });

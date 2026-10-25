@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { BTC_RADAR_LEVELS, evaluateBtcRadar, evaluateRadarPosition, pyFixed } from "./btc-radar-model.mjs";
+import { BTC_RADAR_LEVELS, evaluateBtcRadar, evaluateRadarPosition, pyFixed, pyRound } from "./btc-radar-model.mjs";
 import {
   BTC_RADAR_SOURCES,
   createOkxReadOnlyClient,
@@ -71,6 +71,110 @@ async function readJson(path, fallback) {
 async function writeJson(path, value) {
   await writeFile(`${path}.tmp`, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   await rename(`${path}.tmp`, path);
+}
+
+// Daily snapshots: the first evaluation at or after 08:00 Beijing time, just
+// after the UTC daily close, is kept for that Beijing date beside the
+// completed UTC daily closes, so each score can be set against what BTC did
+// afterwards. Kept far longer than the four-hour history.
+export const BTC_RADAR_DAILY_HOUR = 8;
+export const BTC_RADAR_FORWARD_DAYS = Object.freeze([1, 7, 30]);
+export const BTC_RADAR_MIN_SAMPLES = 20;
+const DAILY_LIMIT = 1000;
+const DAILY_CLOSE_CONTEXT_DAYS = 30;
+const SCORE_BANDS = Object.freeze([["green", -Infinity, 40], ["yellow", 40, 55], ["orange", 55, 70], ["red", 70, Infinity]]);
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const addDays = (date, days) => new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+const average = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+
+export function updateBtcRadarDaily(daily, entries, closes = []) {
+  const snapshots = new Map((daily?.snapshots || []).map((row) => [row.date, row]));
+  for (const entry of entries) {
+    const date = String(entry.ts).slice(0, 10);
+    if (!DATE.test(date) || !(Number(String(entry.ts).slice(11, 13)) >= BTC_RADAR_DAILY_HOUR) || snapshots.has(date)) continue;
+    if (!Number.isFinite(entry.score) || !(entry.price > 0)) continue;
+    snapshots.set(date, {
+      date, ts: entry.ts, modelVersion: entry.modelVersion || "legacy", score: entry.score, level: entry.level, price: entry.price, f: entry.f,
+      ...(entry.sourceErrors ? { staleSources: entry.sourceErrors.map(({ key }) => key) } : {})
+    });
+  }
+  const byDate = new Map((daily?.closes || []).map(({ date, close }) => [date, close]));
+  for (const { date, close } of closes) if (DATE.test(date) && close > 0) byDate.set(date, close);
+  return {
+    schemaVersion: 1,
+    snapshots: [...snapshots.values()].sort((left, right) => left.date.localeCompare(right.date)).slice(-DAILY_LIMIT),
+    closes: [...byDate].map(([date, close]) => ({ date, close })).sort((left, right) => left.date.localeCompare(right.date)).slice(-DAILY_LIMIT)
+  };
+}
+
+// Spearman rank correlation with average ranks for ties.
+function spearman(pairs) {
+  const ranks = (values) => {
+    const order = values.map((value, index) => [value, index]).sort((left, right) => left[0] - right[0]);
+    const result = [];
+    for (let start = 0; start < order.length;) {
+      let end = start;
+      while (end + 1 < order.length && order[end + 1][0] === order[start][0]) end += 1;
+      for (let index = start; index <= end; index += 1) result[order[index][1]] = (start + end) / 2;
+      start = end + 1;
+    }
+    return result;
+  };
+  const x = ranks(pairs.map(([score]) => score));
+  const y = ranks(pairs.map(([, value]) => value));
+  const mx = average(x);
+  const my = average(y);
+  const cov = x.reduce((sum, value, index) => sum + (value - mx) * (y[index] - my), 0);
+  const spread = Math.sqrt(x.reduce((sum, value) => sum + (value - mx) ** 2, 0) * y.reduce((sum, value) => sum + (value - my) ** 2, 0));
+  return spread ? cov / spread : null;
+}
+
+// The current version only stopped scoring Polymarket and reweighted the five
+// unchanged factor formulas (0c79337), so a legacy day's saved factor scores
+// give its current-version score exactly, rounded as the model rounds it.
+const RESCORE_FROM_LEGACY = Object.freeze({ "pressure-v2-no-touch-probability": Object.freeze({ fed: 20, ust: 20, gold: 10, tech: 15, deriv: 10 }) });
+function versionScore(row, modelVersion) {
+  if (row.modelVersion === modelVersion) return row.score;
+  const weights = row.modelVersion === "legacy" && RESCORE_FROM_LEGACY[modelVersion];
+  if (!weights || !Object.keys(weights).every((key) => Number.isFinite(row.f?.[key]))) return null;
+  const total = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
+  return pyRound(Object.entries(weights).reduce((sum, [key, weight]) => sum + row.f[key] * weight, 0) / total, 1);
+}
+
+// Forward return from the snapshot price to the UTC close about N days later:
+// a snapshot on Beijing date D follows the close of UTC day D-1, so N days on
+// is the close of UTC day D-1+N.
+export function btcRadarDailyView(daily, modelVersion) {
+  const closes = daily?.closes || [];
+  const closeOn = new Map(closes.map(({ date, close }) => [date, close]));
+  const scored = (daily?.snapshots || []).map((row) => [row, versionScore(row, modelVersion)]);
+  const snapshots = scored.filter(([row, score]) => Number.isFinite(score) && row.price > 0)
+    .map(([row, score]) => ({ ...row, score, level: SCORE_BANDS.find(([, low, high]) => score >= low && score < high)[0],
+      ...(row.modelVersion === modelVersion ? {} : { modelVersion, rescoredFrom: { modelVersion: row.modelVersion, score: row.score } }),
+      forward: Object.fromEntries(BTC_RADAR_FORWARD_DAYS.map((days) => {
+        const close = closeOn.get(addDays(row.date, days - 1));
+        return [days, close > 0 ? close / row.price - 1 : null];
+      })) }));
+  const horizons = BTC_RADAR_FORWARD_DAYS.map((days) => {
+    const pairs = snapshots.filter((row) => row.forward[days] !== null).map((row) => [row.score, row.forward[days]]);
+    return {
+      days, matured: pairs.length, mean: average(pairs.map(([, value]) => value)),
+      spearman: pairs.length >= BTC_RADAR_MIN_SAMPLES ? spearman(pairs) : null,
+      bands: SCORE_BANDS.map(([level, low, high]) => {
+        const values = pairs.filter(([score]) => score >= low && score < high).map(([, value]) => value);
+        return { level, n: values.length, mean: average(values), downShare: values.length ? values.filter((value) => value < 0).length / values.length : null };
+      })
+    };
+  });
+  // Price context: 30 days before the first snapshot, or the last 90 days.
+  const last = closes.at(-1)?.date;
+  const start = snapshots[0] ? addDays(snapshots[0].date, -DAILY_CLOSE_CONTEXT_DAYS) : last ? addDays(last, -90) : null;
+  return {
+    dailyHour: BTC_RADAR_DAILY_HOUR, minSamples: BTC_RADAR_MIN_SAMPLES, modelVersion, snapshots, horizons,
+    rescoredDays: snapshots.filter((row) => row.rescoredFrom).length,
+    otherVersionDays: scored.filter(([, score]) => !Number.isFinite(score)).length,
+    closes: start ? closes.filter(({ date }) => date >= start) : []
+  };
 }
 
 export function beijingTimestamp(nowMs) {
@@ -202,10 +306,12 @@ export async function runBtcRadar({
   send = sendManagerFeishu
 }) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  const paths = Object.fromEntries(["latest", "history", "inputs", "state", "observations"].map((name) => [name, join(directory, `${name}.json`)]));
-  const [previous, history, previousInputs, state, observations] = await Promise.all([
+  const paths = Object.fromEntries(["latest", "history", "inputs", "state", "observations", "daily"].map((name) => [name, join(directory, `${name}.json`)]));
+  const [previous, history, previousInputs, state, observations, daily] = await Promise.all([
     readJson(paths.latest, null), readJson(paths.history, []), readJson(paths.inputs, {}), readJson(paths.state, {}),
-    readJson(paths.observations, null)
+    readJson(paths.observations, null),
+    // An unreadable daily file must not stop the evaluation; it is left as is.
+    readJson(paths.daily, null).catch(() => undefined)
   ]);
   const context = { fetchImpl, nowMs };
   if (!previousInputs.dcaPositions && previousInputs.position) {
@@ -308,6 +414,11 @@ export async function runBtcRadar({
   await writeJson(paths.latest, snapshot);
   await writeJson(paths.history, nextHistory);
   await writeJson(paths.inputs, inputs);
+  // The first daily file is seeded from the retained four-hour history.
+  if (daily !== undefined) {
+    await writeJson(paths.daily, updateBtcRadarDaily(daily, daily ? [entry] : nextHistory,
+      inputs.trend && !inputs.trend.expired ? inputs.trend.value : []));
+  }
 
   const reasons = btcRadarAlertReasons(previous, snapshot, events);
   let alert = { status: reasons.length ? "PENDING" : "NONE", reasons };
@@ -389,10 +500,17 @@ export async function loadBtcRadarView(directory, nowMs = Date.now()) {
         ...(freshness.expired || stale ? { stale: true, level: "yellow", level_name: "持仓数据失效" } : {}) };
     });
     const position = positions.find(held => held.id === latest.position?.id) || positions[0] || null;
+    // Saved daily evidence stays visible when the current conclusion expires.
+    let daily = null;
+    try {
+      const saved = await readJson(join(directory, "daily.json"), null);
+      daily = btcRadarDailyView(saved || updateBtcRadarDaily(null, history,
+        (await readJson(join(directory, "inputs.json"), {}))?.trend?.value || []), latest.modelVersion);
+    } catch {}
     return { status: freshness.expired ? "STALE" : "AVAILABLE", latest: {
       ...latest, positions, position,
       ...(freshness.expired ? { score: null, level: "unknown", level_name: "数据失效", summary: "评估版本或数据时效失效，仅保留历史快照。", factors: freshness.expiredSources.includes("modelVersion") ? [] : (latest.factors || []).map(f => ({ ...f, score: null })) } : {})
-    }, history: history.slice(-BTC_RADAR_HISTORY_LIMIT), settings, freshness };
+    }, history: history.slice(-BTC_RADAR_HISTORY_LIMIT), daily, settings, freshness };
   } catch {
     return { status: "ERROR", latest: null, history: [], settings };
   }
