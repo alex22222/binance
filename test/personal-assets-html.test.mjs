@@ -1620,6 +1620,11 @@ test("overview uses the saved daily time and settings provide an isolated schedu
   const initial = stateWith([entry()]); initial.refreshSchedule = { time: "08:15" };
   const ui = await view(initial), html = ui.get("asset-content").innerHTML;
   assert.match(html, /08:15/); assert.doesNotMatch(html, /09:00.*21:00|每天两次/);
+  ui.run('var successMessage=""; syncState={providers:{okx:{preview:{id:"synthetic-preview",revision:state.revision}}}}; syncMutation=async (_path,_body,message)=>{successMessage=message};');
+  await ui.run('applySyncPreview("okx")');
+  assert.match(ui.run("successMessage"), /每天一次/);
+  assert.match(ui.run("successMessage"), /08:15/);
+  assert.doesNotMatch(ui.run("successMessage"), /每天两次/);
   assert.match(personalAssetsHtml({ nonce: "test" }), /href="\/assets\?settings=refresh-schedule"/);
   const page = refreshScheduleHtml({ nonce: 'test"><script>' });
   assert.match(page, /type="time"/); assert.match(page, /每天自动更新一次/);

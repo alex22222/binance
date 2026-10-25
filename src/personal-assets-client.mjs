@@ -780,7 +780,7 @@ async function applySyncPreview(provider) {
   const preview = syncState?.providers?.[provider]?.preview;
   if (provider === "futu" && preview?.externalAccountId !== syncAccountId) { showError("所选证券账户与预览不同，请重新获取预览后核对。"); return; }
   if (!preview || preview.revision !== state?.revision) { showError("资产记录已变化，请重新获取预览后再入账。"); return; }
-  await syncMutation(`/${provider}/apply`, { previewId: preview.id, revision: state.revision }, "资产已入账，此账户已开启每天两次只读同步");
+  await syncMutation(`/${provider}/apply`, { previewId: preview.id, revision: state.revision }, `资产已入账，此账户已开启每天一次只读同步（北京时间 ${refreshTime()}）`);
 }
 function openEntry(entry = null, candidate = null, accountId = "") {
   clearOcr();
