@@ -401,6 +401,8 @@ function fingerprint(portfolio, accountId) {
   return digest(JSON.stringify({ account: normalized, entries: portfolio.entries.filter((item) => item.accountId === accountId) }));
 }
 
+const pnlFingerprint = (portfolio, accountId) => digest(JSON.stringify(portfolio.stockPnl?.find(row => row.accountId === accountId) || null));
+
 function makePreview(result, provider, revision, now, targetAccountId, wallets, polymarketSafeOwner = null) {
   if (result.provider !== provider || !CURRENCIES.includes(result.currency) || !Number.isFinite(result.total) || result.total < 0 || result.total > 1e12
     || typeof result.externalAccountId !== "string" || !result.externalAccountId || result.externalAccountId.length > 200
@@ -408,6 +410,12 @@ function makePreview(result, provider, revision, now, targetAccountId, wallets, 
     || !/^\d{4}-\d{2}-\d{2}$/.test(result.asOf) || !Number.isFinite(Date.parse(result.fetchedAt))
     || (result.observedAt !== undefined && result.observedAt !== null && (typeof result.observedAt !== "string" || !Number.isFinite(Date.parse(result.observedAt)) || Date.parse(result.observedAt) > now.getTime() + 300_000))
     || (result.timeBasis !== undefined && !["retrieved", "source", "statement"].includes(result.timeBasis))) throw syncError("平台返回的资产数据不完整，未更新原有资产。", 502);
+  let stockPnl;
+  if (result.stockPnl !== undefined) {
+    if (provider !== "futu" || !result.stockPnl || typeof result.stockPnl.amount !== "number" || !Number.isFinite(result.stockPnl.amount)
+      || Math.abs(result.stockPnl.amount) > 1e12 || result.stockPnl.currency !== result.currency) throw syncError("富途未实现盈亏无法核验，保留原有资产。", 502);
+    stockPnl = { amount: result.stockPnl.amount, currency: result.stockPnl.currency };
+  }
   const derivedWallets = walletProvider(provider) ? derivedCashSources(result, wallets, polymarketSafeOwner) : [];
   const holdings = result.holdings.map((row, index) => {
     if (typeof row.name !== "string" || !row.name.trim() || row.name.length > 180 || !CATEGORIES.includes(row.category) || !CURRENCIES.includes(row.currency)
@@ -439,6 +447,7 @@ function makePreview(result, provider, revision, now, targetAccountId, wallets, 
   const warnings = (result.warnings || []).filter((value) => typeof value === "string").map((value) => value.slice(0, 500)).slice(0, 20);
   if (countedBasis === "total") warnings.push("净资产总额作为统计口径；明细仅供对账，不与总额相加。未对齐部分不推定为现金或负债。");
   return { id: randomUUID(), provider, currency: result.currency, total: result.total, asOf: result.asOf, fetchedAt: result.fetchedAt,
+    ...(stockPnl ? { stockPnl } : {}),
     observedAt: result.observedAt || null, timeBasis: result.observedAt ? result.timeBasis || "source" : "retrieved",
     ...(result.valuation !== undefined ? { valuation: valuationSummary(result.valuation) } : {}),
     ...(walletProvider(provider) ? { unpricedAssets, valuationComplete: result.valuationComplete, derivedWallets, polymarketSafeOwner } : {}),
@@ -528,7 +537,9 @@ function updatedPortfolio(current, preview) {
       row.quoteSource ? `价格来源 ${row.quoteSource}；价格时点 ${row.quoteObservedAt}；价格时点不代表余额时点` : "",
       row.balanceAddress ? `Safe现金；pUSD原始单位 ${row.cashRawBalance}（6位精度）；区块 ${row.cashBlockNumber}；余额时点 ${row.cashObservedAt}；USDC抵押权益参考估值，当前储备和赎回能力未核实` : ""].filter(Boolean).join("；") + quoteNote }));
   return validatePortfolio({ ...current.portfolio, accounts: [...current.portfolio.accounts.filter((item) => item.id !== preview.targetAccountId), account],
-    entries: [...current.portfolio.entries.filter((item) => item.accountId !== preview.targetAccountId), ...entries] });
+    entries: [...current.portfolio.entries.filter((item) => item.accountId !== preview.targetAccountId), ...entries],
+    ...(preview.stockPnl ? { stockPnl: [...(current.portfolio.stockPnl || []).filter(row => row.accountId !== preview.targetAccountId),
+      { ...common, ...preview.stockPnl, fetchedAt: preview.fetchedAt }] } : {}) });
 }
 
 async function applyPreview({ stateDir, data, provider, previewId, revision, now, clock = () => now, persist, automatic = false }) {
@@ -548,7 +559,8 @@ async function applyPreview({ stateDir, data, provider, previewId, revision, now
     uniqueWalletSource(data, current, provider, wallets, preview.targetAccountId, claims);
     retainDerivedWalletSources(current, value, claims, preview.targetAccountId, data);
   }
-  if (automatic && fingerprint(current.portfolio, preview.targetAccountId) !== value.appliedFingerprint) {
+  if (automatic && (fingerprint(current.portfolio, preview.targetAccountId) !== value.appliedFingerprint
+    || provider === "futu" && value.appliedPnlFingerprint && pnlFingerprint(current.portfolio, preview.targetAccountId) !== value.appliedPnlFingerprint)) {
     value.enabled = false;
     throw syncError("此账户已被手动修改，自动同步已暂停。请重新拉取并确认预览。", 409);
   }
@@ -583,6 +595,7 @@ async function applyPreview({ stateDir, data, provider, previewId, revision, now
     rememberWalletBinding(data, provider, value);
   }
   value.appliedFingerprint = fingerprint(assets.portfolio, preview.targetAccountId);
+  if (provider === "futu") value.appliedPnlFingerprint = pnlFingerprint(assets.portfolio, preview.targetAccountId);
   rememberPredictionBinding(data, provider, value);
   delete value.preview;
   return assets;
@@ -778,7 +791,8 @@ export async function runAssetSyncCycle({ stateDir, api = adapters, now, clock =
       try {
         const current = await readPersonalAssets({ stateDir });
         const targetAccountId = value.targetAccountId || PROVIDERS[provider].id;
-        if (fingerprint(current.portfolio, targetAccountId) !== value.appliedFingerprint) {
+        if (fingerprint(current.portfolio, targetAccountId) !== value.appliedFingerprint
+          || provider === "futu" && value.appliedPnlFingerprint && pnlFingerprint(current.portfolio, targetAccountId) !== value.appliedPnlFingerprint) {
           value.enabled = false;
           throw syncError("此账户已被手动修改，自动同步已暂停。请重新拉取并确认预览。", 409);
         }

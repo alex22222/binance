@@ -235,6 +235,9 @@ export async function fetchFutuAssets({ accessToken, accountId: selectedId, fetc
   const total = amount(funds.total_assets, "富途净资产");
   const totalCurrency = currency(funds.currency);
   const warnings = ["账户总额使用富途总净资产；证券、现金和购买力不重复加总。持仓明细仅供核对。"];
+  const stockPnl = funds.unrealized_pl === undefined || funds.unrealized_pl === null || funds.unrealized_pl === "" ? undefined
+    : { amount: amount(funds.unrealized_pl, "富途未实现盈亏", { signed: true }), currency: totalCurrency };
+  if (!stockPnl) warnings.push("富途本次未提供账户未实现盈亏，保留原盈亏记录及原日期，不推定为零。");
   const holdings = [];
   const seen = new Set();
   for (const position of positions) {
@@ -265,6 +268,7 @@ export async function fetchFutuAssets({ accessToken, accountId: selectedId, fetc
     breakdownComplete: false,
     asOf: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(at),
     fetchedAt: at.toISOString(), accountLabel: account.label, externalAccountId: id, holdings,
+    ...(stockPnl ? { stockPnl } : {}),
     coverage: ["所选实盘证券业务账户总净资产", "证券持仓与已返回的分币种现金；明细不参与账户总额加总"],
     warnings: [...new Set(warnings)],
   };

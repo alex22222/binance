@@ -581,6 +581,44 @@ test("changing the real Futu account requires a new preview and confirmation on 
   assert.deepEqual(selected, ["123", "456", "456"]);
 });
 
+test("Futu preview and scheduled apply refresh only its signed PnL with retrieval time and retain it when missing", async context => {
+  const stateDir = await fixture(context), initial = await readPersonalAssets({ stateDir });
+  initial.portfolio.rates.HKD = { value: 1, date: "2026-10-24" };
+  const other = { accountId: "other", amount: -9, currency: "CNY", asOf: "2026-10-24", source: "manual" };
+  initial.portfolio.stockPnl = [other, { accountId: "account-3", amount: -99, currency: "HKD", asOf: "2026-10-24", source: "screenshot", asOfBasis: "imported" }];
+  await savePersonalAssets({ stateDir, portfolio: initial.portfolio, revision: initial.revision });
+  await writeFile(privateFile(stateDir), JSON.stringify({ schemaVersion: 1, providers: { futu: { tokens: { accessToken: "synthetic-access", expiresAt: "2026-10-26T12:00:00Z" }, accounts: [{ id: "123", label: "Synthetic" }] } } }), { mode: 0o600 });
+  let pnl = { amount: -10.5, currency: "HKD" }, fetchedAt = at.toISOString();
+  const futu = { fetchFutuAssets: async () => synthetic({ provider: "futu", externalAccountId: "123", currency: "HKD", total: 100, holdings: [], stockPnl: pnl, fetchedAt }) };
+  const before = await readFile(join(stateDir, "personal-assets.json"), "utf8");
+  let preview = (await action(stateDir, "futu", "preview", { accountId: "123", targetAccountId: "account-3" }, { api: futu })).providers.futu.preview;
+  assert.deepEqual(preview.stockPnl, pnl); assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
+  const applied = await action(stateDir, "futu", "apply", { previewId: preview.id, revision: preview.revision }, { api: futu });
+  assert.deepEqual(applied.assets.portfolio.stockPnl, [other, { accountId: "account-3", amount: -10.5, currency: "HKD", source: "api", asOf: "2026-10-24", asOfBasis: "imported", fetchedAt }]);
+  assert.equal(summarize(applied.assets.portfolio).total, 107);
+  const snapshot = JSON.parse(await readFile(join(stateDir, "personal-assets-snapshots", applied.assets.snapshots[0].id + ".json"), "utf8"));
+  assert.equal(snapshot.portfolio.stockPnl.find(row => row.accountId === "account-3").amount, -99);
+  pnl = { amount: 0, currency: "HKD" }; fetchedAt = later.toISOString();
+  assert.deepEqual(await runAssetSyncCycle({ stateDir, now: later, api: futu }), { attempted: 1, applied: 1, failed: 0 });
+  let current = await readPersonalAssets({ stateDir }); assert.equal(current.portfolio.stockPnl.find(row => row.accountId === "account-3").amount, 0);
+  const saved = current.portfolio.stockPnl; pnl = undefined; fetchedAt = "2026-10-25T01:00:00.000Z";
+  await runAssetSyncCycle({ stateDir, now: new Date(fetchedAt), api: futu });
+  current = await readPersonalAssets({ stateDir }); assert.deepEqual(current.portfolio.stockPnl, saved);
+  const unchanged = await readFile(join(stateDir, "personal-assets.json"), "utf8");
+  for (const invalid of [{ amount: "1", currency: "HKD" }, { amount: 1, currency: "USD" }, { amount: Infinity, currency: "HKD" }]) {
+    pnl = invalid; await assert.rejects(action(stateDir, "futu", "preview", { accountId: "123" }, { api: futu }), /盈亏/);
+    assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), unchanged);
+  }
+  current = await readPersonalAssets({ stateDir });
+  current.portfolio.stockPnl.find(row => row.accountId === "account-3").amount = 4;
+  await savePersonalAssets({ stateDir, portfolio: current.portfolio, revision: current.revision });
+  let calls = 0;
+  const cycle = await runAssetSyncCycle({ stateDir, now: new Date("2026-10-25T13:00:00Z"), api: { fetchFutuAssets: async () => { calls++; return synthetic({ provider: "futu", externalAccountId: "123", currency: "HKD", holdings: [], stockPnl: { amount: -1, currency: "HKD" } }); } } });
+  assert.deepEqual(cycle, { attempted: 1, applied: 0, failed: 1 }); assert.equal(calls, 0);
+  assert.equal((await readPersonalAssets({ stateDir })).portfolio.stockPnl.find(row => row.accountId === "account-3").amount, 4);
+  assert.equal((await readAssetSyncStatus({ stateDir })).providers.futu.enabled, false);
+});
+
 test("invalid source observation metadata never enters the private preview or asset ledger", async (context) => {
   const stateDir = await fixture(context);
   const before = await readFile(join(stateDir, "personal-assets.json"), "utf8");

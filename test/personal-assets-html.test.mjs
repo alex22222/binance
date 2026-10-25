@@ -547,6 +547,17 @@ test("overview leads with total, floating stock PnL and distributions before AI 
   assert.doesNotMatch(ui.get("asset-content").innerHTML, /123\.45|500\.00/);
 });
 
+test("API PnL shows read time and unknown source time in overview and preview without leaking hidden amounts", async () => {
+  const initial = stateWith([entry({ amount: 500 })]);
+  initial.portfolio.stockPnl = [{ accountId: "account-1", amount: -10.25, currency: "CNY", asOf: entry().asOf, source: "api", asOfBasis: "imported", fetchedAt: "2026-10-24T12:00:00.000Z" }];
+  const ui = await view(initial), html = ui.get("asset-content").innerHTML;
+  assert.match(html, /读取日期，源盈亏时点未提供/); assert.match(html, /成功读取/); assert.doesNotMatch(html, /截图时点未核实/);
+  const preview = { ...syncPreviewState().providers.okx.preview, stockPnl: { amount: -10.25, currency: "CNY" } };
+  const expression = 'syncPreview("futu", ' + JSON.stringify({ preview }) + ')';
+  assert.match(ui.run(expression), /账户未实现盈亏[\s\S]*-10\.25/);
+  ui.run("hidden=true;render()"); assert.doesNotMatch(ui.get("asset-content").innerHTML, /10\.25/); assert.doesNotMatch(ui.run(expression), /10\.25/);
+});
+
 test("stock PnL edits retain drafts under privacy and save signed amounts without changing market values", async () => {
   const initial = stateWith([entry({ category: "股票", amount: 500 })]);
   const ui = await view(initial);

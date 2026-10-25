@@ -146,6 +146,27 @@ test("Futu rejects unselected accounts and missing balances without importing ze
   assert.equal((await fetchFutuAssets({ accessToken: "token", accountId: "123456", ...actualCurrency })).currency, "USD");
 });
 
+test("Futu reads signed account unrealized PnL in the funds response currency without another request", async () => {
+  for (const unrealized_pl of ["-110.25", "0", "12.5"]) {
+    const mock = mockFetch([{ s: "ok", d: { accounts: [account] } }, { s: "ok", d: { total_assets: "100", currency: "USD", unrealized_pl } }, { s: "ok", d: [] }]);
+    const result = await fetchFutuAssets({ accessToken: "token", accountId: "123456", now, ...mock });
+    assert.deepEqual(result.stockPnl, { amount: Number(unrealized_pl), currency: "USD" });
+    assert.equal(result.total, 100); assert.equal(mock.calls.length, 3);
+  }
+});
+
+test("missing Futu unrealized PnL is explicit and malformed values never become zero", async () => {
+  for (const unrealized_pl of [undefined, null, ""]) {
+    const mock = mockFetch([{ s: "ok", d: { accounts: [account] } }, { s: "ok", d: { total_assets: "100", currency: "HKD", unrealized_pl } }, { s: "ok", d: [] }]);
+    const result = await fetchFutuAssets({ accessToken: "token", accountId: "123456", now, ...mock });
+    assert.equal(result.stockPnl, undefined); assert.match(result.warnings.join(" "), /未提供.*盈亏.*保留/);
+  }
+  for (const unrealized_pl of ["NaN", "--", "1,000", false]) {
+    const mock = mockFetch([{ s: "ok", d: { accounts: [account] } }, { s: "ok", d: { total_assets: "100", currency: "HKD", unrealized_pl } }, { s: "ok", d: [] }]);
+    await assert.rejects(fetchFutuAssets({ accessToken: "token", accountId: "123456", now, ...mock }), /盈亏/);
+  }
+});
+
 test("Futu upstream errors, malformed and oversized payloads never disclose credentials", async () => {
   for (const response of [
     new Error("synthetic-token synthetic-secret upstream-url"),

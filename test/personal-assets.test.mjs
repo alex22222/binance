@@ -57,6 +57,15 @@ test("stock floating PnL is signed reference data, counted once per confirmed ac
   }
   assert.throws(() => validatePortfolio({ ...value, stockPnl: [value.stockPnl[0], value.stockPnl[0]] }), /重复/);
 });
+test("API stock PnL retains a verified retrieval timestamp and rejects invalid provenance", () => {
+  const value = portfolio([entry()]);
+  const row = { accountId: "account-1", amount: -12, currency: "CNY", asOf: today, source: "api", asOfBasis: "imported", fetchedAt: new Date().toISOString() };
+  value.stockPnl = [row]; assert.deepEqual(validatePortfolio(value).stockPnl, [row]);
+  for (const patch of [{ fetchedAt: "invalid" }, { fetchedAt: "2099-01-01T00:00:00.000Z" }, { source: "screenshot" }]) {
+    assert.throws(() => validatePortfolio({ ...value, stockPnl: [{ ...row, ...patch }] }), /盈亏.*读取/);
+  }
+});
+
 function entry(overrides = {}) {
   return { id: "entry-1", accountId: "account-1", kind: "total", name: "账户总额", category: "未分类", currency: "CNY", amount: 100, asOf: today, source: "manual", ...overrides };
 }
