@@ -76,8 +76,38 @@ test("Futu account selection uses actual authorized endpoint, masks cards and ex
   assert.equal(mock.calls[0].url, "https://webapi.futunn.com/api/v1.0/accounts/authorized_trd_accs");
   assert.equal(mock.calls[0].options.method, "GET");
   assert.equal(mock.calls[0].options.redirect, "error");
-  const unsafe = mockFetch([{ s: "ok", d: { accounts: [{ ...account, account_id: 9007199254740992 }] } }]);
-  await assert.rejects(() => fetchFutuAccounts({ accessToken: "token", ...unsafe }), /精度/);
+  const unsafe = mockFetch([]);
+  await assert.rejects(() => fetchFutuAssets({ accessToken: "token", accountId: 9007199254740992, ...unsafe }), /精度/);
+  assert.equal(unsafe.calls.length, 0);
+});
+
+test("Futu preserves distinct uint64 account IDs from raw JSON and uses the exact selected ID in requests", async () => {
+  const ids = ["18446744073709551614", "18446744073709551615"];
+  const response = () => new Response(JSON.stringify({ s: "ok", d: { accounts: ids.map(id => ({ ...account, account_id: `raw-${id}` })) } }).replace(/"raw-(\d+)"/g, "$1"));
+  const list = mockFetch([response()]);
+  assert.deepEqual((await fetchFutuAccounts({ accessToken: "token", ...list })).map(row => row.id), ids);
+  const mock = mockFetch([response(), { s: "ok", d: { total_assets: 1234.56, currency: "HKD" } }, { s: "ok", d: [] }]);
+  const result = await fetchFutuAssets({ accessToken: "token", accountId: ids[1], now, ...mock });
+  assert.equal(result.externalAccountId, ids[1]);
+  assert.equal(result.total, 1234.56);
+  assert.equal(mock.calls[1].url, `https://webapi.futunn.com/api/v1.0/accounts/${ids[1]}/funds?currency=HKD`);
+  assert.equal(mock.calls[2].url, `https://webapi.futunn.com/api/v1.0/accounts/${ids[1]}/positions`);
+});
+
+test("Futu preserves uint64 position IDs without collapsing two positions into one identity", async () => {
+  const ids = ["18446744073709551614", "18446744073709551615"];
+  const positions = ids.map(id => ({ position_id: `raw-${id}`, code: "US.SYNTH", stock_name: "Synthetic Fund", security_type: "ETF", qty: "2", currency: "USD", market_val: "20" }));
+  const raw = new Response(JSON.stringify({ s: "ok", d: positions }).replace(/"raw-(\d+)"/g, "$1"));
+  const mock = mockFetch([{ s: "ok", d: { accounts: [account] } }, { s: "ok", d: { total_assets: "40", currency: "USD" } }, raw]);
+  const result = await fetchFutuAssets({ accessToken: "token", accountId: "123456", now, ...mock });
+  assert.deepEqual(result.holdings.map(row => row.externalId), ids.map(id => `position:US.SYNTH:${id}`));
+});
+
+test("Futu rejects unsafe ID number spellings and values outside uint64 rather than guessing digits", async () => {
+  for (const id of ["18446744073709551616", "1e18", "9007199254740993.1", "-9007199254740993"]) {
+    const raw = new Response(JSON.stringify({ s: "ok", d: { accounts: [{ ...account, account_id: "raw-id" }] } }).replace('"raw-id"', id));
+    await assert.rejects(fetchFutuAccounts({ accessToken: "token", ...mockFetch([raw]) }), /编号|格式/);
+  }
 });
 
 test("Futu uses net assets once and keeps native position values informational", async () => {

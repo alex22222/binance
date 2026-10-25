@@ -55,7 +55,14 @@ async function readJson(response) {
     source = await response.text();
     if (Buffer.byteLength(source) > MAX_RESPONSE_BYTES) throw new FutuAssetsError("富途响应过大，未导入资产");
   }
-  try { return JSON.parse(source); } catch { throw new FutuAssetsError("富途响应格式无效，未导入资产"); }
+  try {
+    return JSON.parse(source, (key, value, context) => {
+      if (!["account_id", "position_id"].includes(key) || typeof value !== "number" || Number.isSafeInteger(value)) return value;
+      // Recover uint64 identifiers from the original JSON digits, never a rounded Number.
+      if (!context?.source || !/^[0-9]{1,20}$/.test(context.source) || BigInt(context.source) > 18446744073709551615n) throw new Error("Invalid uint64 identifier");
+      return context.source;
+    });
+  } catch { throw new FutuAssetsError("富途响应格式无效，未导入资产"); }
 }
 
 async function request(path, { fetchImpl = fetch, method = "GET", accessToken, body, contentType } = {}) {
