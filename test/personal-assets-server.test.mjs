@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -39,7 +39,7 @@ test("personal assets share Dashboard authentication and persist isolated review
     const entry = await fetch(`${origin}/assets?view=overview`, { redirect: "manual" });
     assert.equal(entry.status, 303);
     assert.equal(entry.headers.get("location"), "/login");
-    for (const path of ["/api/assets/funds/configure", "/api/assets", "/api/assets/rates/refresh", "/api/assets/sync", "/api/assets/sync/futu/callback", "/api/assets/ai", "/api/assets/ai/review", "/api/assets/ai/configure", "/assets/app.mjs", "/assets/core.mjs", "/assets/ocr/worker.min.js"]) {
+    for (const path of ["/api/assets/funds/configure", "/api/assets", "/api/assets/rates/refresh", "/api/assets/sync", "/api/assets/sync/futu/callback", "/api/assets/ai", "/api/assets/ai/review", "/api/assets/ai/configure", "/api/assets/statement-passwords", "/assets/app.mjs", "/assets/core.mjs", "/assets/ocr/worker.min.js"]) {
       assert.equal((await fetch(origin + path)).status, 401, path);
     }
     const page = await fetch(`${origin}/assets`, { headers });
@@ -104,6 +104,38 @@ test("personal assets share Dashboard authentication and persist isolated review
     for (const extra of [{}, { Origin: "https://attacker.example" }]) assert.equal((await fetch(`${origin}/api/assets/funds/configure`, { method: "POST", headers: { ...headers, "Content-Type": "application/json", ...extra }, body: "{}" })).status, 403);
     assert.equal((await fetch(`${origin}/api/assets/funds/configure`, { method: "POST", headers: { ...headers, Origin: origin, "Content-Type": "application/json" }, body: "{}" })).status, 400);
     const beforeRefresh = await readFile(statePath, "utf8");
+    const passwordPage = "/assets?settings=statement-passwords";
+    assert.equal((await fetch(origin + passwordPage, { redirect: "manual" })).headers.get("location"), "/login");
+    const passwordResponse = await fetch(origin + passwordPage, { headers });
+    assert.equal(passwordResponse.status, 200);
+    assert.equal(passwordResponse.headers.get("cache-control"), "no-store");
+    const passwordHtml = await passwordResponse.text();
+    assert.match(html, /role="menuitem" href="\/assets\?settings=statement-passwords"/);
+    assert.match(passwordHtml, /盈立香港[\s\S]*盈立新加坡/);
+    assert.match(passwordHtml, /type="password"/);
+    assert.doesNotMatch(passwordHtml, /\/assets\/app\.mjs|\/api\/assets\/ai/);
+    const nonce = passwordResponse.headers.get("content-security-policy").match(/'nonce-([^']+)'/)[1];
+    assert.ok(passwordHtml.includes(`<script nonce="${nonce}">`));
+    const passwordApi = `${origin}/api/assets/statement-passwords`;
+    const passwordPost = (body, extra = {}) => fetch(passwordApi, { method: "POST", headers: { ...headers, "Content-Type": "application/json", Origin: origin, ...extra }, body: JSON.stringify(body) });
+    assert.equal((await fetch(passwordApi, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: "{}" })).status, 401);
+    for (const extra of [{ Origin: "" }, { Origin: "https://attacker.example" }]) assert.equal((await passwordPost({ provider: "usmart-hk", password: "synthetic statement password" }, extra)).status, 403);
+    assert.equal((await passwordPost({ provider: "usmart-hk", password: "synthetic statement password", apiKey: "unrelated" })).status, 400);
+    const savedPassword = await passwordPost({ provider: "usmart-hk", password: "synthetic statement password" });
+    assert.equal(savedPassword.status, 200);
+    const passwordStatus = await savedPassword.text();
+    assert.equal(JSON.parse(passwordStatus).providers["usmart-hk"].configured, true);
+    assert.doesNotMatch(passwordStatus, /synthetic statement password|"password"/);
+    const configPath = join(directory, "personal-assets-statement-passwords.json");
+    assert.equal((await stat(configPath)).mode & 0o777, 0o600);
+    assert.match(await readFile(configPath, "utf8"), /synthetic statement password/);
+    assert.doesNotMatch(await (await fetch(`${origin}/api/assets`, { headers })).text(), /synthetic statement password|statement-passwords/);
+    assert.equal((await fetch(`${origin}/state/personal-assets-statement-passwords.json`, { headers })).status, 404);
+    assert.equal((await fetch(passwordApi, { method: "PUT", headers })).status, 405);
+    assert.equal((await passwordPost({ provider: "usmart-hk", clear: true })).status, 200);
+    assert.equal((await (await fetch(passwordApi, { headers })).json()).providers["usmart-hk"].configured, false);
+    assert.doesNotMatch(await readFile(configPath, "utf8"), /synthetic statement password/);
+    assert.equal(await readFile(statePath, "utf8"), beforeRefresh);
     for (const action of ["review", "configure"]) {
       const path = `${origin}/api/assets/ai/${action}`;
       assert.equal((await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})).status,401);

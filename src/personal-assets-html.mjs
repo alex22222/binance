@@ -32,6 +32,7 @@ const SETTINGS_MENU = `<div class="settings-menu"><button type="button" class="s
   + `<div class="settings-panel" id="settings-panel" role="menu" aria-label="资产页设置" hidden>`
   + `<button type="button" class="settings-item primary" role="menuitem" data-action="import" data-needs-data disabled>${icon('<path d="M12 15V3M7 8l5-5 5 5M5 21h14"/>')}导入资产</button>`
   + `<button type="button" class="settings-item" role="menuitem" data-action="sync" data-needs-data disabled>${icon('<path d="M21 12a9 9 0 0 1-15.5 6.3L3 16M3 12a9 9 0 0 1 15.5-6.3L21 8M21 3v5h-5M3 21v-5h5"/>')}只读同步</button>`
+  + `<a class="settings-item" role="menuitem" href="/assets?settings=statement-passwords">${icon('<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>')}结单密码</a>`
   + `<button type="button" class="settings-item" role="menuitem" data-action="export" data-needs-data disabled>${icon('<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>')}导出备份</button>`
   + `<button type="button" class="settings-item" role="menuitem" data-action="ai-settings">${icon('<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2M16 7l3 3M18.5 4.5l2 2"/>')}Moonshot 配置</button>`
   + `<button type="button" class="settings-item" role="menuitem" id="theme-toggle" aria-pressed="false">${icon('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>')}<span id="theme-toggle-label">明亮模式</span></button>`
@@ -99,4 +100,51 @@ ${siteHeader("/assets", SETTINGS_MENU)}
 <script type="module" nonce="${safeNonce}" src="/assets/app.mjs"></script>
 </body>
 </html>`;
+}
+
+export function statementPasswordsHtml({ nonce }) {
+  const safeNonce = String(nonce).replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>结单密码 · HQ Capital</title>
+<style>${SITE_CSS}
+.passwords-wrap{max-width:760px;margin:36px auto;padding:0 20px 40px}.passwords-wrap h1{font-size:26px;margin:20px 0 10px}.passwords-wrap p{color:var(--muted);line-height:1.7}.password-card{margin:20px 0;padding:24px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}.password-card h2{font-size:18px;margin:0 0 8px}.password-card label{display:block;margin-top:18px;font-size:13px}.password-card input{box-sizing:border-box;width:100%;padding:12px;margin:8px 0 14px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}.password-actions{display:flex;gap:10px;flex-wrap:wrap}.password-actions button,.back-link{font:inherit;padding:10px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--text);text-decoration:none}.password-actions button[type=submit]{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}button:disabled{opacity:.5;cursor:wait}.password-status{font-size:13px;color:var(--muted)}#password-message{white-space:pre-wrap}#password-message[data-error=true]{color:var(--red)}
+</style></head><body>${siteHeader("/assets")}<main class="passwords-wrap"><a class="back-link" href="/assets">← 返回个人资产</a><h1>结单密码</h1><p>保存用于打开电子结单的密码。已保存的密码不会回显；更新某个账户不会改动另一个账户。保存后仍需解密、核对结单，才会更新资产。</p><p id="password-message" role="status" aria-live="polite">正在读取配置状态…</p>
+${[["usmart-hk", "盈立香港", "用于香港盈立发送的日结单和月结单。"], ["usmart-sg", "盈立新加坡", "用于盈立新加坡发送的结单，与香港账户分开配置。"]].map(([provider, label, description]) => `<form class="password-card" data-provider="${provider}" autocomplete="off"><h2>${label}</h2><p>${description}</p><div class="password-status" id="status-${provider}">状态待读取</div><label for="password-${provider}">结单打开密码</label><input type="password" id="password-${provider}" autocomplete="new-password" spellcheck="false" maxlength="256" required placeholder="输入新密码；已保存的密码不会显示"><div class="password-actions"><button type="submit" disabled>保存密码</button><button type="button" data-clear disabled>清除已保存密码</button></div></form>`).join("")}
+<p>密码通过本站 HTTPS 提交，仅保存在受限的服务器配置文件中，不进入资产导出、快照、AI 点评或浏览器存储。这里不需要邮箱登录密码、银行登录密码或交易密码。</p></main>
+<script nonce="${safeNonce}">
+const message = document.getElementById("password-message");
+let ready = false;
+function notify(text, error = false) { message.textContent = text; message.dataset.error = String(error); }
+function showStatus(data) {
+  for (const form of document.querySelectorAll("form[data-provider]")) {
+    const status = data.providers[form.dataset.provider];
+    document.getElementById("status-" + form.dataset.provider).textContent = status.configured ? "已配置 · 保存时间 " + new Date(status.updatedAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }) : "尚未配置";
+    form.querySelector("[data-clear]").disabled = !status.configured;
+    form.querySelector("button[type=submit]").disabled = false;
+  }
+}
+async function request(body) {
+  const response = await fetch("/api/assets/statement-passwords", { method: body ? "POST" : "GET", cache: "no-store", credentials: "same-origin", headers: body ? { "Content-Type": "application/json" } : {}, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "配置未保存，请重新登录后重试。");
+  return data;
+}
+async function save(form, clear) {
+  if (!ready) return;
+  const input = form.querySelector("input");
+  const body = clear ? { provider: form.dataset.provider, clear: true } : { provider: form.dataset.provider, password: input.value };
+  input.value = "";
+  ready = false;
+  document.querySelectorAll("form button, form input").forEach(element => { element.disabled = true; });
+  notify("正在保存…");
+  try { showStatus(await request(body)); notify(clear ? "已清除该账户的结单密码。" : "结单密码已保存。尚未据此验证结单，也未改动资产金额。"); }
+  catch (error) { notify(error.message, true); try { showStatus(await request()); } catch {} }
+  finally { document.querySelectorAll("form input").forEach(element => { element.disabled = false; }); ready = true; }
+}
+document.querySelectorAll("form[data-provider]").forEach(form => {
+  form.addEventListener("submit", event => { event.preventDefault(); save(form, false); });
+  form.querySelector("[data-clear]").addEventListener("click", () => save(form, true));
+});
+request().then(data => { showStatus(data); ready = true; notify("配置状态已读取。请在对应账户下填写结单密码。"); }).catch(error => notify(error.message, true));
+window.addEventListener("pagehide", () => { document.querySelectorAll("form input").forEach(input => { input.value = ""; }); });
+</script></body></html>`;
 }

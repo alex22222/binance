@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import { mkdir, open, rename, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -107,6 +108,50 @@ async function withWriteLock(stateDir, update) {
     await handle.close();
     await unlink(lockPath);
   }
+}
+
+const statementProviders = ["usmart-hk", "usmart-sg"];
+const validStatementPassword = value => typeof value === "string" && value.length > 0 && value.length <= 256 && !/[\u0000-\u001f\u007f]/.test(value);
+
+async function statementPasswordConfig(stateDir) {
+  statePath(stateDir);
+  let handle;
+  try {
+    handle = await open(join(resolve(stateDir), "personal-assets-statement-passwords.json"), constants.O_RDONLY | constants.O_NOFOLLOW);
+    const info = await handle.stat();
+    if (!info.isFile() || (info.mode & 0o077) || info.size > 10_000) throw new Error();
+    const value = JSON.parse(await handle.readFile("utf8"));
+    if (value?.schemaVersion !== 1 || !value.passwords || typeof value.passwords !== "object" || Array.isArray(value.passwords)
+      || Object.entries(value.passwords).some(([provider, row]) => !statementProviders.includes(provider) || !validStatementPassword(row?.password)
+        || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)))) throw new Error();
+    return value;
+  } catch (error) {
+    if (error.code === "ENOENT") return { schemaVersion: 1, passwords: {} };
+    throw new PersonalAssetsError("结单密码配置无法读取，请检查受保护的服务器文件", 500);
+  } finally { await handle?.close(); }
+}
+
+function statementPasswordStatus(config) {
+  return { providers: Object.fromEntries(statementProviders.map(provider => [provider, {
+    configured: Boolean(config.passwords[provider]), updatedAt: config.passwords[provider]?.updatedAt || null,
+  }])) };
+}
+
+export async function readStatementPasswordStatus({ stateDir }) {
+  return statementPasswordStatus(await statementPasswordConfig(stateDir));
+}
+
+export async function configureStatementPassword({ stateDir, provider, password, clear = false }) {
+  if (!statementProviders.includes(provider) || typeof clear !== "boolean" || (clear ? password !== undefined : !validStatementPassword(password))) {
+    throw new PersonalAssetsError("请选择支持的结单账户并填写有效密码；清除时不要同时提交新密码");
+  }
+  return withWriteLock(stateDir, async () => {
+    const config = await statementPasswordConfig(stateDir);
+    if (clear) delete config.passwords[provider];
+    else config.passwords[provider] = { password, updatedAt: new Date().toISOString() };
+    await atomicWrite(join(resolve(stateDir), "personal-assets-statement-passwords.json"), config);
+    return statementPasswordStatus(config);
+  });
 }
 
 export async function savePersonalAssets({ stateDir, portfolio, revision }) {

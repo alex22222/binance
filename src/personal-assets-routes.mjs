@@ -3,8 +3,8 @@ import { readAssetFundStatus, configureAssetFund } from "./personal-assets-funds
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { personalAssetsHtml } from "./personal-assets-html.mjs";
-import { readPersonalAssets, savePersonalAssets, createPersonalAssetsSnapshot } from "./personal-assets.mjs";
+import { personalAssetsHtml, statementPasswordsHtml } from "./personal-assets-html.mjs";
+import { readPersonalAssets, savePersonalAssets, createPersonalAssetsSnapshot, readStatementPasswordStatus, configureStatementPassword } from "./personal-assets.mjs";
 import { valuePersonalAssetState } from "./personal-assets-fx.mjs";
 import { readAssetSyncStatus, performAssetSyncAction, completeFutuAuthorization } from "./personal-assets-sync.mjs";
 
@@ -101,11 +101,13 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
     return false;
   }
   const assetApi = ["/api/assets", "/api/assets/snapshots", "/api/assets/rates/refresh", "/api/assets/funds/configure"].includes(path);
+  const statementApi = path === "/api/assets/statement-passwords";
+  const statementPage = ["/assets", "/assets/"].includes(path) && new URL(request.url, "http://localhost").searchParams.get("settings") === "statement-passwords";
   const syncAction = path.match(/^\/api\/assets\/sync\/(okx|futu|polymarket|future|okxweb3|tokenpocket|binanceagentic|okxagentic)\/(bind|connect|authorize|accounts|preview|apply|disconnect)$/);
   const aiApi = ["/api/assets/ai", "/api/assets/ai/review", "/api/assets/ai/configure"].includes(path);
   const syncApi = path === "/api/assets/sync" || path === "/api/assets/sync/futu/callback" || syncAction;
   const file = files.get(path);
-  if (!["/assets", "/assets/"].includes(path) && !assetApi && !syncApi && !aiApi && !file) return false;
+  if (!["/assets", "/assets/"].includes(path) && !assetApi && !syncApi && !aiApi && !statementApi && !file) return false;
   try {
     if (request.method === "GET" && path === "/api/assets/sync/futu/callback") {
       let success = false;
@@ -126,7 +128,7 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
         "Content-Security-Policy": `default-src 'none'; script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'unsafe-inline'; img-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
         "X-Content-Type-Options": "nosniff"
       });
-      response.end(personalAssetsHtml({ nonce }));
+      response.end(statementPage ? statementPasswordsHtml({ nonce }) : personalAssetsHtml({ nonce }));
       return true;
     }
     if (request.method === "GET" && file) {
@@ -142,6 +144,18 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
     }
     if (request.method === "GET" && path === "/api/assets") {
       json(response, await assetView(await readPersonalAssets({ stateDir }), { stateDir }));
+      return true;
+    }
+    if (request.method === "GET" && statementApi) {
+      json(response, await readStatementPasswordStatus({ stateDir }));
+      return true;
+    }
+    if (request.method === "POST" && statementApi) {
+      if (!request.headers.origin) throw requestError("请从结单密码页面提交。", 403);
+      requireAllowedOrigin(request);
+      const body = await readAssetBody(request);
+      if (Object.keys(body).some(key => !["provider", "password", "clear"].includes(key))) throw requestError("结单密码配置字段无效。", 400);
+      json(response, await configureStatementPassword({ stateDir, provider: body.provider, password: body.password, clear: body.clear }));
       return true;
     }
     if (request.method === "POST" && path === "/api/assets/funds/configure") {

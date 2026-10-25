@@ -90,6 +90,12 @@
 
 ## 存储与访问
 
+### 结单密码
+
+资产页右上角 **设置 → 结单密码** 打开 `/assets?settings=statement-passwords`。盈立香港与新加坡的电子结单密码分别填写、更新和清除；页面只返回是否已配置及保存时间，不回显密码。这里只填写 PDF 打开密码，不填写邮箱、银行或交易登录密码。
+
+页面及 `/api/assets/statement-passwords` 沿用 Dashboard 登录与同源提交校验，响应不缓存。密码单独原子保存到 `state/personal-assets-statement-passwords.json`，权限 `0600`；不进入账本、快照、导出、AI 点评或浏览器存储。提交时立即清空输入框。保存成功仅代表密码已保存，尚未证明密码能解开结单；解密、日期与账户核对、预览入账仍需独立验证。此配置不授予银行或邮箱 API 访问权限。
+
 页面、脚本、OCR 模型和 JSON API 都位于 Dashboard 的同一登录保护内。
 本地开发沿用现有的 loopback-only 模式；公网访问需使用项目已有的 HTTPS 与 Dashboard 登录。
 
