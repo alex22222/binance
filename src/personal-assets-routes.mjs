@@ -88,8 +88,11 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
   // The site lands on personal assets. The trading dashboard moved to
   // /dashboard, but the Dashboard entry's own "/" route (which the
   // authorization loader extends) still renders it, so hand the request back.
+  // Bot notifications link the bare origin as "打开手机 Dashboard", so Feishu's
+  // in-app browser still lands on the trading dashboard.
   if (request.method === "GET" && path === "/") {
-    response.writeHead(302, { Location: "/assets", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+    const feishu = /\b(?:Lark|Feishu)\/|\bLarkLocale\//i.test(String(request.headers["user-agent"] || ""));
+    response.writeHead(302, { Location: feishu ? "/dashboard" : "/assets", Vary: "User-Agent", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
     response.end();
     return true;
   }

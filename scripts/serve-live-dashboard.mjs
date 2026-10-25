@@ -149,7 +149,7 @@ function requireAllowedOrigin(request) {
 
 function requireAuthentication(request, response) {
   if (dashboardRequestAuthorized(request, authConfig)) return true;
-  if (request.method === "GET" && (["/", "/strategies", "/btc-radar"].includes(request.url) || ["/reviews", "/fund-manager", "/weekly-strategy", "/assets", "/assets/"].includes(new URL(request.url, "http://localhost").pathname))) {
+  if (request.method === "GET" && (["/", "/strategies", "/btc-radar"].includes(request.url) || ["/reviews", "/fund-manager", "/weekly-strategy", "/assets", "/assets/", "/dashboard", "/dashboard/"].includes(new URL(request.url, "http://localhost").pathname))) {
     response.writeHead(303, {
       "Location": "/login",
       "Cache-Control": "no-store",

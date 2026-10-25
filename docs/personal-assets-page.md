@@ -2,13 +2,11 @@
 
 入口：站点首页 `/` 登录后跳转到这里，顶部导航 **个人资产** 也指向这里，路径 `/assets`。顶部品牌为 **HQ Capital**。
 
-原来在 `/` 的币安 Agent Wallet 交易看板改为 `/dashboard`，导航「币安Agent Wallet」指向新地址。交易看板页面属于 Live 代码身份，仍由 Dashboard 入口原有的 `/` 路由渲染：资产路由只把 `/dashboard` 交回该路由，不改入口文件和授权固定哈希。因此：
+原来在 `/` 的币安 Agent Wallet 交易看板改为 `/dashboard`，导航「币安Agent Wallet」指向新地址。交易看板页面属于 Live 代码身份，仍由 Dashboard 入口原有的 `/` 路由渲染：资产路由只把 `/dashboard` 交回该路由。未登录打开 `/dashboard` 与其他页面一样跳到 `/login`，登录后回到首页。
 
-- 机器人飞书消息里的「打开手机 Dashboard」仍是站点首页链接，打开后先到个人资产页；
-- 未登录直接打开 `/dashboard` 会收到 401（浏览器弹出登录框），而不是跳转 `/login`；登录后回到首页，即个人资产页；
-- 登录页、交易看板等页面的浏览器标题仍写 Agentic Wallet。
+机器人飞书消息里的「打开手机 Dashboard」链接是站点首页。首页按 User-Agent 识别飞书内置浏览器（`Lark/`、`Feishu/` 或 `LarkLocale/`），飞书里打开时直接进 `/dashboard`，其他浏览器进个人资产页。
 
-改这三处需要修改 Dashboard 入口或 `src/` 交易代码，须另行审核。
+登录页、交易看板、复盘等页面的浏览器标签标题仍写 Agentic Wallet：这些页面在 `src/` 交易代码里，改动会改变 Live 代码身份并停止自动续期，留待下次交易代码变更时一起改。
 
 ## 总览布局与股票盈亏
 

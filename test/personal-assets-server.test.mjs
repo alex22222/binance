@@ -53,6 +53,17 @@ test("personal assets share Dashboard authentication and persist isolated review
     assert.equal(landing.status, 302);
     assert.equal(landing.headers.get("location"), "/assets");
     assert.equal(landing.headers.get("cache-control"), "no-store");
+    for (const userAgent of [
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Lark/7.30.0 LarkLocale/zh_CN ChannelName/Feishu",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Feishu/7.30.0 Chrome/120.0 Safari/537.36"
+    ]) {
+      const fromFeishu = await fetch(`${origin}/`, { headers: { ...headers, "User-Agent": userAgent }, redirect: "manual" });
+      assert.equal(fromFeishu.status, 302);
+      assert.equal(fromFeishu.headers.get("location"), "/dashboard", userAgent);
+      assert.equal(fromFeishu.headers.get("vary"), "User-Agent");
+    }
+    const fromSafari = await fetch(`${origin}/`, { headers: { ...headers, "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1" }, redirect: "manual" });
+    assert.equal(fromSafari.headers.get("location"), "/assets");
     for (const path of ["/dashboard", "/dashboard/"]) {
       const dashboard = await fetch(origin + path, { headers, redirect: "manual" });
       assert.equal(dashboard.status, 200, path);
@@ -61,7 +72,11 @@ test("personal assets share Dashboard authentication and persist isolated review
       assert.match(dashboardHtml, /<a href="\/dashboard" aria-current="page">币安Agent Wallet<\/a>/, path);
       assert.match(dashboardHtml, /id="autoApprovalToggle"/, path);
     }
-    assert.equal((await fetch(`${origin}/dashboard`, { redirect: "manual" })).status, 401);
+    for (const path of ["/dashboard", "/dashboard/"]) {
+      const anonymous = await fetch(origin + path, { redirect: "manual" });
+      assert.equal(anonymous.status, 303, path);
+      assert.equal(anonymous.headers.get("location"), "/login", path);
+    }
     assert.match(html, /个人资产/);
     assert.match(html, /\/assets\/app\.mjs/);
     const core = await fetch(`${origin}/assets/core.mjs`, { headers });

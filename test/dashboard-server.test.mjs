@@ -368,6 +368,10 @@ test("dashboard protects public access with basic auth and an exact HTTPS origin
     assert.equal(mobileEntry.status, 303);
     assert.equal(mobileEntry.headers.get("location"), "/login");
 
+    const dashboardEntry = await fetch(`${origin}/dashboard`, { redirect: "manual" });
+    assert.equal(dashboardEntry.status, 303);
+    assert.equal(dashboardEntry.headers.get("location"), "/login");
+
     const managerEntry = await fetch(`${origin}/fund-manager?date=2026-09-13&edition=preview`, { redirect: "manual" });
     assert.equal(managerEntry.status, 303);
     assert.equal(managerEntry.headers.get("location"), "/login");
