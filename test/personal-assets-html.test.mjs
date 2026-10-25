@@ -1631,3 +1631,82 @@ test("overview uses the saved daily time and settings provide an isolated schedu
   assert.match(page, /\/api\/assets\/refresh-schedule/); assert.match(page, /nonce="test&quot;&gt;&lt;script&gt;"/);
   assert.doesNotMatch(page, /\/assets\/app.mjs|\/api\/assets\/ai|localStorage|sessionStorage/);
 });
+
+test("every platform shows how to acquire data without claiming empty accounts are connected", async () => {
+  const ui = await view();
+  for (const platform of core.PLATFORMS) {
+    const card = ui.run(`platformCard(${JSON.stringify(platform)},PLATFORMS.indexOf(${JSON.stringify(platform)}),summarize(portfolio()))`);
+    assert.match(card, /获取渠道/);
+    assert.match(card, /获取方法/);
+    assert.match(card, /尚未录入/);
+    assert.doesNotMatch(card, /自动同步已开启|已完成同步/);
+  }
+  assert.match(ui.run('platformCard("盈立",3,summarize(portfolio()))'), /QQ 邮箱.*日结单.*月结单[\s\S]*香港.*新加坡[\s\S]*核对.*入账/);
+  assert.match(ui.run('platformCard("民生银行",8,summarize(portfolio()))'), /个人电子月结单.*定期.*到期.*续存/);
+  assert.match(ui.run('platformCard("Future",11,summarize(portfolio()))'), /Polygon 交易地址[\s\S]*Solana 入金地址.*不代表/);
+  assert.match(ui.get("asset-content").innerHTML, /渠道与原币明细/);
+  ui.run('page="holdings";render()');
+  assert.equal((ui.get("asset-content").innerHTML.match(/aria-label="数据获取渠道"/g) || []).length, core.PLATFORMS.length);
+  assert.equal(ui.requests.length, 1);
+});
+
+test("channel annotations distinguish quote revaluation, remaining cash and account reads", async () => {
+  const initial = stateWith([
+    entry({id:"quoted",name:"基金持仓",kind:"holding",source:"api"}),
+    entry({id:"cash",name:"现金",kind:"holding",source:"screenshot"})
+  ]);
+  initial.portfolio.accounts[0].basis="holdings";
+  initial.funds={status:"available",bindings:[{entryId:"quoted",accountId:"account-1",source:"Official <manager>",enabled:true,lastAppliedAt:"2026-10-25T01:00:00Z"}]};
+  initial.refreshSchedule={time:"08:30"};
+  const ui=await view(initial);
+  const panel=ui.run('accountChannelPanel(portfolio().accounts[0])');
+  assert.match(panel,/官方净值 × 确认份额/);
+  assert.match(panel,/Official &lt;manager&gt;/);
+  assert.match(panel,/08:30/);
+  assert.match(panel,/其余记录：截图核对/);
+  assert.match(panel,/不代表账户余额或持有数量已同步/);
+  assert.doesNotMatch(panel,/自动同步已开启|<manager>/);
+  ui.run('state.funds.bindings[0].enabled=false');
+  assert.match(ui.run('accountChannelPanel(portfolio().accounts[0])'),/已暂停/);
+  ui.run('state.funds.status="unavailable"');
+  assert.match(ui.run('accountChannelPanel(portfolio().accounts[0])'),/估值状态待核实/);
+});
+
+test("OKX separates exchange and public wallet channels and reflects real authorization states", async () => {
+  const initial=stateWith();
+  const exchange=initial.portfolio.accounts.find(row=>row.platform==="OKX");
+  initial.portfolio.accounts.push({...exchange,id:"web3-extra",name:"Web3"});
+  initial.sync={status:"available",providers:{
+    okx:{targetAccountId:exchange.id,connected:true,enabled:false},
+    okxweb3:{targetAccountId:"web3-extra",connected:true,enabled:true,lastAppliedAt:"2026-10-25T01:00:00Z",lastValuationComplete:false}
+  }};
+  const ui=await view(initial);
+  const card=ui.run('platformCard("OKX",4,summarize(portfolio()))');
+  assert.match(card,/OKX 交易所 Read API/);
+  assert.match(card,/OKX OnchainOS.*公开地址/);
+  assert.match(card,/已授权 · 待核对入账/);
+  assert.match(card,/自动同步已开启.*部分估值/);
+  ui.run('state.sync.providers.okxweb3.connected=false');
+  assert.match(ui.run('platformCard("OKX",4,summarize(portfolio()))'),/已断开 · 保留上次入账/);
+  ui.run('state.sync.providers.okxweb3.connected=true;state.sync.providers.okxweb3.lastError="private failure"');
+  assert.match(ui.run('platformCard("OKX",4,summarize(portfolio()))'),/同步失败/);
+  ui.run('state.sync.status="unavailable"');
+  assert.match(ui.run('platformCard("OKX",4,summarize(portfolio()))'),/渠道状态待核实/);
+  assert.doesNotMatch(ui.run('platformCard("OKX",4,summarize(portfolio()))'),/自动同步已开启/);
+});
+
+test("channel labels remain private, escape external source text and render without fetching or writing", async () => {
+  const initial=stateWith([entry({source:"api",kind:"holding",note:"secret-note-123"})]);
+  initial.portfolio.accounts[0].basis="holdings";
+  initial.funds={status:"available",bindings:[{entryId:"entry-1",accountId:"account-1",source:'<img src=x onerror="alert(1)">',quantity:"87654.321",enabled:true,lastAppliedAt:"2026-10-25T01:00:00Z"}]};
+  const ui=await view(initial);
+  const before=JSON.stringify(initial);
+  const requestCount=ui.requests.length;
+  assert.match(ui.run('accountChannelPanel(portfolio().accounts[0])'),/&lt;img/);
+  ui.run('hidden=true');
+  const panel=ui.run('accountChannelPanel(portfolio().accounts[0])');
+  assert.doesNotMatch(panel,/87654\.321|secret-note-123|<img|onerror|alert/);
+  for(const platform of core.PLATFORMS) ui.run(`platformCard(${JSON.stringify(platform)},0,summarize(portfolio()))`);
+  assert.equal(ui.requests.length,requestCount);
+  assert.equal(JSON.stringify(initial),before);
+});
