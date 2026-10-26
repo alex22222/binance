@@ -117,6 +117,8 @@ test("Futu uses net assets once and keeps native position values informational",
     { s: "ok", d: [
       { code: "US.SYNTH", stock_name: "Synthetic Fund", security_type: "ETF", qty: "2", currency: "USD", market_val: "20", position_side: "LONG" },
       { code: "HK.00001", stock_name: "Synthetic Company", security_type: "STOCK", qty: "10", currency: "HKD", market_val: "50", position_side: "LONG" },
+      { code: "HK.03032", stock_name: "Hang Seng TECH Index ETF", security_type: "STOCK", qty: "100", currency: "HKD", market_val: "30", position_side: "LONG" },
+      { code: "US.NFLX", stock_name: "Netflix", security_type: "STOCK", qty: "1", currency: "USD", market_val: "8", position_side: "LONG" },
       { code: "US.SHORT", stock_name: "Synthetic Short", qty: "-1", currency: "USD", market_val: "-5", position_side: "SHORT" },
     ] },
   ]);
@@ -126,7 +128,7 @@ test("Futu uses net assets once and keeps native position values informational",
   assert.equal(result.currency, "HKD");
   assert.equal(result.asOf, "2026-10-24");
   assert.equal(result.fetchedAt, "2026-10-24T12:00:00.000Z");
-  assert.deepEqual(result.holdings.map((row) => [row.symbol ?? row.externalId, row.category, row.currency, row.amount]), [["US.SYNTH", "股票ETF", "USD", 20], ["HK.00001", "股票", "HKD", 50], ["cash:USD", "现金", "USD", 2.5]]);
+  assert.deepEqual(result.holdings.map((row) => [row.symbol ?? row.externalId, row.category, row.currency, row.amount]), [["US.SYNTH", "股票ETF", "USD", 20], ["HK.00001", "股票", "HKD", 50], ["HK.03032", "股票ETF", "HKD", 30], ["US.NFLX", "股票", "USD", 8], ["cash:USD", "现金", "USD", 2.5]]);
   assert.ok(result.warnings.some((row) => row.includes("空头")));
   assert.ok(result.warnings.some((row) => row.includes("现金为负")));
   assert.equal(mock.calls[1].url, "https://webapi.futunn.com/api/v1.0/accounts/123456/funds?currency=HKD");

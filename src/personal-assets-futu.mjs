@@ -215,9 +215,10 @@ function currency(value) {
   return value;
 }
 
-function positionCategory(value) {
+// Futu reports some listed ETFs (e.g. Hang Seng TECH Index ETF) as STOCK.
+function positionCategory(value, name) {
   if (value === "ETF") return "股票ETF";
-  if (value === "STOCK") return "股票";
+  if (value === "STOCK") return /(?<![A-Za-z])ETF(?![A-Za-z])/i.test(name) ? "股票ETF" : "股票";
   if (value === "BOND") return "债券";
   if (value === "FUND") return "基金";
   return "未分类";
@@ -253,7 +254,7 @@ export async function fetchFutuAssets({ accessToken, accountId: selectedId, fetc
     const externalId = `position:${position.code}:${position.position_id ?? "LONG"}`;
     if (seen.has(externalId)) throw new FutuAssetsError("富途持仓标识重复，未导入资产");
     seen.add(externalId);
-    holdings.push({ externalId, name: position.stock_name.trim(), category: positionCategory(position.security_type), currency: positionCurrency, amount: value, quantity, symbol: position.code });
+    holdings.push({ externalId, name: position.stock_name.trim(), category: positionCategory(position.security_type, position.stock_name), currency: positionCurrency, amount: value, quantity, symbol: position.code });
   }
   for (const [field, nativeCurrency] of [["hk_cash", "HKD"], ["us_cash", "USD"], ["cn_cash", "CNY"], ["sg_cash", "SGD"], ["jp_cash", "JPY"], ["au_cash", "AUD"]]) {
     if (funds[field] === undefined || funds[field] === "") continue;
