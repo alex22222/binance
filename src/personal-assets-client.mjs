@@ -1,4 +1,4 @@
-import { PLATFORMS, CURRENCIES, CATEGORIES, CORE_CASH_GROUPS, emptyPortfolio, entryIdentity, validatePortfolio, summarize, parseCsv, csvTemplate, extractOcrCandidates, detectCurrency } from "./core.mjs";
+import { PLATFORMS, CURRENCIES, CATEGORIES, CORE_CASH_GROUPS, LOOK_THROUGH_TOLERANCE, emptyPortfolio, entryIdentity, validatePortfolio, summarize, parseCsv, csvTemplate, extractOcrCandidates, detectCurrency } from "./core.mjs";
 
 const $ = (id) => document.getElementById(id);
 const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
@@ -596,7 +596,7 @@ const CORE_TARGET = 50;
 function sleevePanel(summary) {
   const { core, satellite, unassigned } = summary.sleeves;
   const head = `<div class="section-head"><div><h2>核心 / 卫星</h2><span class="muted small">按你的配置规则统计 · 目标核心 ${CORE_TARGET}% / 卫星 ${100 - CORE_TARGET}%</span></div><span class="pill">按已核算 ${displayCurrency}</span></div>`;
-  const rules = '<p class="footnote">核心：货币基金、现金与定期、USDT、USDC、其他稳定币、BTC（含 WBTC 等），以及按名称识别的标普500、纳指100 指数产品（含链上代币化版本）。卫星：其他股票与 ETF、链上股票代币、其他代币。组合资产、未分类、基金、债券和其他记录不归入任何一侧，拆分持仓后自动归类。</p>';
+  const rules = `<p class="footnote">核心：货币基金、现金与定期、USDT、USDC、其他稳定币、BTC（含 WBTC 等），以及按名称识别的标普500、纳指100 指数产品（含链上代币化版本）。卫星：其他股票与 ETF、链上股票代币、其他代币、预测市场仓位。按账户总额计入的账户，如果只读同步的持仓合计与总额相差不超过 ${LOOK_THROUGH_TOLERANCE * 100}%，按持仓比例归类，总额本身不变。其余组合资产、未分类、基金、债券和其他记录不归入任何一侧，拆分持仓后自动归类。</p>`;
   if (!(summary.total > 0)) return `<section class="panel sleeve-panel" aria-label="核心与卫星">${head}<div class="empty small">录入并核算资产后显示核心与卫星占比。</div>${rules}</section>`;
   const sides = [["核心", "core", core], ["卫星", "satellite", satellite], ["待拆分", "unassigned", unassigned]];
   const share = (value) => value / summary.total * 100;
@@ -605,7 +605,8 @@ function sleevePanel(summary) {
   const meter = hidden ? '<div class="empty small">分布及占比已隐藏</div>' : `<div class="sleeve-meter" role="img" aria-label="核心 ${coreShare.toFixed(1)}%，卫星 ${share(satellite.value).toFixed(1)}%，待拆分 ${share(unassigned.value).toFixed(1)}%，目标线 ${CORE_TARGET}%"><div class="sleeve-bar">${sides.filter(([, , side]) => side.value > 0).map(([label, key, side]) => `<span class="sleeve-${key}" style="width:${share(side.value).toFixed(4)}%" title="${label} ${percentage(side.value, summary.total)}"></span>`).join("")}</div><i class="sleeve-target" style="left:${CORE_TARGET}%" title="目标 ${CORE_TARGET}%"></i></div>`;
   const legend = `<div class="sleeve-legend">${sides.filter(([, key, side]) => key !== "unassigned" || side.value > 0).map(([label, key, side]) => `<div><span class="sleeve-key sleeve-${key}" aria-hidden="true"></span><span>${label}</span><strong class="num">${percentage(side.value, summary.total)}</strong><small class="num">${displayCurrency} ${displayAmount(side.value)}</small></div>`).join("")}</div>`;
   const gap = coreShare - CORE_TARGET;
-  const status = hidden ? "" : `<p class="muted small">核心${Math.abs(gap) < 0.05 ? `与目标一致` : `比目标${gap > 0 ? "高" : "低"} ${Math.abs(gap).toFixed(1)} 个百分点`}${unassigned.value > 0 ? ` · 另有 ${percentage(unassigned.value, summary.total)} 为组合资产或未分类，拆分后比例会变化` : ""}${summary.missing.length ? ` · ${summary.missing.length} 条缺汇率记录未计入` : ""}。</p>`;
+  const lookedThrough = summary.sleeves.lookedThrough.map((id) => escape(portfolio().accounts.find((account) => account.id === id)?.name)).join("、");
+  const status = hidden ? "" : `<p class="muted small">核心${Math.abs(gap) < 0.05 ? `与目标一致` : `比目标${gap > 0 ? "高" : "低"} ${Math.abs(gap).toFixed(1)} 个百分点`}${unassigned.value > 0 ? ` · 另有 ${percentage(unassigned.value, summary.total)} 为组合资产或未分类，拆分后比例会变化` : ""}${summary.missing.length ? ` · ${summary.missing.length} 条缺汇率记录未计入` : ""}${lookedThrough ? ` · ${lookedThrough}按同步持仓比例归类` : ""}。</p>`;
   const column = (title, side, foot = "") => `<div><h3>${title}</h3>${side.groups.length ? distribution(side.groups, side.value) : '<div class="empty small">暂无记录</div>'}${foot}</div>`;
   const mix = core.value > 0 && !hidden ? `<p class="muted small">现金类 ${percentage(cash, core.value)} · BTC 与指数 ${percentage(core.value - cash, core.value)}（占核心）</p>` : "";
   return `<section class="panel sleeve-panel" aria-label="核心与卫星">${head}${meter}${legend}${status}<div class="sleeve-columns">${column("核心内部构成 · 占核心", core, mix)}${column("卫星构成 · 占卫星", satellite)}${unassigned.groups.length ? column("待拆分 · 占待拆分", unassigned) : ""}</div>${rules}</section>`;

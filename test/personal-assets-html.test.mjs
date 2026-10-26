@@ -575,6 +575,22 @@ test("overview measures core and satellite against the 50/50 rule and keeps mixe
   assert.doesNotMatch(hiddenHtml, /45\.0%|66\.7%|个百分点|sleeve-bar/);
 });
 
+test("core/satellite panel names accounts classified from their synced positions", async () => {
+  const futu = "account-3";
+  const initial = stateWith([
+    entry({ id: "futu-total", accountId: futu, category: "组合资产", amount: 1000, source: "api" }),
+    entry({ id: "pony", accountId: futu, kind: "holding", name: "Pony AI", category: "股票", amount: 600, source: "api" }),
+    entry({ id: "voo", accountId: futu, kind: "holding", name: "VOO", category: "股票ETF", amount: 400, source: "api" }),
+  ]);
+  const ui = await view(initial);
+  const html = ui.get("asset-content").innerHTML;
+  assert.match(html, /核心<\/span><strong class="num">40\.0%[\s\S]*卫星<\/span><strong class="num">60\.0%/);
+  assert.match(html, /富途按同步持仓比例归类/);
+  assert.doesNotMatch(html, /待拆分<\/span>/);
+  ui.run("hidden=true;render()");
+  assert.doesNotMatch(ui.get("asset-content").innerHTML, /按同步持仓比例归类/);
+});
+
 test("API PnL shows read time and unknown source time in overview and preview without leaking hidden amounts", async () => {
   const initial = stateWith([entry({ amount: 500 })]);
   initial.portfolio.stockPnl = [{ accountId: "account-1", amount: -10.25, currency: "CNY", asOf: entry().asOf, source: "api", asOfBasis: "imported", fetchedAt: "2026-10-24T12:00:00.000Z" }];

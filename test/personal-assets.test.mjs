@@ -273,6 +273,42 @@ test("the core/satellite rule classifies by category and index exposure and leav
   assert.deepEqual(empty.core, { value: 0, groups: [] });
 });
 
+test("a reconciled synced breakdown classifies an account total and prediction markets are satellite", () => {
+  const futu = "account-3";
+  const holding = (id, name, category, currency, amount, overrides = {}) => entry({ id, accountId: futu, kind: "holding", name, category, currency, amount, source: "api", ...overrides });
+  const build = (rows) => {
+    const value = portfolio([
+      entry({ id: "futu-total", accountId: futu, category: "组合资产", currency: "HKD", amount: 1000, source: "api" }),
+      ...rows,
+      entry({ id: "pm-yes", accountId: "account-11", kind: "holding", name: "Will X happen? · Yes", category: "组合资产", currency: "USD", amount: 10, source: "api" }),
+    ]);
+    value.rates.USD = { value: 7, date: today };
+    value.rates.HKD = { value: 0.9, date: today };
+    value.accounts[10].basis = "holdings";
+    return summarize(validatePortfolio(value));
+  };
+  const pony = holding("pony", "Pony AI", "股票", "USD", 90);
+  const voo = holding("voo", "Vanguard 标普500 ETF（VOO）", "股票ETF", "HKD", 300);
+  const { total, sleeves } = build([pony, voo]);
+  assert.equal(total, 970, "positions of a total counted account are never added to the total");
+  assert.deepEqual(sleeves.lookedThrough, [futu]);
+  assert.deepEqual(sleeves.core.groups, [{ name: "标普500", value: 270 }]);
+  assert.deepEqual(sleeves.satellite.groups, [{ name: "股票与ETF", value: 630 }, { name: "预测市场", value: 70 }]);
+  assert.deepEqual(sleeves.unassigned, { value: 0, groups: [] });
+
+  const unassigned = (rows) => {
+    const result = build(rows).sleeves;
+    assert.deepEqual(result.lookedThrough, []);
+    assert.deepEqual(result.unassigned.groups, [{ name: "组合资产", value: 900 }]);
+  };
+  unassigned([pony, { ...voo, amount: 330 }]);
+  unassigned([pony, { ...voo, source: "manual" }]);
+  unassigned([pony, { ...voo, currency: "SGD" }]);
+  unassigned([]);
+  assert.equal(assetSleeve({ name: "资金账户（汇总，类型待细分）", category: "组合资产", kind: "holding" }, { platform: "OKX" }).sleeve, "unassigned");
+  assert.equal(assetSleeve({ name: "Will Y? · No", category: "组合资产", kind: "holding" }, { platform: "Future" }).group, "预测市场");
+});
+
 test("new categories retain account-basis and pending-account exclusions", () => {
   const value = portfolio([
     entry({ category: "组合资产", amount: 500 }),
