@@ -1753,3 +1753,88 @@ test("channel labels remain private, escape external source text and render with
   assert.equal(ui.requests.length,requestCount);
   assert.equal(JSON.stringify(initial),before);
 });
+
+test("snapshot trend plots frozen CNY values chronologically at their actual time spacing", async () => {
+  const initial = displayState();
+  initial.snapshots = [
+    { id: "last", at: "2026-10-11T16:00:00Z", total: 1800, missing: 0 },
+    { id: "first", at: "2026-10-01T16:00:00Z", total: 1000, missing: 0 },
+    { id: "middle", at: "2026-10-02T16:00:00Z", total: 1300, missing: 1 }
+  ];
+  const ui = await view(initial);
+  const before = JSON.stringify(initial);
+  const requests = ui.requests.length;
+  const aiRequests = ui.aiRequests.length;
+  ui.run('displayCurrency="USD"; page="history"; render()');
+  const html = ui.get("asset-content").innerHTML;
+  assert.match(html, /总资产走势/);
+  assert.match(html, /<svg[^>]*role="img"[^>]*aria-labelledby="history-chart-title history-chart-description"/);
+  assert.match(html, /CNY 1,800\.00/);
+  assert.match(html, /区间估值变化[\s\S]*CNY \+800\.00/);
+  assert.match(html, /资产变化不能直接视为投资收益/);
+  assert.match(html, /2026\/10\/2 00:00:00/); // Beijing, not the browser's timezone.
+  const line = html.match(/class="history-line" d="([^"]+)"/)[1];
+  const points = [...line.matchAll(/[ML] ([\d.]+) ([\d.]+)/g)].map(match => Number(match[1]));
+  assert.equal(points.length, 3);
+  assert.ok(Math.abs((points[1] - points[0]) / (points[2] - points[0]) - 0.1) < 0.001);
+  assert.equal(JSON.stringify(initial), before);
+  assert.equal(ui.requests.length, requests);
+  assert.equal(ui.aiRequests.length, aiRequests);
+});
+
+test("snapshot trend ranges use Beijing calendar days without hiding the full audit list or making requests", async () => {
+  const initial = stateWith();
+  const midnight = Date.parse(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date()) + "T00:00:00+08:00");
+  initial.snapshots = [0, 6, 7, 29, 30].map((days, index) => ({ id: String(index), at: new Date(midnight - days * 86400000).toISOString(), total: 100 + index, missing: 0 }));
+  const ui = await view(initial);
+  const requests = ui.requests.length;
+  ui.run('page="history"; render()');
+  for (const [range, count] of [["7", 2], ["30", 4], ["all", 5]]) {
+    await ui.listeners.click({ target: { closest: () => ({ disabled: false, dataset: { action: "history-range", range } }) } });
+    assert.equal(ui.run("historySnapshots().length"), count);
+    assert.match(ui.get("asset-content").innerHTML, new RegExp(`data-range="${range}" aria-pressed="true"`));
+    assert.equal((ui.get("asset-content").innerHTML.match(/class="panel history-item"/g) || []).length, 5);
+  }
+  assert.equal(ui.requests.length, requests);
+  assert.equal(ui.run("state.snapshots.length"), 5);
+});
+
+test("snapshot trend privacy removes values and geometry, and the history page can show amounts again", async () => {
+  const initial = stateWith();
+  initial.snapshots = [{ id: "private", at: "2026-10-24T12:00:00Z", total: 876543.21, missing: 0 }];
+  const ui = await view(initial);
+  ui.run('page="history"; hidden=true; render()');
+  assert.match(ui.get("asset-content").innerHTML, /走势及金额已隐藏/);
+  assert.match(ui.get("asset-content").innerHTML, /id="privacy-toggle"/);
+  assert.doesNotMatch(ui.run("renderHistoryChart()"), /<svg|history-line|history-dot|876,543|876543|stroke-dash/);
+  assert.doesNotMatch(ui.get("asset-content").innerHTML, /876,543|876543/);
+  await ui.listeners.click({ target: { closest: () => ({ id: "privacy-toggle", disabled: false, dataset: {} }) } });
+  assert.match(ui.get("asset-content").innerHTML, /CNY 876,543\.21/);
+});
+
+test("snapshot trend leaves unknown amounts as gaps and keeps real zero and partial values", async () => {
+  const initial = stateWith();
+  initial.snapshots = [0, 25, null, 50].map((total, index) => ({ id: String(index), at: `2026-10-${20 + index}T12:00:00Z`, total, missing: index === 1 ? 2 : 0 }));
+  const ui = await view(initial);
+  const html = ui.run("renderHistoryChart()");
+  assert.equal((html.match(/class="history-dot/g) || []).length, 3);
+  assert.equal((html.match(/class="history-line"/g) || []).length, 2);
+  assert.match(html, /CNY 0\.00/);
+  assert.match(html, /2 条缺汇率/);
+  assert.match(html, /1 个快照无金额.*断开/);
+  assert.doesNotMatch(html, /NaN|Infinity/);
+});
+
+test("snapshot trend handles empty, single, flat and out-of-range histories without invented lines", async () => {
+  const ui = await view();
+  assert.doesNotMatch(ui.run("renderHistoryChart()"), /<svg/);
+  ui.run('state.snapshots=[{id:"one",at:"2020-01-01T00:00:00Z",total:0,missing:0}]');
+  const single = ui.run("renderHistoryChart()");
+  assert.match(single, /仅有一个可估值快照/);
+  assert.doesNotMatch(single, /NaN|Infinity| L /);
+  ui.run('state.snapshots.push({id:"two",at:"2020-01-02T00:00:00Z",total:0,missing:0})');
+  assert.doesNotMatch(ui.run("renderHistoryChart()"), /NaN|Infinity/);
+  ui.run('historyRange="7"');
+  assert.match(ui.run("renderHistoryChart()"), /此时间范围暂无快照/);
+  assert.doesNotMatch(ui.run("renderHistoryChart()"), /<svg/);
+});

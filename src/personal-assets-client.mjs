@@ -16,6 +16,7 @@ let displayCurrency = "CNY";
 try { const stored = window.localStorage.getItem(displayCurrencyKey); if (["CNY", "USD", "HKD"].includes(stored)) displayCurrency = stored; } catch {}
 let state = null;
 let page = "overview";
+let historyRange = "all";
 let categoryFilter = "all";
 let platformFilter = "all";
 let hidden = false;
@@ -634,8 +635,47 @@ function renderHoldings(summary) {
 function renderAnalysis(summary) {
   return `${partialValuationNotice()}<div class="charts">${[["资产类型", summary.byCategory], ["平台分布", summary.byPlatform], ["估值币种分布", summary.byCurrency]].map(([title, groups]) => `<section class="panel${title === "资产类型" ? " type-chart-panel" : ""}"><h2>${title}</h2><p class="muted small">${title === "估值币种分布" ? "按记录的估值 / 报表币种分类，未穿透底层资产" : title === "资产类型" ? `按已核算资产折合 ${displayCurrency} · 点击类型查看明细` : `按已核算资产折合 ${displayCurrency}`}</p>${title === "资产类型" ? assetTypeChart(summary) : distribution(groups, summary.total)}</section>`).join("")}</div>${assetTypeGuide()}<div class="columns"><section class="panel"><h2>分布与新鲜度</h2>${insights(summary)}</section><section class="panel"><div class="section-head"><h2>自动汇率与核算范围</h2><button class="button small" data-action="rates">汇率详情</button></div><p class="muted small">${escape(fxStatusText())}</p>${fxNotes()}${rateTable()}</section></div><p class="footnote">分布描述已录入资产的组成。币种按估值 / 报表币种列示，未穿透底层持仓，不代表实际外汇敞口。账户总额未拆分时类别可保留为“未分类”；需要类别分析时可录入持仓并切换统计口径。这里不计算投资收益或负债净额。</p>`;
 }
+function historySnapshots() {
+  const cutoff = historyRange === "all" ? -Infinity : Date.parse(`${currentDate()}T00:00:00+08:00`) - (Number(historyRange) - 1) * 86400000;
+  return [...state.snapshots].filter(snapshot => Date.parse(snapshot.at) >= cutoff).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+function renderHistoryChart() {
+  const controls = `<div class="currency-toggle" role="group" aria-label="快照时间范围">${[["7", "近7天"], ["30", "近30天"], ["all", "全部"]].map(([range, label]) => `<button type="button" id="history-range-${range}" data-action="history-range" data-range="${range}" aria-pressed="${historyRange === range}">${label}</button>`).join("")}</div>`;
+  const head = `<div class="section-head"><div><h3>总资产走势</h3><span class="muted small">历史 CNY 估值 · 北京时间</span></div>${controls}</div>`;
+  if (hidden) return `<section class="panel history-trend" aria-label="总资产走势">${head}<div class="privacy-mask">走势及金额已隐藏</div></section>`;
+  const snapshots = historySnapshots();
+  const values = snapshots.filter(snapshot => Number.isFinite(snapshot.total));
+  if (!values.length) return `<section class="panel history-trend" aria-label="总资产走势">${head}<div class="empty">${snapshots.length ? "快照尚无可绘制的 CNY 金额，不按零资产处理。" : "此时间范围暂无快照，可切换全部查看历史。"}</div></section>`;
+  const first = values[0]; const last = values.at(-1);
+  const change = last.total - first.total;
+  const signed = value => `${value > 0 ? "+" : ""}${number(value)}`;
+  const delta = values.length < 2 ? "—" : `CNY ${signed(change)}${first.total > 0 ? ` <small>(${signed(change / first.total * 100)}%)</small>` : ""}`;
+  const summary = `<div class="history-summary"><div><span class="metric-label">最新快照估值</span><strong class="num">CNY ${number(last.total)}</strong><small class="muted">${escape(dateTime(last.at))}</small></div><div><span class="metric-label">区间估值变化</span><strong class="num">${delta}</strong><small class="muted">与区间首个有金额的快照相比 · 非投资收益</small></div></div>`;
+  const minimum = Math.min(...values.map(snapshot => snapshot.total));
+  const maximum = Math.max(...values.map(snapshot => snapshot.total));
+  const padding = Math.max((maximum - minimum) * 0.12, maximum * 0.01, 1);
+  const low = Math.max(0, minimum - padding); const high = maximum + padding;
+  const start = Date.parse(snapshots[0].at); const end = Date.parse(snapshots.at(-1).at);
+  const x = snapshot => end === start ? 500 : 12 + (Date.parse(snapshot.at) - start) / (end - start) * 976;
+  const y = snapshot => 12 + (high - snapshot.total) / (high - low) * 216;
+  const coordinates = snapshot => `${x(snapshot).toFixed(3)} ${y(snapshot).toFixed(3)}`;
+  const segments = []; let segment = [];
+  for (const snapshot of snapshots) {
+    if (!Number.isFinite(snapshot.total)) { if (segment.length) segments.push(segment); segment = []; }
+    else segment.push(snapshot);
+  }
+  if (segment.length) segments.push(segment);
+  const lines = segments.map(rows => {
+    const path = rows.map((snapshot, index) => `${index ? "L" : "M"} ${coordinates(snapshot)}`).join(" ");
+    return `${rows.length > 1 ? `<path class="history-area" d="${path} L ${x(rows.at(-1)).toFixed(3)} 240 L ${x(rows[0]).toFixed(3)} 240 Z" fill="url(#history-area-fill)"/>` : ""}<path class="history-line" d="${path}"/>`;
+  }).join("");
+  const dots = values.map(snapshot => `<span class="history-dot${snapshot.missing ? " partial" : ""}" style="left:${(x(snapshot) / 10).toFixed(4)}%;top:${(y(snapshot) / 2.4).toFixed(4)}%" title="${escape(dateTime(snapshot.at))} · CNY ${number(snapshot.total)}${snapshot.missing ? ` · ${snapshot.missing} 条缺汇率` : ""}" aria-hidden="true"></span>`).join("");
+  const unknown = snapshots.length - values.length;
+  const note = `${values.length === 1 ? "仅有一个可估值快照，暂不绘制连续走势。" : "按实际保存时间连接快照；悬停数据点可查看金额。"}${unknown ? ` ${unknown} 个快照无金额，曲线在这些位置断开。` : ""} 空心点表示缺汇率；仅含各快照当时已核算的资产，未估值及未接入资产可能未计入。`;
+  return `<section class="panel history-trend" aria-label="总资产走势">${head}${summary}<div class="history-graph"><div class="history-y-axis num" aria-hidden="true">${[high, (high + low) / 2, low].map(value => `<span>${number(value)}</span>`).join("")}</div><div class="history-plot"><svg viewBox="0 0 1000 240" preserveAspectRatio="none" role="img" aria-labelledby="history-chart-title history-chart-description"><title id="history-chart-title">总资产历史 CNY 估值</title><desc id="history-chart-description">${values.length} 个可估值快照，按北京时间从早到晚排列。仅展示保存时的金额，资产变化不能直接视为投资收益；详细时间和金额见下方快照记录。</desc><defs><linearGradient id="history-area-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--brand)" stop-opacity=".2"/><stop offset="100%" stop-color="var(--brand)" stop-opacity="0"/></linearGradient></defs>${[12, 120, 228].map(position => `<line class="history-grid" x1="0" y1="${position}" x2="1000" y2="${position}"/>`).join("")}${lines}</svg>${dots}</div><div class="history-x-axis muted small"><span>${escape(dateTime(snapshots[0].at))}</span><span>${escape(dateTime(snapshots.at(-1).at))}</span></div></div><p class="muted small history-caption">${note}</p></section>`;
+}
 function renderHistory() {
-  return `<div class="notice">快照保留保存时的 CNY 金额，不使用今天的汇率重算。转入转出、汇率变化和记录调整都会影响总额，资产变化不能直接视为投资收益。</div><div class="section-head"><div><h2>你的资产时间线</h2><span class="muted small">${state.snapshots.length} 个已保存快照 · 每日北京时间 23:55 自动保存</span></div><button class="button primary small" data-action="snapshot"${!portfolio().entries.length ? " disabled" : ""}>＋ 保存当前快照</button></div>${state.snapshots.length ? `<div class="history-list">${[...state.snapshots].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).map((snapshot) => `<section class="panel history-item"><div><strong>${escape(dateTime(snapshot.at))}${snapshot.dailyDate ? " · 每日自动快照" : ""}</strong><p class="muted small" style="margin:4px 0 0">${snapshot.missing ? `${snapshot.missing} 条缺汇率 · 部分估值` : "已录入资产估值"} · 资产变化非投资收益</p></div><div><span class="muted small">CNY</span><div class="num">${number(snapshot.total)}</div></div></section>`).join("")}</div>` : '<section class="panel empty"><div class="empty-mark">◷</div><h3>把今天，留给未来的自己</h3><p>录入资产后保存当前快照，逐步留下每个时点的资产全貌。</p><button class="button" data-action="manual">先录入一笔资产</button></section>'}`;
+  return `<div class="notice">快照保留保存时的 CNY 金额，不使用今天的汇率重算。转入转出、汇率变化和记录调整都会影响总额，资产变化不能直接视为投资收益。</div><div class="section-head"><div><h2>你的资产时间线</h2><span class="muted small">${state.snapshots.length} 个已保存快照 · 每日北京时间 23:55 自动保存</span></div><div class="actions">${privacyToggle()}<button class="button primary small" data-action="snapshot"${!portfolio().entries.length ? " disabled" : ""}>＋ 保存当前快照</button></div></div>${state.snapshots.length ? `${renderHistoryChart()}<div class="history-list">${[...state.snapshots].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).map((snapshot) => `<section class="panel history-item"><div><strong>${escape(dateTime(snapshot.at))}${snapshot.dailyDate ? " · 每日自动快照" : ""}</strong><p class="muted small" style="margin:4px 0 0">${snapshot.missing ? `${snapshot.missing} 条缺汇率 · 部分估值` : "已录入资产估值"} · 资产变化非投资收益</p></div><div><span class="muted small">CNY</span><div class="num">${number(snapshot.total)}</div></div></section>`).join("")}</div>` : '<section class="panel empty"><div class="empty-mark">◷</div><h3>把今天，留给未来的自己</h3><p>录入资产后保存当前快照，逐步留下每个时点的资产全貌。</p><button class="button" data-action="manual">先录入一笔资产</button></section>'}`;
 }
 const eyeIcon = (paths) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
 function privacyToggle() {
@@ -1155,6 +1195,7 @@ document.addEventListener("click", async (event) => {
   if (action === "display-currency") { await changeDisplayCurrency(button.dataset.currency); return; }
   if (!action || saving) return;
   if (action === "close-dialog") closeDialog();
+  else if (action === "history-range" && ["7", "30", "all"].includes(button.dataset.range)) { historyRange = button.dataset.range; render(); $(`history-range-${historyRange}`)?.focus(); }
   else if (action === "reload") await load();
   else if (action === "stock-pnl") { stockPnlDraft = null; openStockPnl(); }
   else if (action === "ai-settings") openAiSettings();
