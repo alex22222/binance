@@ -1770,7 +1770,7 @@ test("snapshot trend plots frozen CNY values chronologically at their actual tim
   assert.match(html, /总资产走势/);
   assert.match(html, /<svg[^>]*role="img"[^>]*aria-labelledby="history-chart-title history-chart-description"/);
   assert.match(html, /CNY 1,800\.00/);
-  assert.match(html, /区间估值变化[\s\S]*CNY \+800\.00/);
+  assert.match(html, /与昨日对比[\s\S]*暂无昨日有效快照/);
   assert.match(html, /资产变化不能直接视为投资收益/);
   assert.match(html, /2026\/10\/2 00:00:00/); // Beijing, not the browser's timezone.
   const line = html.match(/class="history-line" d="([^"]+)"/)[1];
@@ -1780,6 +1780,64 @@ test("snapshot trend plots frozen CNY values chronologically at their actual tim
   assert.equal(JSON.stringify(initial), before);
   assert.equal(ui.requests.length, requests);
   assert.equal(ui.aiRequests.length, aiRequests);
+});
+
+test("snapshot trend compares with the last valid snapshot on the preceding Beijing day", async () => {
+  const initial = stateWith();
+  initial.snapshots = [
+    { id: "latest", at: "2026-01-01T17:00:00Z", total: 1800, missing: 0 },
+    { id: "same-day", at: "2026-01-01T16:00:00Z", total: 1750, missing: 0 },
+    { id: "yesterday-unknown", at: "2026-01-01T15:59:59Z", total: null, missing: 0 },
+    { id: "yesterday-last-valid", at: "2026-01-01T15:55:00Z", total: 1200, missing: 1 },
+    { id: "yesterday-earlier", at: "2025-12-31T16:00:00Z", total: 1100, missing: 0 },
+    { id: "older", at: "2025-12-31T15:59:59Z", total: 1000, missing: 0 }
+  ];
+  const before = JSON.stringify(initial);
+  const ui = await view(initial);
+  const requests = ui.requests.length;
+  const aiRequests = ui.aiRequests.length;
+  const html = ui.run("renderHistoryChart()");
+  assert.match(html, /与昨日对比[\s\S]*CNY \+600\.00[\s\S]*\(\+50\.00%\)/);
+  assert.match(html, /与 2026\/1\/1 23:55:00 快照相比.*部分估值.*非投资收益/);
+  assert.doesNotMatch(html, /区间估值变化|区间首个/);
+  assert.equal(JSON.stringify(initial), before);
+  assert.equal(ui.requests.length, requests);
+  assert.equal(ui.aiRequests.length, aiRequests);
+});
+
+test("snapshot yesterday comparison uses all saved history regardless of the chart range", async () => {
+  const initial = stateWith();
+  const midnight = Date.parse(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date()) + "T00:00:00+08:00");
+  initial.snapshots = [
+    { id: "latest", at: new Date(midnight - 6 * 86400000 + 3600000).toISOString(), total: 1000, missing: 0 },
+    { id: "yesterday", at: new Date(midnight - 7 * 86400000 + 23 * 3600000).toISOString(), total: 800, missing: 0 },
+    { id: "older", at: new Date(midnight - 35 * 86400000).toISOString(), total: 100, missing: 0 }
+  ];
+  const ui = await view(initial);
+  for (const range of ["all", "30", "7"]) {
+    ui.run(`historyRange="${range}"`);
+    assert.match(ui.run("renderHistoryChart()"), /与昨日对比[\s\S]*CNY \+200\.00[\s\S]*\(\+25\.00%\)/);
+  }
+  assert.equal(ui.run("historySnapshots().length"), 1);
+});
+
+test("snapshot yesterday comparison never substitutes an older day or an unknown value and handles zero", async () => {
+  const initial = stateWith();
+  initial.snapshots = [
+    { id: "latest", at: "2026-10-24T12:00:00Z", total: 50, missing: 0 },
+    { id: "yesterday", at: "2026-10-23T12:00:00Z", total: null, missing: 0 },
+    { id: "older", at: "2026-10-22T12:00:00Z", total: 20, missing: 0 }
+  ];
+  const ui = await view(initial);
+  assert.match(ui.run("renderHistoryChart()"), /与昨日对比[\s\S]*暂无昨日有效快照/);
+  for (const [previous, latest, amount, percent] of [[0, 50, "+50.00", null], [100, 80, "-20.00", "-20.00%"], [100, 100, "0.00", "0.00%"]]) {
+    ui.run(`state.snapshots[0].total=${latest}; state.snapshots[1].total=${previous}`);
+    const metric = ui.run("renderHistoryChart()").split('class="history-summary"')[1].split('class="history-graph"')[0];
+    assert.ok(metric.includes(`CNY ${amount}`));
+    if (percent) assert.ok(metric.includes(`(${percent})`));
+    else assert.doesNotMatch(metric, /%/);
+    assert.doesNotMatch(metric, /NaN|Infinity/);
+  }
 });
 
 test("snapshot trend ranges use Beijing calendar days without hiding the full audit list or making requests", async () => {
