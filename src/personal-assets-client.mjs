@@ -676,12 +676,29 @@ function renderHistoryComparison() {
   const head = '<h3>昨日资产变化明细 <span class="muted small">CNY</span></h3>';
   if (request.loading) return `<section id="history-comparison-details" class="history-changes" aria-busy="true">${head}<p class="muted small" role="status">正在读取两天的快照明细…</p></section>`;
   if (request.error) return `<section id="history-comparison-details" class="history-changes">${head}<p class="notice error" role="alert">${escape(request.error)}</p></section>`;
-  const { rows, change } = request.data;
-  const changed = rows.filter(row => row.status !== "未变化");
-  const unchanged = rows.filter(row => row.status === "未变化");
+  const { change } = request.data;
+  const rows = request.data.rows.filter(row => row.platform !== "Polymarket");
+  const polymarket = request.data.rows.filter(row => row.platform === "Polymarket");
+  if (polymarket.length) {
+    const value = key => {
+      const known = polymarket.map(row => row[key]).filter(Number.isFinite);
+      return known.length ? known.reduce((sum, amount) => sum + amount, 0) : null;
+    };
+    const before = value("before"); const after = value("after");
+    const beforePresent = polymarket.some(row => row.beforePresent !== false);
+    const afterPresent = polymarket.some(row => row.afterPresent !== false);
+    const partial = polymarket.some(row => row.before === null && row.beforePresent !== false || row.after === null && row.afterPresent !== false);
+    const impact = polymarket.reduce((sum, row) => sum + row.impact, 0);
+    const status = before === null && after === null ? "未估值" : !beforePresent ? "新增记录" : !afterPresent ? "移除记录"
+      : partial ? "部分估值" : impact > 0 ? "增加" : impact < 0 ? "减少" : "未变化";
+    rows.push({ id: "polymarket-combined", name: "Polymarket", platform: "Polymarket", account: "平台合计", before, after, beforePresent, afterPresent, impact, status });
+  }
+  rows.sort((a, b) => Math.abs(b.impact) - Math.abs(a.impact) || a.id.localeCompare(b.id));
+  const visible = rows.slice(0, 10);
+  const remaining = rows.slice(10);
   const signed = value => `${value > 0 ? "+" : ""}${number(value)}`;
   const renderRows = items => items.map(row => `<div class="history-change-row"><div class="history-change-name"><strong>${escape(row.name)}</strong><small class="muted">${escape(row.platform)} · ${escape(row.account)} · ${escape(row.status)}</small></div><div class="num"><small class="muted">昨日</small>${row.before === null ? row.beforePresent === false ? "未计入" : "未估值" : number(row.before)}</div><div class="num"><small class="muted">最新快照</small>${row.after === null ? row.afterPresent === false ? "未计入" : "未估值" : number(row.after)}</div><div class="num ${row.status === "增加" ? "positive" : row.status === "减少" ? "negative" : ""}"><small class="muted">${["增加", "减少", "未变化"].includes(row.status) ? "估值变化" : "计入影响"}</small>${row.status === "未估值" ? "—" : signed(row.impact)}</div></div>`).join("");
-  return `<section id="history-comparison-details" class="history-changes">${head}<p class="muted small">增加 ${rows.filter(row => row.status === "增加").length} 项 · 减少 ${rows.filter(row => row.status === "减少").length} 项 · 按变化金额大小排序</p>${changed.length ? renderRows(changed) : '<p class="muted small">资产估值未发生变化。</p>'}${unchanged.length ? `<details class="history-unchanged"><summary>查看未变化的 ${unchanged.length} 项资产</summary>${renderRows(unchanged)}</details>` : ""}<div class="row history-change-total"><strong>合计变化</strong><strong class="num">CNY ${change === null ? "—" : signed(change)}</strong></div><p class="muted small">按两天快照各自保存的汇率和统计口径计算，包含汇率、转入转出及记录调整，非投资收益。账户总额口径按账户展示，持仓不重复计入；新增、移除及未估值项单独标注。分项金额经四舍五入。</p></section>`;
+  return `<section id="history-comparison-details" class="history-changes">${head}<p class="muted small">增加 ${rows.filter(row => row.status === "增加").length} 项 · 减少 ${rows.filter(row => row.status === "减少").length} 项 · 按变化金额大小排序，仅列前 10 项 · Polymarket 合并显示</p>${visible.length ? renderRows(visible) : '<p class="muted small">暂无可比较的资产记录。</p>'}${remaining.length ? `<p class="muted small">其余 ${remaining.length} 项合计影响 <span class="num">CNY ${signed(remaining.reduce((sum, row) => sum + row.impact, 0))}</span></p>` : ""}<div class="row history-change-total"><strong>全部资产合计变化</strong><strong class="num">CNY ${change === null ? "—" : signed(change)}</strong></div><p class="muted small">按两天快照各自保存的汇率和统计口径计算，包含汇率、转入转出及记录调整，非投资收益。账户总额口径按账户展示，持仓不重复计入；新增、移除及未估值项单独标注。分项金额经四舍五入。</p></section>`;
 }
 function renderHistoryChart() {
   const controls = `<div class="currency-toggle" role="group" aria-label="快照时间范围">${[["7", "近7天"], ["30", "近30天"], ["all", "全部"]].map(([range, label]) => `<button type="button" id="history-range-${range}" data-action="history-range" data-range="${range}" aria-pressed="${historyRange === range}">${label}</button>`).join("")}</div>`;

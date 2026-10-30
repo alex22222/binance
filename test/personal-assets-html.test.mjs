@@ -1830,7 +1830,8 @@ test("yesterday metric expands frozen asset changes on demand and reuses the sam
   assert.match(html, /CNY \+100\.00/);
   assert.match(html, /\+200\.00/);
   assert.match(html, /-100\.00/);
-  assert.match(html, /<details[^>]*>[\s\S]*未变化.*1/);
+  assert.match(html, /现金/);
+  assert.doesNotMatch(html, /history-unchanged/);
   assert.equal(ui.requests[1].url, "/api/assets/snapshots/compare?from=previous&to=latest");
   assert.equal(ui.requests[1].options.method || "GET", "GET");
   assert.equal(ui.requests[1].options.cache, "no-store");
@@ -1840,6 +1841,47 @@ test("yesterday metric expands frozen asset changes on demand and reuses the sam
   ui.run("hidden=true; render()");
   html = ui.get("asset-content").innerHTML;
   assert.doesNotMatch(html, /股票&lt;script&gt;|1,200\.00|history-change-row|data-action="history-comparison"/);
+});
+
+test("yesterday breakdown merges Polymarket before ranking and displays at most ten assets with the full total", async () => {
+  const initial = stateWith();
+  initial.snapshots = [{ id: "to", at: "2026-10-29T15:55:00Z", total: 1378, missing: 0 }, { id: "from", at: "2026-10-28T15:55:00Z", total: 1000, missing: 0 }];
+  const rows = Array.from({ length: 12 }, (_, index) => ({ id: String(index), name: `普通资产${index + 1}`, platform: "盈立", account: "美元账户", before: 10, after: 11 + index, impact: index + 1, status: "增加" }));
+  rows.push(
+    { id: "market-a", name: "私有预测项目A", platform: "Polymarket", account: "预测账户", before: 100, after: 600, impact: 500, status: "增加" },
+    { id: "market-b", name: "私有预测项目B", platform: "Polymarket", account: "预测账户", before: 200, after: 0, impact: -200, status: "移除记录" }
+  );
+  const comparison = { from: initial.snapshots[1], to: initial.snapshots[0], change: 378, rows };
+  const before = JSON.stringify(comparison);
+  const ui = await view(initial, async url => syncResponse(url.includes("snapshots/compare") ? comparison : initial));
+  ui.run('page="history"; render()');
+  await ui.listeners.click({ target: { closest: () => ({ dataset: { action: "history-comparison" } }) } });
+  const html = ui.get("asset-content").innerHTML;
+  assert.equal((html.match(/class="history-change-row"/g) || []).length, 10);
+  assert.equal((html.match(/<strong>Polymarket<\/strong>/g) || []).length, 1);
+  assert.doesNotMatch(html, /私有预测项目A|私有预测项目B|history-unchanged/);
+  assert.match(html, /Polymarket[\s\S]*300\.00[\s\S]*600\.00[\s\S]*\+300\.00/);
+  assert.ok(html.indexOf('<strong>Polymarket</strong>') < html.indexOf('<strong>普通资产12</strong>'));
+  assert.match(html, /其余 3 项[\s\S]*\+6\.00/);
+  assert.match(html, /全部资产合计变化[\s\S]*CNY \+378\.00/);
+  assert.equal(JSON.stringify(comparison), before);
+});
+
+test("merging Polymarket preserves partial and unknown valuations instead of labelling them as gains", async () => {
+  const initial = stateWith();
+  initial.snapshots = [{ id: "to", at: "2026-10-29T15:55:00Z", total: 1500, missing: 0 }, { id: "from", at: "2026-10-28T15:55:00Z", total: 1400, missing: 1 }];
+  const comparison = { from: initial.snapshots[1], to: initial.snapshots[0], change: 100, rows: [
+    { id: "unknown", name: "未估值预测", platform: "Polymarket", account: "预测账户", before: null, after: 100, beforePresent: true, afterPresent: true, impact: 100, status: "补齐估值" },
+    { id: "known", name: "已估值预测", platform: "Polymarket", account: "预测账户", before: 50, after: 50, impact: 0, status: "未变化" }
+  ] };
+  const ui = await view(initial, async url => syncResponse(url.includes("snapshots/compare") ? comparison : initial));
+  ui.run('page="history"; render()');
+  await ui.listeners.click({ target: { closest: () => ({ dataset: { action: "history-comparison" } }) } });
+  const html = ui.get("asset-content").innerHTML;
+  assert.equal((html.match(/class="history-change-row"/g) || []).length, 1);
+  assert.match(html, /部分估值/);
+  assert.match(html, /计入影响/);
+  assert.doesNotMatch(html, /未估值预测|已估值预测|class="num positive"/);
 });
 
 test("failed comparison reads leave snapshot totals intact and can be retried without revaluing assets", async () => {
