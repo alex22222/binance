@@ -1805,6 +1805,78 @@ test("snapshot trend compares with the last valid snapshot on the preceding Beij
   assert.equal(ui.aiRequests.length, aiRequests);
 });
 
+test("yesterday metric expands frozen asset changes on demand and reuses the same comparison", async () => {
+  const initial = stateWith();
+  initial.snapshots = [
+    { id: "latest", at: "2026-10-29T15:55:00Z", total: 1500, missing: 0 },
+    { id: "previous", at: "2026-10-28T15:55:00Z", total: 1400, missing: 0 }
+  ];
+  const comparison = { from: initial.snapshots[1], to: initial.snapshots[0], change: 100, rows: [
+    { id: "one", name: "股票<script>", platform: "盈立", account: "美元账户", before: 1000, after: 1200, impact: 200, status: "增加" },
+    { id: "two", name: "基金", platform: "ZA Bank", account: "基金账户", before: 300, after: 200, impact: -100, status: "减少" },
+    { id: "same", name: "现金", platform: "民生银行", account: "港币账户", before: 100, after: 100, impact: 0, status: "未变化" }
+  ] };
+  const ui = await view(initial, async url => syncResponse(url.startsWith("/api/assets/snapshots/compare?") ? comparison : initial));
+  ui.run('page="history"; render()');
+  assert.match(ui.get("asset-content").innerHTML, /data-action="history-comparison"[^>]*aria-expanded="false"/);
+  assert.equal(ui.requests.length, 1);
+  const beforeAi = ui.aiRequests.length;
+  const click = () => ui.listeners.click({ target: { closest: () => ({ dataset: { action: "history-comparison" } }) } });
+  await click();
+  let html = ui.get("asset-content").innerHTML;
+  assert.match(html, /aria-expanded="true"/);
+  assert.match(html, /股票&lt;script&gt;/);
+  assert.doesNotMatch(html, /股票<script>/);
+  assert.match(html, /CNY \+100\.00/);
+  assert.match(html, /\+200\.00/);
+  assert.match(html, /-100\.00/);
+  assert.match(html, /<details[^>]*>[\s\S]*未变化.*1/);
+  assert.equal(ui.requests[1].url, "/api/assets/snapshots/compare?from=previous&to=latest");
+  assert.equal(ui.requests[1].options.method || "GET", "GET");
+  assert.equal(ui.requests[1].options.cache, "no-store");
+  await click(); await click();
+  assert.equal(ui.requests.length, 2);
+  assert.equal(ui.aiRequests.length, beforeAi);
+  ui.run("hidden=true; render()");
+  html = ui.get("asset-content").innerHTML;
+  assert.doesNotMatch(html, /股票&lt;script&gt;|1,200\.00|history-change-row|data-action="history-comparison"/);
+});
+
+test("failed comparison reads leave snapshot totals intact and can be retried without revaluing assets", async () => {
+  const initial = stateWith();
+  initial.snapshots = [{ id: "to", at: "2026-10-29T15:55:00Z", total: 1500, missing: 0 }, { id: "from", at: "2026-10-28T15:55:00Z", total: 1400, missing: 0 }];
+  const ui = await view(initial, async url => url.startsWith("/api/assets/snapshots/compare?") ? syncResponse({ error: "快照明细暂不可用" }, 500) : syncResponse(initial));
+  ui.run('page="history"; render()');
+  const click = () => ui.listeners.click({ target: { closest: () => ({ dataset: { action: "history-comparison" } }) } });
+  await click();
+  assert.match(ui.get("asset-content").innerHTML, /快照明细暂不可用/);
+  assert.match(ui.get("asset-content").innerHTML, /CNY 1,500\.00/);
+  assert.doesNotMatch(ui.get("asset-content").innerHTML, /history-change-row/);
+  await click(); await click();
+  assert.equal(ui.requests.filter(row => row.url.includes("snapshots/compare")).length, 2);
+  assert.equal(ui.requests.some(row => row.options.method === "POST" || row.options.method === "PUT"), false);
+});
+
+test("in-flight comparisons do not duplicate requests or expose values after privacy or a newer load", async () => {
+  const initial = stateWith();
+  initial.snapshots = [{ id: "to", at: "2026-10-29T15:55:00Z", total: 1500, missing: 0 }, { id: "from", at: "2026-10-28T15:55:00Z", total: 1400, missing: 0 }];
+  let complete;
+  const ui = await view(initial, async url => url.includes("snapshots/compare") ? new Promise(resolve => { complete = resolve; }) : syncResponse(initial));
+  ui.run('page="history"; render()');
+  const click = () => ui.listeners.click({ target: { closest: () => ({ dataset: { action: "history-comparison" } }) } });
+  const pending = click();
+  assert.match(ui.get("asset-content").innerHTML, /正在读取两天的快照明细/);
+  await click(); await click();
+  assert.equal(ui.requests.length, 2);
+  ui.run('hidden=true; render()');
+  complete(syncResponse({ from: initial.snapshots[1], to: initial.snapshots[0], change: 100, rows: [{ id: "secret", name: "private-asset", platform: "ZA Bank", account: "私人", before: 1000, after: 1100, impact: 100, status: "增加" }] }));
+  await pending;
+  assert.doesNotMatch(ui.get("asset-content").innerHTML, /private-asset|1,100\.00|history-change-row/);
+  ui.run('state = {...state, historyComparison:undefined}; hidden=false; render()');
+  assert.match(ui.get("asset-content").innerHTML, /data-action="history-comparison"[^>]*aria-expanded="false"/);
+  assert.doesNotMatch(ui.get("asset-content").innerHTML, /private-asset/);
+});
+
 test("snapshot yesterday comparison uses all saved history regardless of the chart range", async () => {
   const initial = stateWith();
   const midnight = Date.parse(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date()) + "T00:00:00+08:00");

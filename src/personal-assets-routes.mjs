@@ -6,7 +6,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { personalAssetsHtml, statementPasswordsHtml, refreshScheduleHtml, operationsHtml } from "./personal-assets-html.mjs";
-import { readPersonalAssets, savePersonalAssets, createPersonalAssetsSnapshot, readStatementPasswordStatus, configureStatementPassword, readAssetRefreshSchedule, configureAssetRefreshSchedule } from "./personal-assets.mjs";
+import { readPersonalAssets, savePersonalAssets, createPersonalAssetsSnapshot, readPersonalAssetsComparison, readStatementPasswordStatus, configureStatementPassword, readAssetRefreshSchedule, configureAssetRefreshSchedule } from "./personal-assets.mjs";
 import { valuePersonalAssetState } from "./personal-assets-fx.mjs";
 import { readAssetSyncStatus, performAssetSyncAction, completeFutuAuthorization } from "./personal-assets-sync.mjs";
 
@@ -241,7 +241,7 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
     response.end(operationsHtml(overview));
     return true;
   }
-  const assetApi = ["/api/assets", "/api/assets/snapshots", "/api/assets/rates/refresh", "/api/assets/funds/configure"].includes(path);
+  const assetApi = ["/api/assets", "/api/assets/snapshots", "/api/assets/snapshots/compare", "/api/assets/rates/refresh", "/api/assets/funds/configure"].includes(path);
   const refreshApi = path === "/api/assets/refresh-schedule";
   const refreshPage = ["/assets", "/assets/"].includes(path) && new URL(request.url, "http://localhost").searchParams.get("settings") === "refresh-schedule";
   const statementApi = path === "/api/assets/statement-passwords";
@@ -287,6 +287,11 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
     }
     if (request.method === "GET" && path === "/api/assets") {
       json(response, await assetView(await readPersonalAssets({ stateDir }), { stateDir }));
+      return true;
+    }
+    if (request.method === "GET" && path === "/api/assets/snapshots/compare") {
+      const query = new URL(request.url, "http://localhost").searchParams;
+      json(response, await readPersonalAssetsComparison({ stateDir, from: query.get("from"), to: query.get("to") }));
       return true;
     }
     if (request.method === "GET" && refreshApi) {

@@ -269,3 +269,45 @@ export async function createPersonalAssetsSnapshot({ stateDir, revision, valuati
     return next;
   });
 }
+
+export async function readPersonalAssetsComparison({ stateDir, from, to }) {
+  if (![from, to].every(id => typeof id === "string" && snapshotIdPattern.test(id))) throw new PersonalAssetsError("请选择有效的历史快照");
+  const state = await readPersonalAssets({ stateDir });
+  async function readSnapshot(id) {
+    const metadata = state.snapshots.find(snapshot => snapshot.id === id);
+    if (!metadata) throw new PersonalAssetsError("历史快照不存在", 404);
+    let handle;
+    try {
+      handle = await open(join(resolve(stateDir), "personal-assets-snapshots", `${id}.json`), constants.O_RDONLY | constants.O_NOFOLLOW);
+      const info = await handle.stat();
+      if (!info.isFile() || info.size > MAX_STATE_BYTES) throw new Error();
+      const saved = JSON.parse(await handle.readFile("utf8"));
+      if (["id", "at", "revision", "total", "missing"].some(key => saved[key] !== metadata[key])) throw new Error();
+      const portfolio = validatePortfolio(saved.portfolio);
+      const summary = summarize(portfolio);
+      if (summary.total !== metadata.total || summary.missing.length !== metadata.missing) throw new Error();
+      const accounts = new Map(portfolio.accounts.map(account => [account.id, account]));
+      const values = new Map([...summary.included, ...summary.missing].map(entry => [entry.id, {
+        entry, account: accounts.get(entry.accountId),
+        value: summary.included.includes(entry) ? entry.amount * (entry.currency === "CNY" ? 1 : portfolio.rates[entry.currency].value) : null,
+      }]));
+      return { metadata, values, entries: new Set(portfolio.entries.map(entry => entry.id)) };
+    } catch (error) {
+      throw new PersonalAssetsError(error.code === "ENOENT" ? "快照明细文件未找到，已保存总额仍保留" : "快照明细无法核实，已保存总额仍保留", error.code === "ENOENT" ? 404 : 500);
+    } finally { await handle?.close(); }
+  }
+  const [before, after] = await Promise.all([readSnapshot(from), readSnapshot(to)]);
+  const rows = [...new Set([...before.values.keys(), ...after.values.keys()])].map(id => {
+    const old = before.values.get(id); const current = after.values.get(id);
+    const row = current || old;
+    const impact = (current?.value ?? 0) - (old?.value ?? 0);
+    const status = !old ? current.value === null ? "未估值" : before.entries.has(id) ? "纳入统计" : "新增记录"
+      : !current ? after.entries.has(id) ? "移出统计" : "移除记录"
+      : old.value === null ? current.value === null ? "未估值" : "补齐估值"
+      : current.value === null ? "缺少估值" : impact > 0 ? "增加" : impact < 0 ? "减少" : "未变化";
+    return { id, name: row.entry.name, platform: row.account.platform, account: row.account.name,
+      before: old?.value ?? null, after: current?.value ?? null, beforePresent: Boolean(old), afterPresent: Boolean(current), impact, status };
+  }).sort((a, b) => Math.abs(b.impact) - Math.abs(a.impact) || a.id.localeCompare(b.id));
+  return { from: before.metadata, to: after.metadata,
+    change: before.metadata.total === null || after.metadata.total === null ? null : after.metadata.total - before.metadata.total, rows };
+}

@@ -17,6 +17,7 @@ try { const stored = window.localStorage.getItem(displayCurrencyKey); if (["CNY"
 let state = null;
 let page = "overview";
 let historyRange = "all";
+let historyComparisonOpen = false;
 let categoryFilter = "all";
 let platformFilter = "all";
 let hidden = false;
@@ -639,6 +640,49 @@ function historySnapshots() {
   const cutoff = historyRange === "all" ? -Infinity : Date.parse(`${currentDate()}T00:00:00+08:00`) - (Number(historyRange) - 1) * 86400000;
   return [...state.snapshots].filter(snapshot => Date.parse(snapshot.at) >= cutoff).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
+function historyComparisonPair() {
+  const last = historySnapshots().filter(snapshot => Number.isFinite(snapshot.total)).at(-1);
+  if (!last) return {};
+  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(last.at));
+  const start = Date.parse(`${day}T00:00:00+08:00`);
+  const previous = [...state.snapshots].filter(snapshot => Number.isFinite(snapshot.total) && Date.parse(snapshot.at) >= start - 86400000 && Date.parse(snapshot.at) < start).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
+  return { last, previous };
+}
+async function toggleHistoryComparison() {
+  if (hidden || !state) return;
+  const { last, previous } = historyComparisonPair();
+  if (!previous) return;
+  const key = `${previous.id}|${last.id}`;
+  historyComparisonOpen = !(historyComparisonOpen && state.historyComparison?.key === key);
+  if (!historyComparisonOpen || state.historyComparison?.key === key && (state.historyComparison.data || state.historyComparison.loading)) { render(); return; }
+  const current = state;
+  const request = { key, loading: true, data: null, error: "" };
+  current.historyComparison = request;
+  render();
+  try {
+    const response = await fetch(`/api/assets/snapshots/compare?from=${encodeURIComponent(previous.id)}&to=${encodeURIComponent(last.id)}`, { cache: "no-store" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "快照明细暂时无法读取，请收起后重试。");
+    if (data.from?.id !== previous.id || data.to?.id !== last.id || !Array.isArray(data.rows)) throw new Error("快照明细与所选日期不一致，请收起后重试。");
+    request.data = data;
+  } catch (error) { request.error = errorText(error); }
+  finally {
+    request.loading = false;
+    if (state === current && current.historyComparison === request) { render(); if (page === "history" && !hidden) $("history-comparison-toggle")?.focus(); }
+  }
+}
+function renderHistoryComparison() {
+  const request = state.historyComparison;
+  const head = '<h3>昨日资产变化明细 <span class="muted small">CNY</span></h3>';
+  if (request.loading) return `<section id="history-comparison-details" class="history-changes" aria-busy="true">${head}<p class="muted small" role="status">正在读取两天的快照明细…</p></section>`;
+  if (request.error) return `<section id="history-comparison-details" class="history-changes">${head}<p class="notice error" role="alert">${escape(request.error)}</p></section>`;
+  const { rows, change } = request.data;
+  const changed = rows.filter(row => row.status !== "未变化");
+  const unchanged = rows.filter(row => row.status === "未变化");
+  const signed = value => `${value > 0 ? "+" : ""}${number(value)}`;
+  const renderRows = items => items.map(row => `<div class="history-change-row"><div class="history-change-name"><strong>${escape(row.name)}</strong><small class="muted">${escape(row.platform)} · ${escape(row.account)} · ${escape(row.status)}</small></div><div class="num"><small class="muted">昨日</small>${row.before === null ? row.beforePresent === false ? "未计入" : "未估值" : number(row.before)}</div><div class="num"><small class="muted">最新快照</small>${row.after === null ? row.afterPresent === false ? "未计入" : "未估值" : number(row.after)}</div><div class="num ${row.status === "增加" ? "positive" : row.status === "减少" ? "negative" : ""}"><small class="muted">${["增加", "减少", "未变化"].includes(row.status) ? "估值变化" : "计入影响"}</small>${row.status === "未估值" ? "—" : signed(row.impact)}</div></div>`).join("");
+  return `<section id="history-comparison-details" class="history-changes">${head}<p class="muted small">增加 ${rows.filter(row => row.status === "增加").length} 项 · 减少 ${rows.filter(row => row.status === "减少").length} 项 · 按变化金额大小排序</p>${changed.length ? renderRows(changed) : '<p class="muted small">资产估值未发生变化。</p>'}${unchanged.length ? `<details class="history-unchanged"><summary>查看未变化的 ${unchanged.length} 项资产</summary>${renderRows(unchanged)}</details>` : ""}<div class="row history-change-total"><strong>合计变化</strong><strong class="num">CNY ${change === null ? "—" : signed(change)}</strong></div><p class="muted small">按两天快照各自保存的汇率和统计口径计算，包含汇率、转入转出及记录调整，非投资收益。账户总额口径按账户展示，持仓不重复计入；新增、移除及未估值项单独标注。分项金额经四舍五入。</p></section>`;
+}
 function renderHistoryChart() {
   const controls = `<div class="currency-toggle" role="group" aria-label="快照时间范围">${[["7", "近7天"], ["30", "近30天"], ["all", "全部"]].map(([range, label]) => `<button type="button" id="history-range-${range}" data-action="history-range" data-range="${range}" aria-pressed="${historyRange === range}">${label}</button>`).join("")}</div>`;
   const head = `<div class="section-head"><div><h3>总资产走势</h3><span class="muted small">历史 CNY 估值 · 北京时间</span></div>${controls}</div>`;
@@ -646,15 +690,14 @@ function renderHistoryChart() {
   const snapshots = historySnapshots();
   const values = snapshots.filter(snapshot => Number.isFinite(snapshot.total));
   if (!values.length) return `<section class="panel history-trend" aria-label="总资产走势">${head}<div class="empty">${snapshots.length ? "快照尚无可绘制的 CNY 金额，不按零资产处理。" : "此时间范围暂无快照，可切换全部查看历史。"}</div></section>`;
-  const last = values.at(-1);
-  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(last.at));
-  const dayStart = Date.parse(`${day}T00:00:00+08:00`);
-  const previous = [...state.snapshots].filter(snapshot => Number.isFinite(snapshot.total) && Date.parse(snapshot.at) >= dayStart - 86400000 && Date.parse(snapshot.at) < dayStart).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
+  const { last, previous } = historyComparisonPair();
   const change = previous ? last.total - previous.total : null;
   const signed = value => `${value > 0 ? "+" : ""}${number(value)}`;
   const delta = previous ? `CNY ${signed(change)}${previous.total > 0 ? ` <small>(${signed(change / previous.total * 100)}%)</small>` : ""}` : "—";
   const comparison = previous ? `与 ${dateTime(previous.at)} 快照相比${previous.missing || last.missing ? " · 部分估值" : ""}` : "暂无昨日有效快照";
-  const summary = `<div class="history-summary"><div><span class="metric-label">最新快照估值</span><strong class="num">CNY ${number(last.total)}</strong><small class="muted">${escape(dateTime(last.at))}</small></div><div><span class="metric-label">与昨日对比</span><strong class="num">${delta}</strong><small class="muted">${escape(comparison)} · 非投资收益</small></div></div>`;
+  const expanded = Boolean(previous && historyComparisonOpen && state.historyComparison?.key === `${previous.id}|${last.id}`);
+  const metric = `<span class="metric-label">与昨日对比</span><strong class="num">${delta}</strong>`;
+  const summary = `<div class="history-summary"><div><span class="metric-label">最新快照估值</span><strong class="num">CNY ${number(last.total)}</strong><small class="muted">${escape(dateTime(last.at))}</small></div><div>${previous ? `<button type="button" id="history-comparison-toggle" class="history-comparison-toggle" data-action="history-comparison" aria-expanded="${expanded}" aria-controls="history-comparison-details">${metric}<span class="comparison-hint">${expanded ? "收起" : "展开"}资产变化 ${expanded ? "⌃" : "⌄"}</span></button>` : metric}<small class="muted">${escape(comparison)} · 非投资收益</small></div></div>${expanded ? renderHistoryComparison() : ""}`;
   const minimum = Math.min(...values.map(snapshot => snapshot.total));
   const maximum = Math.max(...values.map(snapshot => snapshot.total));
   const padding = Math.max((maximum - minimum) * 0.12, maximum * 0.01, 1);
@@ -1200,6 +1243,7 @@ document.addEventListener("click", async (event) => {
   if (!action || saving) return;
   if (action === "close-dialog") closeDialog();
   else if (action === "history-range" && ["7", "30", "all"].includes(button.dataset.range)) { historyRange = button.dataset.range; render(); $(`history-range-${historyRange}`)?.focus(); }
+  else if (action === "history-comparison") await toggleHistoryComparison();
   else if (action === "reload") await load();
   else if (action === "stock-pnl") { stockPnlDraft = null; openStockPnl(); }
   else if (action === "ai-settings") openAiSettings();
