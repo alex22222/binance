@@ -144,6 +144,43 @@ test("VOO refuses missing market price, foreign identities and inconsistent date
   }
 });
 
+test("VOO failures identify the rejected validation stage without exposing the upstream body", async () => {
+  const sources = [
+    [async () => new Response("upstream-private-body"), /数据块缺失或重复/],
+    [async () => new Response('<div data-vgn-funds-profile="{bad-json-upstream-private-body}"></div>'), /数据格式/],
+    [etfSource(d => { d.dashboard.ticker = "VTI"; }), /证券身份/],
+    [etfSource(d => { d.price.marketPrice = "$100.00"; }), /价格不一致/],
+    [etfSource(d => { d.dashboard.marketPriceAsOfDate = "10/22/2026"; }), /日期不一致/],
+    [etfSource(d => { d.overview.marketPrice = d.dashboard.marketPrice = d.price.marketPrice = "-$2.00"; }), /价格缺失或格式/],
+    [etfSource(d => { d.overview.marketPriceAsOfDate = d.dashboard.marketPriceAsOfDate = d.price.marketPriceAsOfDate = "02/30/2026"; }), /日期无效/],
+  ];
+  for (const [fetchImpl, expected] of sources) {
+    await assert.rejects(fetchAssetFundNav({ isin: "US9229083632", fetchImpl, now }), error => {
+      assert.match(error.message, expected);
+      assert.match(error.message, /保留上次有效估值/);
+      assert.doesNotMatch(error.message, /upstream-private-body/);
+      return error.fundError === true;
+    });
+  }
+});
+
+test("a scheduled VOO diagnostic failure retains the full entry, successful quote and timestamps and does not add a retry", async t => {
+  const stateDir = await fixture(t);
+  await bind(stateDir, { entryId: "other-stock", isin: "US9229083632", quantity: "2", fetchImpl: etfSource() });
+  const ledger = await readFile(join(stateDir, "personal-assets.json"), "utf8");
+  const before = (await readAssetFundStatus({ stateDir, now })).bindings[0];
+  let calls = 0;
+  const later = new Date("2026-10-25T01:00:00Z");
+  const fetchImpl = async () => { calls++; return new Response("no-profile-data"); };
+  assert.deepEqual(await runAssetFundCycle({ stateDir, now: later, fetchImpl }), { attempted: 1, applied: 0, failed: 1 });
+  assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), ledger);
+  const after = (await readAssetFundStatus({ stateDir, now: later })).bindings[0];
+  for (const key of ["enabled", "quantity", "nav", "navDate", "lastFetchedAt", "lastAppliedAt"]) assert.deepEqual(after[key], before[key]);
+  assert.match(after.lastError, /VOO.*数据块缺失或重复/);
+  assert.deepEqual(await runAssetFundCycle({ stateDir, now: later, fetchImpl }), { attempted: 0, applied: 0, failed: 0 });
+  assert.equal(calls, 1);
+});
+
 test("official NAV identifies exact fund, share class, currency and actual NAV date", async () => {
   const usd = await fetchAssetFundNav({ isin, fetchImpl: source(), now });
   assert.equal(usd.nav, "12.1"); assert.equal(usd.currency, "USD"); assert.equal(usd.date, "2026-10-23");

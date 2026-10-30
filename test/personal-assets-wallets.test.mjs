@@ -301,6 +301,39 @@ test("verified BSC SPYon is valued per token, distinguished from ETF shares, and
   assert.equal(risk.holdings.length, 0); assert.equal(risk.unpricedAssets.length, 2);
 });
 
+test("issuer-verified BSC SGOVon uses exact token quantity and provider USD price without inferring ETF shares", async () => {
+  const wallet = { chainIndex: "56", address: evm };
+  const contract = "0xc008c5f579ec1450f20099c39f587547e27c7523";
+  const quantity = "2.084735639804123758";
+  const data = fixture();
+  data.balances["56"] = [token(wallet, contract, "untrusted-name", quantity, "102.75"), token(wallet, unknownEth, "SGOVon", "100", "102.75")];
+  const { fetchImpl, calls } = fakeFetch(data);
+  const result = await run({ provider: "binanceagentic", wallets: [wallet], fetchImpl });
+  assert.equal(result.holdings.length, 1);
+  assert.equal(result.holdings[0].symbol, "SGOVon");
+  assert.equal(result.holdings[0].category, "债券");
+  assert.equal(result.holdings[0].rawQuantity, quantity);
+  assert.match(result.holdings[0].name, /SGOVon.*Ondo.*代币化.*债.*ETF/);
+  assert.ok(Math.abs(result.total - Number(quantity) * 102.75) < 1e-10);
+  assert.equal(result.unpricedAssets.length, 1);
+  assert.equal(result.unpricedAssets[0].contract, unknownEth);
+  assert.ok(result.warnings.some(line => /SGOVon.*每代币.*不.*股数/.test(line)));
+  assert.equal(result.observedAt, null);
+  assert.equal(result.timeBasis, "retrieved");
+  assert.equal(calls.length, 2); // Existing balance and DeFi reads only; no added quote requests.
+  for (const change of [row => { row.isRiskToken = true; }, row => { row.tokenPrice = "0"; }]) {
+    const copy = structuredClone(data); change(copy.balances["56"][0]);
+    const withheld = await run({ provider: "binanceagentic", wallets: [wallet], ...fakeFetch(copy) });
+    assert.equal(withheld.holdings.length, 0);
+    assert.equal(withheld.unpricedAssets.length, 2);
+  }
+  const ethWallet = { chainIndex: "1", address: evm };
+  data.balances["1"] = [token(ethWallet, contract, "SGOVon", quantity, "102.75")];
+  const wrongChain = await run({ wallets: [ethWallet], ...fakeFetch(data) });
+  assert.equal(wrongChain.holdings.length, 0);
+  assert.equal(wrongChain.unpricedAssets.length, 1);
+});
+
 const zeroMint = "EmcxFTNVDqyLHp11NvwvLZ4D7LKGbG9i7B8RF7dwpump";
 const zeroQuoteUrl = `https://api.jup.ag/price/v3?ids=${zeroMint}`;
 const zeroPrice = 0.00023619741294875424;

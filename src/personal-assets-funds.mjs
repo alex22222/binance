@@ -130,18 +130,22 @@ export async function fetchAssetFundNav({ isin, fetchImpl = fetch, now, clock = 
     } else if (isin === "US9229083632") {
       const html = await publicText(CATALOG[isin].url, null, fetchImpl);
       const blocks = [...html.matchAll(/\bdata-vgn-funds-profile="([^"]+)"/g)];
-      if (blocks.length !== 1) throw Error();
+      const rejected = reason => fail(`VOO 官方报价${reason}，保留上次有效估值。`);
+      if (blocks.length !== 1) throw rejected("数据块缺失或重复");
       const entities = { "&#34;": '"', "&quot;": '"', "&amp;": "&", "&#39;": "'", "&lt;": "<", "&gt;": ">" };
-      const data = JSON.parse(blocks[0][1].replace(/&#34;|&quot;|&amp;|&#39;|&lt;|&gt;/g, entity => entities[entity]));
-      const overview = data.overview; const dashboard = data.dashboard; const price = data.price;
+      let data;
+      try { data = JSON.parse(blocks[0][1].replace(/&#34;|&quot;|&amp;|&#39;|&lt;|&gt;/g, entity => entities[entity])); }
+      catch { throw rejected("数据格式无法解析"); }
+      const overview = data?.overview; const dashboard = data?.dashboard; const price = data?.price;
       if (overview?.cusip !== "922908363" || overview.fundId !== "0968" || overview.iovTickerSymbol !== "VOO.P"
-        || dashboard?.ticker !== "VOO" || dashboard.fundId !== "0968" || dashboard.fundFullName !== "Vanguard S&P 500 ETF" || data.fundFlags?.isEtf !== true
-        || overview.marketPrice !== dashboard.marketPrice || overview.marketPrice !== price?.marketPrice
-        || overview.marketPriceAsOfDate !== dashboard.marketPriceAsOfDate || overview.marketPriceAsOfDate !== price.marketPriceAsOfDate
-        || typeof overview.marketPrice !== "string" || !/^\$(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,9})?$/.test(overview.marketPrice)
-        || typeof overview.marketPriceAsOfDate !== "string" || !/^\d{2}\/\d{2}\/\d{4}$/.test(overview.marketPriceAsOfDate)) throw Error();
+        || dashboard?.ticker !== "VOO" || dashboard.fundId !== "0968" || dashboard.fundFullName !== "Vanguard S&P 500 ETF" || data.fundFlags?.isEtf !== true) throw rejected("证券身份无法核实");
+      if (overview.marketPrice !== dashboard.marketPrice || overview.marketPrice !== price?.marketPrice) throw rejected("价格不一致");
+      if (overview.marketPriceAsOfDate !== dashboard.marketPriceAsOfDate || overview.marketPriceAsOfDate !== price?.marketPriceAsOfDate) throw rejected("日期不一致");
+      if (typeof overview.marketPrice !== "string" || !/^\$(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,9})?$/.test(overview.marketPrice)) throw rejected("价格缺失或格式异常");
+      if (typeof overview.marketPriceAsOfDate !== "string" || !/^\d{2}\/\d{2}\/\d{4}$/.test(overview.marketPriceAsOfDate)) throw rejected("日期格式异常");
       nav = overview.marketPrice.slice(1).replaceAll(",", "");
       const [month, day, year] = overview.marketPriceAsOfDate.split("/"); date = `${year}-${month}-${day}`;
+      if (!validDate(date)) throw rejected("日期无效");
     } else {
       const html = await publicText(CATALOG[isin].url, null, fetchImpl);
       // Parse the site's JSON hydration data without evaluating any page script.

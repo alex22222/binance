@@ -26,8 +26,10 @@ const USDT = Object.freeze({ "1": "0xdac17f958d2ee523a2206206994597c13d831ec7", 
   "56": "0x55d398326f99059ff775485246999027b3197955" });
 // USDT0 issuer deployment: https://docs.usdt0.to/technical-documentation/deployments
 // SPYon BSC identity: Binance public RWA list?type=1; underlying ETF: https://app.ondo.finance/assets/spyon
+// SGOVon BSC address/18 decimals and fixed-income ETF identity: https://app.ondo.finance/assets/sgovon supportedNetworks.
 const SOURCE_PRICED = Object.freeze({ "196:0x779ded0c9e1022225f8e0630b35a9b54be713736": { symbol: "USDT0", category: "稳定币" },
-  "56:0x6a708ead771238919d85930b5a0f10454e1c331a": { symbol: "SPYon", name: "SPYon · Ondo 代币化ETF", category: "股票ETF" } });
+  "56:0x6a708ead771238919d85930b5a0f10454e1c331a": { symbol: "SPYon", name: "SPYon · Ondo 代币化ETF", category: "股票ETF" },
+  "56:0xc008c5f579ec1450f20099c39f587547e27c7523": { symbol: "SGOVon", name: "SGOVon · Ondo 代币化美债ETF", category: "债券" } });
 const PROVIDER_NAMES = Object.freeze({ okxweb3: "OKX Web3", tokenpocket: "TokenPocket", binanceagentic: "币安Agentic Wallet", okxagentic: "OKX Agentic Wallet" });
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
@@ -381,7 +383,7 @@ export async function fetchWalletAssets({ provider, credentials, wallets, polyma
       ...(derivedWallets.length ? ["pUSD 为 USDC 抵押权益，按单位数量及 5 分钟内 Kraken USDC/USD 成交价参考估值；不是 pUSD 的直接成交价，当前抵押储备和赎回能力未核实，不代表可变现净额。"] : []),
       ...(rows.some((row) => row.chainIndex === "56" && row.contract === USDT["56"]) ? ["BSC USDT 为 Binance-Peg 合约；美元估值使用 USDT / USD 参考成交价，不核实其链上赎回或跨链溢折价。"] : []),
       ...(holdings.some((row) => row.symbol === "USDT0") ? ["USDT0 使用提供商返回的实际 USD 报价，不按固定 1 美元估值；源未提供精确报价时点，标记为获取时间。"] : []),
-      ...(holdings.some((row) => row.symbol === "SPYon") ? ["SPYon 为 Ondo 代币化 ETF，按实际代币数量和提供商每代币 USD 价格估值，不转换为券商股数，也不使用固定份额乘数；源未提供精确报价时点。"] : []),
+      ...["SPYon", "SGOVon"].filter(symbol => holdings.some(row => row.symbol === symbol)).map(symbol => `${symbol} 为 Ondo 代币化 ETF，按实际代币数量和提供商每代币 USD 价格估值，不转换为券商股数，也不使用固定份额乘数；源未提供精确报价时点。`),
       ...(pendingDefi.length ? ["DeFi 覆盖待核实：协议汇总未加入小计；Polymarket / pUSD 与地址或代理账户口径冲突时，需要独立核对并避免重复计入。"] : [])],
   };
 }
