@@ -18,7 +18,7 @@ test("statement passwords are private, separate by account, and never returned o
   const sentinel = join(stateDir, "personal-assets.json");
   await writeFile(sentinel, "unchanged financial ledger");
   const initial = await readStatementPasswordStatus({ stateDir });
-  assert.deepEqual(Object.keys(initial.providers), ["usmart-hk", "usmart-sg"]);
+  assert.deepEqual(Object.keys(initial.providers), ["usmart-hk", "usmart-sg", "futu"]);
   assert.equal(initial.providers["usmart-hk"].configured, false);
   const password = " synthetic HK password ";
   const saved = await configureStatementPassword({ stateDir, provider: "usmart-hk", password });
@@ -28,9 +28,17 @@ test("statement passwords are private, separate by account, and never returned o
   assert.equal((await stat(path)).mode & 0o777, 0o600);
   assert.equal(JSON.parse(await readFile(path, "utf8")).passwords["usmart-hk"].password, password);
   await configureStatementPassword({ stateDir, provider: "usmart-sg", password: "synthetic SG password" });
+  const futu = await configureStatementPassword({ stateDir, provider: "futu", password: "synthetic Futu password" });
+  assert.equal(futu.providers.futu.configured, true);
+  assert.doesNotMatch(JSON.stringify(futu), /synthetic Futu password|"password"/);
   const cleared = await configureStatementPassword({ stateDir, provider: "usmart-hk", clear: true });
   assert.equal(cleared.providers["usmart-hk"].configured, false);
   assert.equal(cleared.providers["usmart-sg"].configured, true);
+  assert.equal(cleared.providers.futu.configured, true);
+  assert.equal(JSON.parse(await readFile(path, "utf8")).passwords.futu.password, "synthetic Futu password");
+  const removed = await configureStatementPassword({ stateDir, provider: "futu", clear: true });
+  assert.equal(removed.providers.futu.configured, false);
+  assert.equal(removed.providers["usmart-sg"].configured, true);
   assert.doesNotMatch(await readFile(path, "utf8"), /synthetic HK password/);
   assert.equal(await readFile(sentinel, "utf8"), "unchanged financial ledger");
   assert.deepEqual((await readdir(stateDir)).sort(), ["personal-assets-statement-passwords.json", "personal-assets.json"]);
@@ -50,13 +58,14 @@ test("invalid password updates leave existing credentials unchanged", async (con
   }
 });
 
-test("concurrent account saves retain both passwords and leave no lock or temporary files", async (context) => {
+test("concurrent account saves retain all passwords and leave no lock or temporary files", async (context) => {
   const { stateDir, path } = await fixture(context);
   await Promise.all([
     configureStatementPassword({ stateDir, provider: "usmart-hk", password: "synthetic HK" }),
     configureStatementPassword({ stateDir, provider: "usmart-sg", password: "synthetic SG" }),
+    configureStatementPassword({ stateDir, provider: "futu", password: "synthetic Futu" }),
   ]);
-  assert.deepEqual(Object.keys(JSON.parse(await readFile(path, "utf8")).passwords).sort(), ["usmart-hk", "usmart-sg"]);
+  assert.deepEqual(Object.keys(JSON.parse(await readFile(path, "utf8")).passwords).sort(), ["futu", "usmart-hk", "usmart-sg"]);
   assert.deepEqual(await readdir(stateDir), ["personal-assets-statement-passwords.json"]);
 });
 
@@ -81,7 +90,7 @@ test("password page clears secret fields before waiting on a save and when leavi
   const script = html.match(/<script nonce="synthetic-nonce">([\s\S]*?)<\/script>/)[1];
   assert.doesNotMatch(script, /localStorage|sessionStorage|console\./);
   const message = { dataset: {} }, statuses = {}, windowEvents = {}, calls = [];
-  const forms = ["usmart-hk", "usmart-sg"].map(provider => {
+  const forms = ["usmart-hk", "usmart-sg", "futu"].map(provider => {
     statuses["status-" + provider] = {};
     const input = { value: "", disabled: false }, saveButton = {}, clearButton = {}, events = {};
     clearButton.addEventListener = (type, handler) => { events[type] = handler; };
@@ -115,4 +124,13 @@ test("password page clears secret fields before waiting on a save and when leavi
   windowEvents.pagehide();
   assert.equal(forms[1].input.value, "");
   assert.equal(calls.length, 2);
+});
+
+test("settings exposes separate statement password cards including Futu", () => {
+  const html = statementPasswordsHtml({ nonce: "test" });
+  for (const provider of ["usmart-hk", "usmart-sg", "futu"]) {
+    assert.match(html, new RegExp(`data-provider="${provider}"`));
+    assert.match(html, new RegExp(`type="password" id="password-${provider}"`));
+  }
+  assert.match(html, /富途/);
 });

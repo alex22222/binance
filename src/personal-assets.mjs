@@ -176,7 +176,7 @@ export async function completeAssetRefresh({ stateDir, attemptedAt, failed = fal
   });
 }
 
-const statementProviders = ["usmart-hk", "usmart-sg"];
+const statementProviders = ["usmart-hk", "usmart-sg", "futu"];
 const validStatementPassword = value => typeof value === "string" && value.length > 0 && value.length <= 256 && !/[\u0000-\u001f\u007f]/.test(value);
 
 async function statementPasswordConfig(stateDir) {
