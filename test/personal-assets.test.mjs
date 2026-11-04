@@ -756,3 +756,16 @@ test("closing PnL estimates retain fixed cost metadata and never alter the asset
   assert.equal(summarize(value).total,summarize({ ...value, stockPnl: [] }).total);
   for (const patch of [{costBasis:-1},{costBasis:NaN},{estimated:false},{source:"screenshot"}]) assert.throws(()=>validatePortfolio({...value,stockPnl:[{...row,...patch}]}),/盈亏/);
 });
+
+test("perpetual net equity is satellite exposure and scoped floating PnL remains reference-only with verified source time", () => {
+  const observedAt = new Date().toISOString();
+  const value = portfolio([entry({ name: "BTC 5x 永续净权益", category: "永续合约", amount: 100 })]);
+  const row = { accountId: "account-1", amount: -2, currency: "USD", asOf: today, source: "api", asOfBasis: "statement", scope: "perpetuals", observedAt, fetchedAt: observedAt };
+  value.stockPnl = [row];
+  assert.deepEqual(validatePortfolio(value).stockPnl, [row]);
+  assert.deepEqual(assetSleeve(value.entries[0], value.accounts[0]), { sleeve: "satellite", group: "永续合约" });
+  assert.equal(summarize(value).total, 100);
+  for (const patch of [{ scope: "all" }, { source: "manual" }, { observedAt: undefined }, { fetchedAt: undefined }, { observedAt: "2000-01-01T00:00:00.000Z" }, { currency: "USDC" }]) {
+    assert.throws(() => validatePortfolio({ ...value, stockPnl: [{ ...row, ...patch }] }), /盈亏/);
+  }
+});

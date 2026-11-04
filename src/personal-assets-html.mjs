@@ -2,8 +2,8 @@ import { SITE_CSS, siteHeader } from "./site-shell.mjs";
 
 // Asset-type colors, indexed like CATEGORIES in personal-assets-core.mjs. The
 // client paints charts with var(--cat-N) so each theme supplies its own set.
-const DARK_CATEGORY_COLORS = ["#f5c14f", "#6ba4ed", "#64c7ab", "#b5a2f4", "#e89a67", "#d77ea7", "#74beca", "#c2ca70", "#ae9679", "#8d9edf", "#75b988", "#a4a9b3"];
-const LIGHT_CATEGORY_COLORS = ["#8e8e93", "#32ade6", "#34c759", "#007aff", "#5856d6", "#af52de", "#a2845e", "#00c7be", "#ff9500", "#ffcc00", "#ff6482", "#c7c7cc"];
+const DARK_CATEGORY_COLORS = ["#f5c14f", "#6ba4ed", "#64c7ab", "#b5a2f4", "#e89a67", "#d77ea7", "#74beca", "#c2ca70", "#ae9679", "#8d9edf", "#75b988", "#a4a9b3", "#ef8f80"];
+const LIGHT_CATEGORY_COLORS = ["#8e8e93", "#32ade6", "#34c759", "#007aff", "#5856d6", "#af52de", "#a2845e", "#00c7be", "#ff9500", "#ffcc00", "#ff6482", "#c7c7cc", "#ff3b30"];
 const categoryVars = (colors) => colors.map((color, index) => `--cat-${index}:${color}`).join(";");
 
 // Extra light-theme polish for this page; the shared shell supplies the light

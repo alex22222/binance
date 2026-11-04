@@ -224,7 +224,7 @@ function valuationSummary(value) {
   if (value === undefined || value === null) return null;
   if (typeof value !== "object" || Array.isArray(value)) throw syncError("资产估值来源无法核验。", 502);
   const result = {};
-  for (const key of ["sourceAmount", "usdPrice", "indexLagSeconds"]) if (value[key] !== undefined) {
+  for (const key of ["sourceAmount", "usdPrice", "indexLagSeconds", "perpsEquity", "perpsPositionCount"]) if (value[key] !== undefined) {
     if (typeof value[key] !== "number" || !Number.isFinite(value[key]) || value[key] < 0 || value[key] > 1e12 || key === "usdPrice" && value[key] === 0) throw syncError("资产估值来源无法核验。", 502);
     result[key] = value[key];
   }
@@ -232,7 +232,11 @@ function valuationSummary(value) {
     if (!CURRENCIES.includes(value.sourceCurrency)) throw syncError("资产原币无法核验。", 502);
     result.sourceCurrency = value.sourceCurrency;
   }
-  for (const key of ["quoteObservedAt", "cashObservedAt", "indexComputedAt"]) if (value[key] !== undefined) {
+  if (value.perpsUnrealizedPnl !== undefined) {
+    if (typeof value.perpsUnrealizedPnl !== "number" || !Number.isFinite(value.perpsUnrealizedPnl) || Math.abs(value.perpsUnrealizedPnl) > 1e12) throw syncError("永续盈亏无法核验。", 502);
+    result.perpsUnrealizedPnl = value.perpsUnrealizedPnl;
+  }
+  for (const key of ["quoteObservedAt", "cashObservedAt", "indexComputedAt", "perpsObservedAt"]) if (value[key] !== undefined) {
     if (typeof value[key] !== "string" || value[key].length > 40 || !Number.isFinite(Date.parse(value[key]))) throw syncError("资产来源时点无法核验。", 502);
     result[key] = value[key];
   }
@@ -270,9 +274,10 @@ function uniquePredictionSource(data, current, provider, address, targetAccountI
     && (row.configured || countedSource(current, row.targetAccountId))) throw syncError("同一 Polygon 来源已绑定钱包或 Safe 账户，不能通过预测市场重复计入。", 409);
 }
 
-async function predictionAssets(provider, address, api, clock) {
-  const result = await api.fetchPolymarketAssets({ address, now: clock });
+async function predictionAssets(provider, address, api, clock, includePerps = false) {
+  const result = await api.fetchPolymarketAssets({ address, now: clock, ...(provider === "polymarket" ? { includePerps } : {}) });
   if (result.provider !== "polymarket") throw syncError("预测市场资产来源无法核验。", 502);
+  if (includePerps && (provider !== "polymarket" || result.stockPnl?.scope !== "perpetuals" || !result.holdings?.some(row => row.externalId === "perps:equity"))) throw syncError("永续账户读取范围不完整，保留原资产及盈亏。", 502);
   return provider === "future" ? { ...result, provider: "future", accountLabel: "Future · Polygon 交易账户",
     holdings: result.holdings.map((row) => ({ ...row, name: row.name.replace(/^Polymarket/, "Future") })),
     coverage: [...(result.coverage || []), "读取已核实的 Future Polygon 交易账户，资产来源为 Polymarket 上游"],
@@ -347,6 +352,7 @@ function status(data, now = new Date(), schedule = { time: "07:00" }) {
     providers[name] = {
       connected: name === "okx" ? Boolean(value.credentials) : walletProvider(name) ? Boolean(walletCredentials(data, value)) : predictionProvider(name) ? Boolean(value.address) : Boolean(value.tokens),
       enabled: value.enabled === true,
+      ...(name === "polymarket" ? { includePerps: value.includePerps === true, address: value.address || "" } : {}),
       targetAccountId: value.targetAccountId || (value.enabled ? PROVIDERS[name].id : null),
       lastAttemptAt: value.lastAttemptAt || null,
       lastFetchedAt: value.lastFetchedAt || null,
@@ -416,9 +422,12 @@ function makePreview(result, provider, revision, now, targetAccountId, wallets, 
     || (result.timeBasis !== undefined && !["retrieved", "source", "statement"].includes(result.timeBasis))) throw syncError("平台返回的资产数据不完整，未更新原有资产。", 502);
   let stockPnl;
   if (result.stockPnl !== undefined) {
-    if (provider !== "futu" || !result.stockPnl || typeof result.stockPnl.amount !== "number" || !Number.isFinite(result.stockPnl.amount)
-      || Math.abs(result.stockPnl.amount) > 1e12 || result.stockPnl.currency !== result.currency) throw syncError("富途未实现盈亏无法核验，保留原有资产。", 502);
-    stockPnl = { amount: result.stockPnl.amount, currency: result.stockPnl.currency };
+    const perps = provider === "polymarket" && result.stockPnl?.scope === "perpetuals";
+    if (provider !== "futu" && !perps || !result.stockPnl || typeof result.stockPnl.amount !== "number" || !Number.isFinite(result.stockPnl.amount)
+      || Math.abs(result.stockPnl.amount) > 1e12 || result.stockPnl.currency !== result.currency
+      || perps && (result.currency !== "USD" || typeof result.stockPnl.observedAt !== "string" || !Number.isFinite(Date.parse(result.stockPnl.observedAt))
+        || Date.parse(result.stockPnl.observedAt) > Date.parse(result.fetchedAt) + 10_000 || Date.parse(result.fetchedAt) - Date.parse(result.stockPnl.observedAt) > 120_000)) throw syncError("账户未实现盈亏无法核验，保留原有资产。", 502);
+    stockPnl = { amount: result.stockPnl.amount, currency: result.stockPnl.currency, ...(perps ? { scope: "perpetuals", observedAt: result.stockPnl.observedAt } : {}) };
   }
   const derivedWallets = walletProvider(provider) ? derivedCashSources(result, wallets, polymarketSafeOwner) : [];
   const holdings = result.holdings.map((row, index) => {
@@ -426,6 +435,7 @@ function makePreview(result, provider, revision, now, targetAccountId, wallets, 
       || !Number.isFinite(row.amount) || row.amount < 0 || row.amount > 1e12) throw syncError("持仓明细无法核验，未更新原有资产。", 502);
     if ((row.sourceCurrency !== undefined || row.sourceAmount !== undefined) && (!CURRENCIES.includes(row.sourceCurrency) || typeof row.sourceAmount !== "number" || !Number.isFinite(row.sourceAmount) || row.sourceAmount < 0 || row.sourceAmount > 1e12)) throw syncError("持仓原币估值无法核验。", 502);
     if (row.rawQuantity !== undefined && !exactQuantity(row.rawQuantity)) throw syncError("钱包持仓原始数量无法核验。", 502);
+    if (row.note !== undefined && (typeof row.note !== "string" || row.note.length > 800 || /[\u0000-\u001f\u007f]/.test(row.note))) throw syncError("持仓说明无法核验。", 502);
     const quoted = row.quoteSource !== undefined || row.quoteObservedAt !== undefined;
     if (quoted && (typeof row.quoteSource !== "string" || !row.quoteSource.trim() || row.quoteSource.length > 100 || /[\u0000-\u001f\u007f]/.test(row.quoteSource)
       || typeof row.quoteObservedAt !== "string" || !Number.isFinite(Date.parse(row.quoteObservedAt)) || new Date(row.quoteObservedAt).toISOString() !== row.quoteObservedAt
@@ -434,6 +444,7 @@ function makePreview(result, provider, revision, now, targetAccountId, wallets, 
       ...(typeof row.symbol === "string" ? { symbol: row.symbol.slice(0, 100) } : {}),
       ...(row.sourceCurrency !== undefined ? { sourceCurrency: row.sourceCurrency, sourceAmount: row.sourceAmount } : {}),
       ...(row.rawQuantity !== undefined ? { rawQuantity: row.rawQuantity } : {}),
+      ...(row.note !== undefined ? { note: row.note } : {}),
       ...(quoted ? { quoteSource: row.quoteSource, quoteObservedAt: row.quoteObservedAt } : {}),
       ...(row.balanceAddress ? { balanceAddress: row.balanceAddress, cashRawBalance: row.cashRawBalance, cashBlockNumber: row.cashBlockNumber, cashObservedAt: row.cashObservedAt } : {}),
       ...(row.quantity !== undefined ? { quantity: String(row.quantity).slice(0, 80) } : {}) };
@@ -477,7 +488,7 @@ async function fetched(data, provider, stateDir, api, clock, accountId, persist,
     result = await walletAssets(provider, credentials, wallets, api, clock, safeOwner(value.polymarketSafeOwner, wallets, provider));
   } else if (predictionProvider(provider)) {
     if (!value.address) throw syncError("请先配置公开资金地址。");
-    result = await predictionAssets(provider, value.address, api, clock);
+    result = await predictionAssets(provider, value.address, api, clock, provider === "polymarket" && value.includePerps === true);
   } else {
     if (!value.tokens) throw syncError("请先完成富途只读授权。");
     if (!accountId || !value.accounts?.some((account) => account.id === accountId)) throw syncError("请选择已授权的真实证券账户。");
@@ -530,21 +541,23 @@ function updatedPortfolio(current, preview) {
   const sourceTime = preview.observedAt ? `；来源估值时间 ${preview.observedAt}` : "；源未提供精确资产时点";
   const valuation = preview.valuation;
   const quoteNote = valuation?.usdPrice !== undefined ? `；${valuation.sourceCurrency || "原币"}/USD 报价 ${valuation.usdPrice}${valuation.quoteObservedAt ? `；报价时点 ${valuation.quoteObservedAt}` : ""}` : "";
-  const sourceTotal = valuation?.sourceAmount !== undefined ? `；原币估值 ${valuation.sourceAmount} ${valuation.sourceCurrency || ""}` : "";
+  const sourceTotal = valuation?.sourceAmount !== undefined ? `；${valuation.perpsEquity !== undefined ? "仅预测部分" : ""}原币估值 ${valuation.sourceAmount} ${valuation.sourceCurrency || ""}` : "";
   const entries = [{ ...common, id: `sync-${preview.provider}-total`, kind: "total", name: walletProvider(preview.provider) ? "只读 API · 已定价资产小计" : "只读 API · 净资产总额", category: "组合资产", currency: preview.currency, amount: preview.total,
     note: `${walletProvider(preview.provider) ? "指定钱包已定价口径；未估值资产及未核实协议未加入，明细与小计不相加。" : "平台净资产口径；明细与总额不相加。"}读取时间 ${preview.fetchedAt}${sourceTime}${sourceTotal}${quoteNote}` }];
   if (walletProvider(preview.provider) && !preview.valuationComplete && !preview.holdings.length) entries.length = 0;
   preview.holdings.forEach((row, index) => entries.push({ ...common, id: `sync-${preview.provider}-${digest(row.externalId + ":" + index).slice(0, 24)}`, kind: "holding",
+    ...(row.category === "永续合约" && valuation?.perpsObservedAt ? { asOf: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date(valuation.perpsObservedAt)), asOfBasis: "statement" } : {}),
     name: `${row.name}${preview.holdings.some((item, other) => other !== index && item.name === row.name && item.currency === row.currency) ? ` · ${index + 1}` : ""}`,
     category: row.category, currency: row.currency, amount: row.amount,
-    note: [`读取时间 ${preview.fetchedAt}${sourceTime}`, row.symbol ? `代码 ${row.symbol}` : "", row.rawQuantity !== undefined || row.quantity !== undefined ? `数量 ${row.rawQuantity ?? row.quantity}${row.symbol ? ` ${row.symbol}` : ""}；金额为市值` : "",
+    note: [`读取时间 ${preview.fetchedAt}${row.category === "永续合约" && valuation?.perpsObservedAt ? `；来源估值时间 ${valuation.perpsObservedAt}` : sourceTime}`, row.note || "", row.symbol ? `代码 ${row.symbol}` : "", row.rawQuantity !== undefined || row.quantity !== undefined ? `数量 ${row.rawQuantity ?? row.quantity}${row.symbol ? ` ${row.symbol}` : ""}；金额为市值` : "",
       row.sourceAmount !== undefined ? `原币估值 ${row.sourceAmount} ${row.sourceCurrency}` : "",
       row.quoteSource ? `价格来源 ${row.quoteSource}；价格时点 ${row.quoteObservedAt}；价格时点不代表余额时点` : "",
-      row.balanceAddress ? `Safe现金；pUSD原始单位 ${row.cashRawBalance}（6位精度）；区块 ${row.cashBlockNumber}；余额时点 ${row.cashObservedAt}；USDC抵押权益参考估值，当前储备和赎回能力未核实` : ""].filter(Boolean).join("；") + quoteNote }));
+      row.balanceAddress ? `Safe现金；pUSD原始单位 ${row.cashRawBalance}（6位精度）；区块 ${row.cashBlockNumber}；余额时点 ${row.cashObservedAt}；USDC抵押权益参考估值，当前储备和赎回能力未核实` : ""].filter(Boolean).join("；") + (row.category === "永续合约" ? "" : quoteNote) }));
   return validatePortfolio({ ...current.portfolio, accounts: [...current.portfolio.accounts.filter((item) => item.id !== preview.targetAccountId), account],
     entries: [...current.portfolio.entries.filter((item) => item.accountId !== preview.targetAccountId), ...entries],
     ...(preview.stockPnl ? { stockPnl: [...(current.portfolio.stockPnl || []).filter(row => row.accountId !== preview.targetAccountId),
-      { ...common, ...preview.stockPnl, fetchedAt: preview.fetchedAt }] } : {}) });
+      { ...common, ...preview.stockPnl, ...(preview.stockPnl.observedAt ? { asOf: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date(preview.stockPnl.observedAt)), asOfBasis: "statement" } : {}), fetchedAt: preview.fetchedAt }] }
+      : preview.provider === "polymarket" ? { stockPnl: (current.portfolio.stockPnl || []).filter(row => row.accountId !== preview.targetAccountId || row.scope !== "perpetuals") } : {}) });
 }
 
 async function applyPreview({ stateDir, data, provider, previewId, revision, now, clock = () => now, persist, automatic = false }) {
@@ -565,7 +578,7 @@ async function applyPreview({ stateDir, data, provider, previewId, revision, now
     retainDerivedWalletSources(current, value, claims, preview.targetAccountId, data);
   }
   if (automatic && (fingerprint(current.portfolio, preview.targetAccountId) !== value.appliedFingerprint
-    || provider === "futu" && value.appliedPnlFingerprint && pnlFingerprint(current.portfolio, preview.targetAccountId) !== value.appliedPnlFingerprint)) {
+    || ["futu", "polymarket"].includes(provider) && value.appliedPnlFingerprint && pnlFingerprint(current.portfolio, preview.targetAccountId) !== value.appliedPnlFingerprint)) {
     value.enabled = false;
     throw syncError("此账户已被手动修改，自动同步已暂停。请重新拉取并确认预览。", 409);
   }
@@ -605,7 +618,7 @@ async function applyPreview({ stateDir, data, provider, previewId, revision, now
     rememberWalletBinding(data, provider, value);
   }
   value.appliedFingerprint = fingerprint(assets.portfolio, preview.targetAccountId);
-  if (provider === "futu") value.appliedPnlFingerprint = pnlFingerprint(assets.portfolio, preview.targetAccountId);
+  if (["futu", "polymarket"].includes(provider)) value.appliedPnlFingerprint = pnlFingerprint(assets.portfolio, preview.targetAccountId);
   rememberPredictionBinding(data, provider, value);
   delete value.preview;
   return assets;
@@ -723,13 +736,15 @@ export async function performAssetSyncAction({ stateDir, provider, action, body 
       const before = await readPersonalAssets({ stateDir });
       const targetAccountId = targetAccount(before, provider, body.targetAccountId, previous);
       uniquePredictionSource(data, before, provider, address, targetAccountId);
-      const result = await predictionAssets(provider, address, api, clock);
+      if (body.includePerps !== undefined && typeof body.includePerps !== "boolean") throw syncError("请选择有效的永续账户读取范围。");
+      const includePerps = provider === "polymarket" && (body.includePerps ?? previous.includePerps ?? false);
+      const result = await predictionAssets(provider, address, api, clock, includePerps);
       if (!sameExternal(provider, result.externalAccountId, address)) throw syncError("返回的资金地址与所选地址不符。", 502);
       const current = await readPersonalAssets({ stateDir });
       targetAccount(current, provider, targetAccountId, previous);
       uniquePredictionSource(data, current, provider, address, targetAccountId);
       const preview = makePreview(result, provider, current.revision, clock(), targetAccountId);
-      data.providers[provider] = { ...previous, address, targetAccountId, enabled: false, preview, lastAttemptAt: now.toISOString(),
+      data.providers[provider] = { ...previous, address, ...(provider === "polymarket" ? { includePerps } : {}), targetAccountId, enabled: false, preview, lastAttemptAt: now.toISOString(),
         lastFetchedAt: preview.fetchedAt, accountLabel: preview.accountLabel, lastError: null,
         ...(!previous.lastAppliedAt ? { observedAt: preview.observedAt, timeBasis: preview.timeBasis } : {}) };
     } else if (provider === "futu" && action === "authorize") {
@@ -805,7 +820,7 @@ export async function runAssetSyncCycle({ stateDir, api = adapters, now, clock =
         const current = await readPersonalAssets({ stateDir });
         const targetAccountId = value.targetAccountId || PROVIDERS[provider].id;
         if (fingerprint(current.portfolio, targetAccountId) !== value.appliedFingerprint
-          || provider === "futu" && value.appliedPnlFingerprint && pnlFingerprint(current.portfolio, targetAccountId) !== value.appliedPnlFingerprint) {
+          || ["futu", "polymarket"].includes(provider) && value.appliedPnlFingerprint && pnlFingerprint(current.portfolio, targetAccountId) !== value.appliedPnlFingerprint) {
           value.enabled = false;
           throw syncError("此账户已被手动修改，自动同步已暂停。请重新拉取并确认预览。", 409);
         }

@@ -1108,7 +1108,7 @@ test("Polymarket connects a public address to an explicit local target without w
   ui.get("sync-polymarket-address").value = address;
   await ui.run("connectPolymarket()");
   const request = ui.requests.find((item) => item.url.endsWith("/polymarket/connect"));
-  assert.deepEqual(JSON.parse(request.options.body), { address, targetAccountId: "polymarket-main" });
+  assert.deepEqual(JSON.parse(request.options.body), { address, includePerps: false, targetAccountId: "polymarket-main" });
   assert.equal(ui.requests.filter((item) => item.options.method === "PUT").length, 0);
 });
 
@@ -2017,4 +2017,31 @@ test("fixed-share close PnL is labelled as an estimate with the cost basis and p
   const ui=await view(initial);const html=ui.get("asset-content").innerHTML;
   assert.match(html,/固定股数收盘估算/);assert.match(html,/成本基准 CNY 10,000.00/);assert.match(html,/未含后续分红、费用或成本调整/);
   ui.run("hidden=true;render()");assert.doesNotMatch(ui.get("asset-content").innerHTML,/成本基准 CNY 10,000.00/);
+});
+
+test("Polymarket perpetuals opt-in is explicit in settings and never enables Future perpetuals", async () => {
+  const initial = stateWith();
+  const address = `0x${"4".repeat(40)}`;
+  const ui = await view(initial, async url => syncResponse(url === "/api/assets" ? initial : syncStatus({ polymarket: { connected: true, enabled: true, address, includePerps: true } })));
+  await ui.run("openSync()");
+  assert.match(ui.get("dialog-body").innerHTML, /调整永续账户读取范围/);
+  assert.match(ui.get("dialog-body").innerHTML, /id="sync-polymarket-perps" type="checkbox" checked/);
+  assert.doesNotMatch(ui.get("dialog-body").innerHTML, /sync-future-perps/);
+  ui.get("sync-polymarket-address").value = address; ui.get("sync-polymarket-perps").checked = true;
+  await ui.run("connectPolymarket()");
+  const request = ui.requests.find(row => row.url.endsWith("/polymarket/connect"));
+  assert.equal(JSON.parse(request.options.body).includePerps, true);
+  ui.run("hidden = true; renderSync()");
+  assert.doesNotMatch(ui.get("dialog-body").innerHTML, new RegExp(address));
+});
+
+test("overview identifies perps floating PnL separately from prediction returns and keeps it out of total assets", async () => {
+  const initial = stateWith([entry({ category: "永续合约", amount: 100 })]);
+  initial.portfolio.stockPnl = [{ accountId: "account-1", amount: -2.5, currency: "USD", asOf: entry().asOf, source: "api", scope: "perpetuals", observedAt: new Date().toISOString(), fetchedAt: new Date().toISOString() }];
+  const ui = await view(initial);
+  const html = ui.get("asset-content").innerHTML;
+  assert.match(html, /持仓浮动盈亏/); assert.match(html, /永续合约未实现盈亏（不含预测市场收益）/);
+  assert.match(html, /USD -2\.50/); assert.doesNotMatch(html, /个股票账户已提供/);
+  assert.equal(ui.run("summarize(portfolio()).total"), 100);
+  ui.run("hidden = true;render()"); assert.doesNotMatch(ui.get("asset-content").innerHTML, /USD -2\.50/);
 });

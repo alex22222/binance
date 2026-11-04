@@ -1,6 +1,6 @@
 export const PLATFORMS = ["汇丰基金", "ZA Bank", "富途", "盈立", "OKX", "币安", "A股", "待确认", "民生银行", "TokenPocket", "Polymarket", "Future", "币安Agentic Wallet", "OKX Agentic Wallet"];
 export const CURRENCIES = ["CNY", "HKD", "USD", "USDT", "USDC", "EUR", "GBP", "JPY", "SGD", "AUD"];
-export const CATEGORIES = ["现金", "定期存款", "货币基金", "股票", "股票ETF", "基金", "债券", "稳定币", "加密资产", "组合资产", "其他", "未分类"];
+export const CATEGORIES = ["现金", "定期存款", "货币基金", "股票", "股票ETF", "基金", "债券", "稳定币", "加密资产", "组合资产", "其他", "未分类", "永续合约"];
 
 const MAX_AMOUNT = 1_000_000_000_000;
 const DAY_MS = 86_400_000;
@@ -134,8 +134,13 @@ export function validatePortfolio(input) {
         || new Date(row.fetchedAt).toISOString() !== row.fetchedAt || Date.parse(row.fetchedAt) > Date.now() + 300_000)) throw new Error("股票盈亏读取时间无效");
       if (row.estimated !== undefined && (row.estimated !== true || row.source !== "api" || !validAmount(row.costBasis))) throw new Error("股票盈亏估算成本无效");
       if (row.costBasis !== undefined && row.estimated !== true) throw new Error("股票盈亏成本仅用于估算记录");
+      if (row.scope !== undefined && (row.scope !== "perpetuals" || row.source !== "api" || row.currency !== "USD" || !row.observedAt || row.estimated)) throw new Error("永续盈亏范围无效");
+      if (row.observedAt !== undefined && (row.scope !== "perpetuals" || typeof row.observedAt !== "string" || !Number.isFinite(Date.parse(row.observedAt))
+        || new Date(row.observedAt).toISOString() !== row.observedAt || !row.fetchedAt || Date.parse(row.observedAt) > Date.parse(row.fetchedAt) + 10_000
+        || Date.parse(row.fetchedAt) - Date.parse(row.observedAt) > 120_000)) throw new Error("永续盈亏来源时点无效");
       return { accountId: row.accountId, amount: row.amount, currency: choice(row.currency, CURRENCIES, "盈亏币种"), asOf: row.asOf,
         ...(row.estimated ? { estimated: true, costBasis: row.costBasis } : {}),
+        ...(row.scope ? { scope: row.scope, observedAt: row.observedAt } : {}),
         source: choice(row.source, ["manual", "csv", "screenshot", "api"], "盈亏来源"),
         ...(row.asOfBasis !== undefined ? { asOfBasis: choice(row.asOfBasis, ["statement", "imported"], "盈亏日期依据") } : {}),
         ...(row.fetchedAt !== undefined ? { fetchedAt: row.fetchedAt } : {}) };
@@ -151,7 +156,7 @@ export function validatePortfolio(input) {
 // records stay out of both sides until split.
 export const CORE_GROUPS = ["货币基金", "现金与定期", "USDT", "USDC", "其他稳定币", "BTC", "标普500", "纳指100"];
 export const CORE_CASH_GROUPS = ["货币基金", "现金与定期", "USDT", "USDC", "其他稳定币"];
-export const SATELLITE_GROUPS = ["股票与ETF", "链上股票代币", "代币", "预测市场"];
+export const SATELLITE_GROUPS = ["股票与ETF", "链上股票代币", "代币", "预测市场", "永续合约"];
 // A total counted account is classified by its synced positions only when
 // their value lands this close to the total.
 export const LOOK_THROUGH_TOLERANCE = 0.02;
@@ -163,6 +168,7 @@ const NDX_NAME = /纳斯达克\s*100|纳指\s*100|Nasdaq[\s-]*100|(?<![A-Za-z])(
 
 export function assetSleeve(entry, account) {
   const { category, name } = entry;
+  if (category === "永续合约") return { sleeve: "satellite", group: "永续合约" };
   if (category === "货币基金") return { sleeve: "core", group: "货币基金" };
   if (category === "现金" || category === "定期存款") return { sleeve: "core", group: "现金与定期" };
   if (category === "稳定币") return { sleeve: "core", group: /USDT/i.test(name) ? "USDT" : /USDC/i.test(name) ? "USDC" : "其他稳定币" };

@@ -1049,3 +1049,55 @@ test("a verified complete empty account refresh preserves holdings basis and cle
   assert.equal(current.portfolio.accounts.find(row => row.id === "okx-exchange").basis, "holdings");
   assert.equal(current.portfolio.entries.some(row => row.accountId === "okx-exchange" && row.kind === "holding"), false);
 });
+
+test("Polymarket perps scope persists, applies equity and dated PnL once, preserves on failure and guards manual PnL", async context => {
+  const stateDir = await fixture(context);
+  const current = await readPersonalAssets({ stateDir });
+  const targetAccountId = current.portfolio.accounts.find(row => row.platform === "Polymarket").id;
+  const calls = [];
+  let failed = false, pnl = -2.5, fetchedAt = at.toISOString();
+  const source = { fetchPolymarketAssets: async options => {
+    calls.push(options.includePerps);
+    if (failed) throw Error("private upstream detail");
+    return synthetic({ provider: "polymarket", externalAccountId: options.address, total: 107.5, fetchedAt,
+      holdings: [{ externalId: "cash", name: "pUSD", category: "稳定币", currency: "USD", amount: 10 },
+        { externalId: "perps:equity", name: "永续账户净权益", category: "永续合约", currency: "USD", amount: 97.5, note: "官方净权益已含盈亏" }],
+      valuation: { sourceCurrency: "USDC", sourceAmount: 10, usdPrice: 1, perpsEquity: 97.5, perpsUnrealizedPnl: pnl, perpsObservedAt: fetchedAt, perpsPositionCount: 1 },
+      stockPnl: { amount: pnl, currency: "USD", scope: "perpetuals", observedAt: fetchedAt } });
+  } };
+  const preview = (await action(stateDir, "polymarket", "connect", { address: publicAddress, targetAccountId, includePerps: true }, { api: source })).providers.polymarket.preview;
+  assert.equal(preview.stockPnl.scope, "perpetuals");
+  const applied = await action(stateDir, "polymarket", "apply", { previewId: preview.id, revision: preview.revision }, { api: source });
+  assert.equal(applied.sync.providers.polymarket.includePerps, true);
+  assert.equal(applied.sync.providers.polymarket.lastValuation.perpsUnrealizedPnl, -2.5);
+  const rows = applied.assets.portfolio.entries.filter(row => row.accountId === targetAccountId && row.kind === "holding");
+  assert.equal(rows.reduce((sum, row) => sum + row.amount, 0), 107.5);
+  assert.match(rows.find(row => row.category === "永续合约").note, /官方净权益已含盈亏/);
+  assert.doesNotMatch(rows.find(row => row.category === "永续合约").note, /USDC\/USD 报价/);
+  const pl = applied.assets.portfolio.stockPnl.find(row => row.accountId === targetAccountId);
+  assert.equal(pl.amount, -2.5); assert.equal(pl.asOfBasis, "statement"); assert.equal(pl.observedAt, fetchedAt);
+  const before = await readFile(join(stateDir, "personal-assets.json"), "utf8");
+  failed = true;
+  assert.deepEqual(await runAssetSyncCycle({ stateDir, now: later, api: source }), { attempted: 1, applied: 0, failed: 1 });
+  assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
+  failed = false; fetchedAt = later.toISOString(); pnl = 1.5;
+  assert.deepEqual(await runAssetSyncCycle({ stateDir, now: later, api: source }), { attempted: 1, applied: 1, failed: 0 });
+  const next = await readPersonalAssets({ stateDir });
+  assert.equal(next.portfolio.stockPnl.find(row => row.accountId === targetAccountId).amount, 1.5);
+  next.portfolio.stockPnl.find(row => row.accountId === targetAccountId).amount = 8;
+  await savePersonalAssets({ stateDir, portfolio: next.portfolio, revision: next.revision });
+  const reads = calls.length;
+  assert.deepEqual(await runAssetSyncCycle({ stateDir, now: new Date("2026-10-25T13:00:00Z"), api: source }), { attempted: 1, applied: 0, failed: 1 });
+  assert.equal(calls.length, reads);
+  assert.equal((await readPersonalAssets({ stateDir })).portfolio.stockPnl.find(row => row.accountId === targetAccountId).amount, 8);
+  assert.ok(calls.every(value => value === true));
+});
+
+test("enabled perps scope cannot silently accept prediction-only data or invalid PnL", async context => {
+  const stateDir = await fixture(context);
+  const targetAccountId = (await readPersonalAssets({ stateDir })).portfolio.accounts.find(row => row.platform === "Polymarket").id;
+  const before = await readFile(join(stateDir, "personal-assets.json"), "utf8");
+  await assert.rejects(action(stateDir, "polymarket", "connect", { address: publicAddress, targetAccountId, includePerps: true }, { api: predictionApi() }), /永续/);
+  await assert.rejects(action(stateDir, "polymarket", "connect", { address: publicAddress, targetAccountId, includePerps: "yes" }, { api: predictionApi() }), /永续/);
+  assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
+});
