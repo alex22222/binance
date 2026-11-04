@@ -43,7 +43,7 @@ function stockSource(change = () => {}, suffix = "") {
 test("A-share quotes identify exchange, code, Chinese name and source timestamp without calling a broker", async () => {
   const quote = await fetchAssetHoldingQuote({ symbol: "sz000534", fetchImpl: stockSource(), now });
   assert.equal(quote.symbol, "sz000534"); assert.equal(quote.currency, "CNY"); assert.equal(quote.price, "19.14"); assert.equal(quote.nav, undefined);
-  assert.equal(quote.observedAt, "2026-10-23T08:14:21.000Z"); assert.equal(quote.date, "2026-10-23"); assert.equal(quote.priceBasis, "market-quote");
+  assert.equal(quote.observedAt, "2026-10-23T08:14:21.000Z"); assert.equal(quote.date, "2026-10-23"); assert.equal(quote.priceBasis, "market-close");
   for (const change of [f => { f[2] = "000535"; }, f => { f[3] = "0"; }, f => { f[3] = "NaN"; }, f => { f[30] = "20261025090000"; },
     f => { f[30] = "20260230150000"; }, f => { f[30] = "20261023161499"; }, f => { f[61] = "GP-B"; }]) {
     await assert.rejects(fetchAssetHoldingQuote({ symbol: "sz000534", fetchImpl: stockSource(change), now }), /身份|报价|日期/);
@@ -313,4 +313,71 @@ test("HSBC public token and NAV failures never retry, expose tokens or overwrite
     const status = await readAssetFundStatus({ stateDir }); assert.doesNotMatch(JSON.stringify(status), /private upstream secret|anonymous\.public\.token/); assert.equal(status.bindings[0].lastFetchedAt, lastGoodFetchedAt);
   }
   assert.doesNotMatch(await readFile(join(stateDir, "personal-assets-funds.json"), "utf8"), /anonymous\.public\.token|Authorization/);
+});
+
+test("A-share daily valuation rejects intraday or weekend ticks instead of calling them a close", async () => {
+  for (const at of ["20261023145959", "20261023113000", "20261024150000"]) {
+    await assert.rejects(fetchAssetHoldingQuote({ symbol: "sz000534", fetchImpl: stockSource(f => { f[30] = at; }), now }));
+  }
+});
+
+function closeSource(symbol = "sz000534", price = "19.14", at = "20261023161421") {
+  const fields = Array(88).fill(""); fields[1] = "NAME"; fields[2] = symbol.slice(2); fields[3] = price; fields[30] = at; fields[61] = "GP-A";
+  const parts = fields.join("~").split("NAME");
+  const name = Buffer.from(symbol === "sz000534" ? "cdf2d4f3b9c9b7dd" : "c2b6d0a6bfc6bcbc", "hex");
+  const body = Buffer.concat([Buffer.from(`v_${symbol}="${parts[0]}`), name, Buffer.from(parts[1] + '";')]);
+  return async url => { assert.equal(url, `https://qt.gtimg.cn/q=${symbol}`); return new Response(body); };
+}
+async function pnlFixture(t) {
+  const stateDir = await mkdtemp(join(tmpdir(), "assets-close-pnl-")); t.after(() => rm(stateDir, { recursive: true, force: true }));
+  const portfolio = emptyPortfolio(); portfolio.accounts[0].platform = "A股"; portfolio.accounts[0].basis = "holdings";
+  portfolio.entries = [
+    { id: "wanze", accountId: "account-1", kind: "holding", name: "万泽股份", category: "股票", currency: "CNY", amount: 1914, asOf: "2026-10-24", source: "screenshot" },
+    { id: "luxiao", accountId: "account-1", kind: "holding", name: "露笑科技", category: "股票", currency: "CNY", amount: 5481, asOf: "2026-10-24", source: "screenshot" },
+    { id: "cash", accountId: "account-1", kind: "holding", name: "现金", category: "现金", currency: "CNY", amount: 0.32, asOf: "2026-10-24", source: "screenshot" },
+  ];
+  portfolio.stockPnl = [{ accountId: "account-1", amount: -2605, currency: "CNY", asOf: "2026-10-24", source: "screenshot" }];
+  let state = await savePersonalAssets({ stateDir, portfolio, revision: 0 });
+  for (const [entryId, symbol, quantity, price] of [["wanze", "sz000534", "100", "19.14"], ["luxiao", "sz002617", "900", "6.09"]]) {
+    state = await configureAssetFund({ stateDir, entryId, symbol, quantity, confirmedOn: "2026-10-24", revision: state.revision, fetchImpl: closeSource(symbol, price), now });
+  }
+  const { configureAssetStockPnlEstimate } = await import("../src/personal-assets-funds.mjs");
+  state = await configureAssetStockPnlEstimate({ stateDir, accountId: "account-1", costBasisAmount: 10000, confirmedOn: "2026-10-24", revision: state.revision, now });
+  return { stateDir, state };
+}
+
+test("fixed-share closing valuation refreshes signed PnL without deducting it from assets or changing cash", async t => {
+  const { stateDir } = await pnlFixture(t);
+  const later = new Date("2026-10-26T23:00:00Z");
+  const result = await runAssetFundCycle({ stateDir, now: later, fetchImpl: url => closeSource(url.split("=")[1], url.endsWith("sz000534") ? "20" : "6.10", "20261026161500")(url) });
+  assert.deepEqual(result.stockPnl, { attempted: 1, applied: 1, failed: 0 });
+  const next = await readPersonalAssets({ stateDir }); const pnl = next.portfolio.stockPnl[0];
+  assert.equal(pnl.amount, -2510); assert.equal(pnl.asOf, "2026-10-26"); assert.equal(pnl.estimated, true); assert.equal(pnl.costBasis, 10000);
+  assert.equal(next.portfolio.entries.find(e => e.id === "cash").amount, 0.32);
+  assert.equal(next.portfolio.entries.reduce((sum,e) => sum + e.amount,0), 7490.32);
+  assert.equal((await readAssetFundStatus({ stateDir, now: later })).stockPnlEstimates[0].lastError, null);
+});
+test("an incomplete stock close retains the full last good PnL and its date and timestamp", async t => {
+  const { stateDir, state } = await pnlFixture(t); const oldPnl = state.portfolio.stockPnl;
+  const result = await runAssetFundCycle({ stateDir, now: new Date("2026-10-26T23:00:00Z"), fetchImpl: url => {
+    if (url.endsWith("sz002617")) throw Error("quote unavailable");
+    return closeSource("sz000534", "20", "20261026161500")(url);
+  } });
+  assert.equal(result.stockPnl.applied, 0); assert.equal(result.stockPnl.failed, 1);
+  assert.deepEqual((await readPersonalAssets({ stateDir })).portfolio.stockPnl, oldPnl);
+});
+test("a manual floating-PnL correction pauses the cost estimate without replacing the correction", async t => {
+  const { stateDir, state } = await pnlFixture(t);
+  const corrected = { accountId: "account-1", amount: -12, currency: "CNY", asOf: "2026-10-24", source: "manual" };
+  await savePersonalAssets({ stateDir, revision: state.revision, portfolio: { ...state.portfolio, stockPnl: [corrected] } });
+  await runAssetFundCycle({ stateDir, now: new Date("2026-10-26T23:00:00Z"), fetchImpl: url => closeSource(url.split("=")[1], "20", "20261026161500")(url) });
+  assert.deepEqual((await readPersonalAssets({ stateDir })).portfolio.stockPnl, [corrected]);
+  assert.equal((await readAssetFundStatus({ stateDir })).stockPnlEstimates[0].enabled, false);
+});
+test("unchanged weekend closes do not rewrite a good PnL or its successful application time", async t => {
+  const { stateDir } = await pnlFixture(t); const before = await readFile(join(stateDir,"personal-assets.json"),"utf8");
+  const previous = (await readAssetFundStatus({ stateDir, now })).stockPnlEstimates[0];
+  const result = await runAssetFundCycle({ stateDir, now: new Date("2026-10-24T23:00:00Z"), fetchImpl: url => closeSource(url.split("=")[1], url.endsWith("sz000534") ? "19.14" : "6.09")(url) });
+  assert.equal(result.stockPnl.applied, 0); assert.equal(await readFile(join(stateDir,"personal-assets.json"),"utf8"),before);
+  assert.equal((await readAssetFundStatus({stateDir})).stockPnlEstimates[0].lastAppliedAt,previous.lastAppliedAt);
 });

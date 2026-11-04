@@ -749,3 +749,10 @@ test("full snapshot history rejects additions without deleting or overwriting hi
   assert.equal(await readFile(path, "utf8"), before);
   await assert.rejects(stat(join(stateDir, "personal-assets-snapshots")), { code: "ENOENT" });
 });
+
+test("closing PnL estimates retain fixed cost metadata and never alter the asset sum", () => {
+  const value = portfolio([entry()]); const row = { accountId: "account-1", amount: -20, currency: "CNY", asOf: today, source: "api", estimated: true, costBasis: 10000 };
+  value.stockPnl = [row]; assert.deepEqual(validatePortfolio(value).stockPnl, [row]);
+  assert.equal(summarize(value).total,summarize({ ...value, stockPnl: [] }).total);
+  for (const patch of [{costBasis:-1},{costBasis:NaN},{estimated:false},{source:"screenshot"}]) assert.throws(()=>validatePortfolio({...value,stockPnl:[{...row,...patch}]}),/盈亏/);
+});

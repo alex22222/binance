@@ -2010,3 +2010,11 @@ test("snapshot trend handles empty, single, flat and out-of-range histories with
   assert.match(ui.run("renderHistoryChart()"), /此时间范围暂无快照/);
   assert.doesNotMatch(ui.run("renderHistoryChart()"), /<svg/);
 });
+
+test("fixed-share close PnL is labelled as an estimate with the cost basis and privacy protection", async () => {
+  const initial = stateWith([entry({category:"股票"})]);
+  initial.portfolio.stockPnl = [{accountId:"account-1",amount:-20,currency:"CNY",asOf:"2026-10-23",source:"api",asOfBasis:"statement",estimated:true,costBasis:10000}];
+  const ui=await view(initial);const html=ui.get("asset-content").innerHTML;
+  assert.match(html,/固定股数收盘估算/);assert.match(html,/成本基准 CNY 10,000.00/);assert.match(html,/未含后续分红、费用或成本调整/);
+  ui.run("hidden=true;render()");assert.doesNotMatch(ui.get("asset-content").innerHTML,/成本基准 CNY 10,000.00/);
+});

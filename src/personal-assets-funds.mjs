@@ -15,7 +15,7 @@ const CATALOG = {
 const STOCKS = {
   ...Object.fromEntries([
     ["sz000534", "万泽股份"], ["sz002617", "露笑科技"], ["sh600704", "物产中大"], ["sh601012", "隆基绿能"], ["sh601216", "君正集团"],
-  ].map(([symbol, name]) => [symbol, { name, currency: "CNY", source: "腾讯证券行情", priceBasis: "market-quote", url: `https://gu.qq.com/${symbol}/gp` }])),
+  ].map(([symbol, name]) => [symbol, { name, currency: "CNY", source: "腾讯证券行情", priceBasis: "market-close", url: `https://gu.qq.com/${symbol}/gp` }])),
   ...Object.fromEntries([
     ["usSPCX", "SpaceX（SPCX）", "SpaceX", "SPCX.OQ", "Space Exploration Technologies Corp.", "股票"],
     ["usSPY", "SPDR 标普500 ETF（SPY）", "标普500指数ETF-SPDR", "SPY.AM", "State Street Spdr S&P 500 Etf", "股票ETF"],
@@ -85,6 +85,7 @@ export async function fetchAssetHoldingQuote({ isin, symbol, fetchImpl = fetch, 
       const observed = new Date(`${date}T${at.slice(8,10)}:${at.slice(10,12)}:${at.slice(12,14)}+08:00`);
       if (!validDate(date) || Number(at.slice(8,10)) > 23 || Number(at.slice(10,12)) > 59 || Number(at.slice(12,14)) > 59
         || !Number.isFinite(observed.getTime()) || observed.getTime() > now.getTime() + 300_000 || now.getTime() - observed.getTime() > 7 * 86_400_000) throw Error();
+      if (at.slice(8) < "150000" || [0, 6].includes(new Date(`${date}T12:00:00+08:00`).getUTCDay())) throw fail("尚无可核实的收盘报价，保留上次有效估值。");
       observedAt = observed.toISOString();
     }
     return { symbol, ...metadata, price: fields[3], date, observedAt, ...(us ? { sourceTime: at, timeBasis: "provider-timezone-unverified" } : {}), fetchedAt: now.toISOString() };
@@ -180,6 +181,11 @@ async function readConfig(path) {
         || !validDate(row.confirmedOn) || typeof row.enabled !== "boolean" || !/^[a-f0-9]{64}$/.test(row.fingerprint)) throw Error();
       ids.add(row.entryId);
     }
+    if (config.stockPnlEstimates !== undefined && (!Array.isArray(config.stockPnlEstimates) || config.stockPnlEstimates.length > 100
+      || new Set(config.stockPnlEstimates.map(row => row?.accountId)).size !== config.stockPnlEstimates.length
+      || config.stockPnlEstimates.some(row => !row || typeof row.accountId !== "string" || !validCost(row.costBasisAmount)
+        || !validDate(row.confirmedOn) || typeof row.enabled !== "boolean" || !/^[a-f0-9]{64}$/.test(row.fingerprint)
+        || !Array.isArray(row.positions) || !row.positions.length || row.positions.some(position => !validInstrument(position) || !validQuantity(position.quantity))))) throw Error();
     return config;
   } catch (error) { if (error.code === "ENOENT") return { schemaVersion: 1, bindings: [] }; throw fail("持仓重估配置无法读取，已保存资产未被改动。", 500); }
   finally { await file?.close(); }
@@ -204,18 +210,21 @@ function target(state, entryId) {
   if (!entry || entry.kind !== "holding" || !["货币基金", "基金", "股票ETF", "股票"].includes(entry.category) || account?.basis !== "holdings" || account.reviewStatus === "pending" || account.platform === "待确认") throw fail("请选择已确认账户中按持仓计入的基金、ETF 或股票记录。", 409);
   return { entry, account, fingerprint: hash({ entry, account }) };
 }
+const validCost = value => typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 1e12;
 function revalued(entry, binding, quote) {
   const amount = Number((Number(binding.quantity) * Number(quote.price ?? quote.nav)).toFixed(8));
   if (!Number.isFinite(amount) || amount < 0 || amount > 1e12) throw fail("持有数量与报价乘积超出支持范围。", 400);
   return { ...entry, name: quote.name, currency: quote.currency, amount, asOf: quote.date, asOfBasis: "statement", source: "api",
-    note: quote.priceBasis === "market-quote"
+    note: quote.symbol && quote.currency === "CNY" && quote.priceBasis === "market-close"
+      ? `固定股数 × 未复权收盘价估算，非券商账户同步；证券代码 ${binding.symbol}；股数 ${binding.quantity}（${binding.quantityBasis === "screenshot" ? "截图数量录入日" : "用户确认日"} ${binding.confirmedOn}）；收盘价 ${quote.price} CNY，源行情时间 ${quote.observedAt}；来源 ${quote.source}。现金不随行情变化；买卖、送转或成本调整后请更新数量及成本。`
+      : quote.priceBasis === "market-quote"
       ? `按未复权市价重估，非券商账户同步；证券代码 ${binding.symbol}；股数 ${binding.quantity}（${binding.quantityBasis === "screenshot" ? "截图数量录入日" : "用户确认日"} ${binding.confirmedOn}${binding.quantityBasis === "screenshot" ? "，截图持股时点未核实" : ""}）；行情价格 ${quote.price} ${quote.currency}，源行情时间 ${quote.observedAt || `${quote.sourceTime}（源时区未核实）`}；来源 ${quote.source}。只更新市值，现金与股数不自动变化；买卖、送转或拆并股后请更新，未将旧截图盈亏当成最新盈亏。`
       : quote.priceBasis === "market-close"
       ? `发行人公布市场收盘价重估，非银行账户同步；ISIN ${binding.isin}；长期持有股数 ${binding.quantity}（用户确认日 ${binding.confirmedOn}，不是到期日）；市场收盘价 ${quote.nav} ${quote.currency}，价格日 ${quote.date}；来源 ${quote.source}。股数不自动变化，买卖或拆并股后请更新；不是盘中实时价格。`
       : `官方净值重估，非银行账户同步；ISIN ${binding.isin}；长期持有份额 ${binding.quantity}（用户确认日 ${binding.confirmedOn}，不是到期日）；净值 ${quote.nav} ${quote.currency}，净值日 ${quote.date}；来源 ${quote.source}。份额不自动变化，申购赎回后请更新。` };
 }
 function status(config, state, now) {
-  return { status: "available", bindings: config.bindings.map(binding => {
+  return { status: "available", ...(config.stockPnlEstimates ? { stockPnlEstimates: config.stockPnlEstimates } : {}), bindings: config.bindings.map(binding => {
     const quote = binding.quote;
     let changed = true; try { changed = target(state, binding.entryId).fingerprint !== binding.fingerprint; } catch {}
     return { entryId: binding.entryId, accountId: binding.accountId, ...(binding.symbol === undefined ? { isin: binding.isin, nav: quote?.nav || null, navDate: quote?.date || null }
@@ -249,6 +258,42 @@ export async function configureAssetFund({ stateDir, entryId, isin, symbol, quan
   });
 }
 
+const pnlFingerprint = (state, accountId) => hash({ account: state.portfolio.accounts.find(row => row.id === accountId), pnl: state.portfolio.stockPnl?.find(row => row.accountId === accountId) || null });
+function estimateStockPnl(state, config, estimate) {
+  const account = state.portfolio.accounts.find(row => row.id === estimate.accountId);
+  if (account?.platform !== "A股" || account.basis !== "holdings" || account.reviewStatus === "pending") throw fail("账户统计口径已变化，浮动盈亏估算暂停。", 409);
+  const entries = state.portfolio.entries.filter(row => row.accountId === account.id && row.kind === "holding" && ["股票", "股票ETF"].includes(row.category));
+  const bindings = entries.map(entry => config.bindings.find(row => row.entryId === entry.id));
+  if (!entries.length || bindings.some(row => !row?.enabled || !row.symbol || STOCKS[row.symbol]?.currency !== "CNY")
+    || bindings.some(row => target(state, row.entryId).fingerprint !== row.fingerprint)) throw fail("股票或固定数量已修改，浮动盈亏估算暂停。", 409);
+  const positions = bindings.map(({ entryId, symbol, quantity, confirmedOn }) => ({ entryId, symbol, quantity, confirmedOn })).sort((a,b) => a.entryId.localeCompare(b.entryId));
+  if (estimate.positions && hash(positions) !== hash(estimate.positions)) throw fail("股票或固定数量已修改，浮动盈亏估算暂停。", 409);
+  const dates = new Set(bindings.map(row => row.quote?.date));
+  if (dates.size !== 1 || bindings.some(row => row.lastError || row.quote?.priceBasis !== "market-close" || !row.quote.observedAt || !row.lastFetchedAt)
+    || entries.some((entry, i) => entry.currency !== "CNY" || entry.asOf !== bindings[i].quote.date || entry.amount !== Number((Number(bindings[i].quantity) * Number(bindings[i].quote.price)).toFixed(8)))) {
+    throw fail("收盘报价未完整对齐，保留上次浮动盈亏估算。");
+  }
+  const amount = Number((entries.reduce((sum, row) => sum + row.amount, 0) - estimate.costBasisAmount).toFixed(2));
+  const fetchedAt = bindings.map(row => row.lastFetchedAt).sort().at(-1);
+  return { positions, pnl: { accountId: account.id, amount, currency: "CNY", asOf: bindings[0].quote.date, source: "api", asOfBasis: "statement", fetchedAt, estimated: true, costBasis: estimate.costBasisAmount } };
+}
+export async function configureAssetStockPnlEstimate({ stateDir, accountId, costBasisAmount, confirmedOn, revision, now = new Date() }) {
+  if (!validCost(costBasisAmount) || !validDate(confirmedOn) || confirmedOn > day(now)) throw fail("请核对固定持仓成本及确认日期。", 400);
+  return locked(stateDir, async (config, persist) => {
+    const current = await readPersonalAssets({ stateDir });
+    if (current.revision !== revision) throw fail("资产版本已更新，请重新核对。", 409);
+    const estimate = { accountId, costBasisAmount, confirmedOn, enabled: true };
+    const { positions, pnl } = estimateStockPnl(current, config, estimate);
+    const valued = await valuePersonalAssetState(current, { stateDir });
+    await createPersonalAssetsSnapshot({ stateDir, revision, valuation: { rates: valued.portfolio.rates, fx: valued.fx } });
+    await writePrivate(join(resolve(stateDir), "personal-assets-funds-previous.json"), current);
+    const assets = await savePersonalAssets({ stateDir, revision, portfolio: { ...current.portfolio, stockPnl: [...(current.portfolio.stockPnl || []).filter(row => row.accountId !== accountId), pnl] } });
+    Object.assign(estimate, { positions, fingerprint: pnlFingerprint(assets, accountId), lastAttemptAt: now.toISOString(), lastFetchedAt: pnl.fetchedAt, lastAppliedAt: now.toISOString(), lastError: null });
+    config.stockPnlEstimates = [...(config.stockPnlEstimates || []).filter(row => row.accountId !== accountId), estimate];
+    await persist(); return assets;
+  });
+}
+
 export async function runAssetFundCycle({ stateDir, fetchImpl = fetch, now, clock = now ? advancingClock(now) : () => new Date() }) {
   now ??= clock();
   const { time } = await readAssetRefreshSchedule({ stateDir, now });
@@ -276,6 +321,31 @@ export async function runAssetFundCycle({ stateDir, fetchImpl = fetch, now, cloc
         }
         binding.quote = quote; binding.lastFetchedAt = quote.fetchedAt; binding.lastError = null;
       } catch (error) { binding.lastError = error.fundError ? error.message : "持仓重估失败，保留上次有效数据。"; result.failed++; }
+      await persist();
+    }
+    for (const estimate of config.stockPnlEstimates || []) {
+      if (!estimate.enabled || estimate.lastAttemptAt && now.getTime() < Date.parse(nextAssetRefreshAt(estimate.lastAttemptAt, time))) continue;
+      result.stockPnl ??= { attempted: 0, applied: 0, failed: 0 }; result.stockPnl.attempted++;
+      estimate.lastAttemptAt = clock().toISOString();
+      try {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const current = await readPersonalAssets({ stateDir });
+          if (pnlFingerprint(current, estimate.accountId) !== estimate.fingerprint) throw fail("盈亏或账户已手动修改，浮动盈亏估算暂停。", 409);
+          const { pnl } = estimateStockPnl(current, config, estimate);
+          const previous = current.portfolio.stockPnl?.find(row => row.accountId === estimate.accountId);
+          estimate.lastFetchedAt = pnl.fetchedAt;
+          if (Object.keys(pnl).every(key => key === "fetchedAt" || previous?.[key] === pnl[key])) break;
+          try {
+            await writePrivate(join(resolve(stateDir), "personal-assets-funds-previous.json"), current);
+            const assets = await savePersonalAssets({ stateDir, revision: current.revision, portfolio: { ...current.portfolio, stockPnl: current.portfolio.stockPnl.map(row => row.accountId === estimate.accountId ? pnl : row) } });
+            estimate.fingerprint = pnlFingerprint(assets, estimate.accountId); estimate.lastAppliedAt = clock().toISOString(); result.stockPnl.applied++; break;
+          } catch (error) { if (error.statusCode !== 409 || attempt === 2) throw error; }
+        }
+        estimate.lastError = null;
+      } catch (error) {
+        if (error.statusCode === 409) estimate.enabled = false;
+        estimate.lastError = error.fundError ? error.message : "浮动盈亏重估失败，保留上次有效数据。"; result.stockPnl.failed++; result.failed++;
+      }
       await persist();
     }
     return result;

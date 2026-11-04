@@ -132,7 +132,10 @@ export function validatePortfolio(input) {
       if (!validDate(row.asOf)) throw new Error("股票盈亏日期无效");
       if (row.fetchedAt !== undefined && (row.source !== "api" || typeof row.fetchedAt !== "string" || !Number.isFinite(Date.parse(row.fetchedAt))
         || new Date(row.fetchedAt).toISOString() !== row.fetchedAt || Date.parse(row.fetchedAt) > Date.now() + 300_000)) throw new Error("股票盈亏读取时间无效");
+      if (row.estimated !== undefined && (row.estimated !== true || row.source !== "api" || !validAmount(row.costBasis))) throw new Error("股票盈亏估算成本无效");
+      if (row.costBasis !== undefined && row.estimated !== true) throw new Error("股票盈亏成本仅用于估算记录");
       return { accountId: row.accountId, amount: row.amount, currency: choice(row.currency, CURRENCIES, "盈亏币种"), asOf: row.asOf,
+        ...(row.estimated ? { estimated: true, costBasis: row.costBasis } : {}),
         source: choice(row.source, ["manual", "csv", "screenshot", "api"], "盈亏来源"),
         ...(row.asOfBasis !== undefined ? { asOfBasis: choice(row.asOfBasis, ["statement", "imported"], "盈亏日期依据") } : {}),
         ...(row.fetchedAt !== undefined ? { fetchedAt: row.fetchedAt } : {}) };

@@ -113,7 +113,7 @@ const acquisitionGuides = {
   "盈立": "从 QQ 邮箱下载日结单／月结单，在设置 → 结单密码分别保存香港、新加坡 PDF 密码，核对账户、日期、现金与结算后入账；证券另按确认股数 × 腾讯行情重估。",
   "OKX": "交易所：在设置 → 只读同步保存仅 Read 权限的 API 凭据；Web3：另绑定公开地址和网络，使用 OKX OnchainOS Developer 只读接口。均需预览确认入账。",
   "币安": "当前尚未接入交易所账户只读来源；从币安导出完整资产报表／CSV，或上传截图核对录入。币安Agentic Wallet 单独统计。",
-  "A股": "腾讯未复权行情 × 确认股数；从平安证券导出完整持仓及资金结单／CSV，或上传截图核对数量与现金。当前没有券商账户只读连接。",
+  "A股": "腾讯未复权收盘价 × 固定股数估值，按已确认成本估算浮动盈亏；从平安证券导出完整持仓及资金结单／CSV，或上传截图核对数量与现金。当前没有券商账户只读连接。",
   "待确认": "先核对原始截图、CSV 或手动记录的实际平台及账户范围，再选择对应获取渠道；确认前不计入总额。",
   "民生银行": "从民生银行香港个人网银或邮箱取得个人电子月结单、未到期定期单及到期／续存记录，核对后导入；当前未接入银行账户只读接口。",
   "TokenPocket": "设置 → 只读同步绑定 Polygon 公开地址，经 OKX OnchainOS 读取余额；如明确启用并核验归属，可另读 Polymarket Safe 的 pUSD 现金，不包含其预测仓位。",
@@ -572,7 +572,7 @@ function stockPnlPanel(summary) {
   const pnl = summary.stockPnl;
   const rows = [...pnl.included, ...pnl.missing];
   const value = displayValue(pnl.total);
-  return `<div class="stock-pnl"><div class="row"><span class="metric-label">股票浮动盈亏 · 已记录部分</span><button class="button small quiet" data-action="stock-pnl">更新盈亏</button></div><div class="stock-pnl-value num${!hidden && value < 0 ? " negative" : !hidden && value > 0 ? " positive" : ""}">${displayCurrency} ${!hidden && value > 0 ? "+" : ""}${number(value)}</div><p class="metric-foot">已含在当前市值中，不重复加减 · ${pnl.included.length} / ${stockPnlAccounts().length} 个股票账户已提供${pnl.missing.length ? ` · ${pnl.missing.length} 个缺汇率` : ""}</p><details class="pnl-sources"><summary>查看盈亏来源与日期</summary>${hidden ? '<p class="muted small">盈亏明细已隐藏。</p>' : rows.length ? rows.map(row => `<div class="pnl-source"><span>${escape(portfolio().accounts.find(account => account.id === row.accountId)?.name)}<small>${sourceName(row.source)} · ${escape(row.asOf)}${row.asOfBasis === "imported" ? row.source === "api" ? "（读取日期，源盈亏时点未提供）" : "（导入日期，截图时点未核实）" : "（盈亏记录日）"}${row.fetchedAt ? ` · 成功读取 ${escape(dateTime(row.fetchedAt))}` : ""}</small></span><span class="num">${escape(row.currency)} ${number(row.amount)}</span></div>`).join("") : '<p class="muted small">尚未提供股票盈亏；缺失值不按零统计。</p>'}</details></div>`;
+  return `<div class="stock-pnl"><div class="row"><span class="metric-label">股票浮动盈亏 · 已记录部分</span><button class="button small quiet" data-action="stock-pnl">更新盈亏</button></div><div class="stock-pnl-value num${!hidden && value < 0 ? " negative" : !hidden && value > 0 ? " positive" : ""}">${displayCurrency} ${!hidden && value > 0 ? "+" : ""}${number(value)}</div><p class="metric-foot">已含在当前市值中，不重复加减 · ${pnl.included.length} / ${stockPnlAccounts().length} 个股票账户已提供${pnl.missing.length ? ` · ${pnl.missing.length} 个缺汇率` : ""}</p><details class="pnl-sources"><summary>查看盈亏来源与日期</summary>${hidden ? '<p class="muted small">盈亏明细已隐藏。</p>' : rows.length ? rows.map(row => `<div class="pnl-source"><span>${escape(portfolio().accounts.find(account => account.id === row.accountId)?.name)}<small>${row.estimated ? "固定股数收盘估算" : sourceName(row.source)} · ${escape(row.asOf)}${row.asOfBasis === "imported" ? row.source === "api" ? "（读取日期，源盈亏时点未提供）" : "（导入日期，截图时点未核实）" : "（盈亏记录日）"}${row.fetchedAt ? ` · 成功读取 ${escape(dateTime(row.fetchedAt))}` : ""}${row.estimated ? ` · 成本基准 ${escape(row.currency)} ${number(row.costBasis)}（未含后续分红、费用或成本调整）` : ""}</small></span><span class="num">${escape(row.currency)} ${number(row.amount)}</span></div>`).join("") : '<p class="muted small">尚未提供股票盈亏；缺失值不按零统计。</p>'}</details></div>`;
 }
 function openStockPnl() {
   stockPnlDraft ??= Object.fromEntries(stockPnlAccounts().map(account => {
