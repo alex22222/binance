@@ -182,7 +182,7 @@ test("currency buttons convert every current view without changing ratios, origi
   assert.match(html, /USD 100\.00/);
   assert.match(html, /已核算资产 · USD/);
   assert.match(html, /折合 USD 100\.00/);
-  assert.match(html, /stroke-dasharray="66\.666667 33\.333333"/);
+  assert.match(html, /d="M 110\.000000 30\.000000 A 80 80 0 1 1 40\.717968 150\.000000"/);
   assert.match(html, /CNY 700\.00/);
   assert.match(html, /气泡面积按已核算 USD/);
   assert.doesNotMatch(html, /内部按 CNY 核算/);
@@ -843,8 +843,8 @@ test("overview and analysis render an accessible category pie using only account
   assert.match(pie, /<svg[^>]*role="img"[^>]*aria-labelledby="asset-type-pie-title asset-type-pie-description"/);
   assert.match(pie, /<title id="asset-type-pie-title">资产类型占比<\/title>/);
   assert.match(pie, /<desc id="asset-type-pie-description">/);
-  assert.match(pie, /stroke-dasharray="66\.666667 33\.333333"/);
-  assert.match(pie, /stroke-dasharray="33\.333333 66\.666667"/);
+  assert.match(pie, /d="M 110\.000000 30\.000000 A 80 80 0 1 1 40\.717968 150\.000000"/);
+  assert.match(pie, /d="M 40\.717968 150\.000000 A 80 80 0 0 1 110\.000000 30\.000000"/);
   const colors = [...pie.matchAll(/data-pie-category="([^"]+)"[^>]*style="stroke:(var\(--cat-\d+\))"/g)];
   assert.equal(colors.length, 2);
   for (const [, category, color] of colors) assert.ok(pie.includes(`data-category="${category}"`) && pie.includes(`background:${color}`));
@@ -852,6 +852,29 @@ test("overview and analysis render an accessible category pie using only account
   assert.ok(ui.get("asset-content").innerHTML.includes(pie.match(/<svg[\s\S]*?<\/svg>/)[0]));
   ui.run('page="analysis"; render()');
   assert.ok(ui.get("asset-content").innerHTML.includes(pie));
+});
+
+test("tiny final pie sectors use their true arc angle and stay within the ring at the closing seam", async () => {
+  const ui = await view();
+  for (const share of [0.2, 0.02, 0.00001]) {
+    const pie = ui.run(`assetTypeChart({ total:100, byCategory:[{name:"组合资产",value:${100 - share}},{name:"永续合约",value:${share}}] })`);
+    const segment = pie.match(/<path[^>]*data-pie-category="永续合约"[^>]*>/)?.[0];
+    assert.ok(segment, "small sectors must not use a dashed closed circle");
+    assert.match(segment, /stroke-linecap="butt"/);
+    assert.doesNotMatch(segment, /pathLength|stroke-dash|transform=/);
+    const path = segment.match(/\bd="([^"]+)"/)[1];
+    const parts = path.match(/[MA]|-?\d+(?:\.\d+)?/g);
+    assert.equal(parts.length, 11);
+    assert.equal(parts[0], "M"); assert.equal(parts[3], "A");
+    assert.deepEqual(parts.slice(4, 10), ["80", "80", "0", "0", "1", "110.000000"]);
+    assert.equal(Number(parts[10]), 30);
+    const [x, y] = parts.slice(1, 3).map(Number);
+    assert.ok(Math.abs(Math.hypot(x - 110, y - 110) - 80) < 0.000001);
+    const angle = Math.atan2((x - 110) * -80, (y - 110) * -80);
+    assert.ok(Math.abs(angle - share / 100 * 2 * Math.PI) < 0.00000002);
+    assert.doesNotMatch(pie, /NaN|Infinity/);
+  }
+  assert.equal(ui.requests.filter(request => request.options.method === "PUT").length, 0);
 });
 
 test("both themes define a color for every asset category and the toggle persists the choice", async () => {
@@ -905,7 +928,7 @@ test("category pie handles empty, zero and single-category portfolios and remove
   assert.doesNotMatch(zero.run("assetTypeChart(summarize(portfolio()))"), /<svg|NaN|Infinity/);
   const single = await view(stateWith([entry({ amount: 37.25, category: "现金" })]));
   const pie = single.run("assetTypeChart(summarize(portfolio()))");
-  assert.match(pie, /stroke-dasharray="100\.000000 0\.000000"/);
+  assert.match(pie, /d="M 110\.000000 30\.000000 A 80 80 0 0 1 110\.000000 190\.000000 A 80 80 0 0 1 110\.000000 30\.000000"/);
   assert.match(pie, /现金[\s\S]*?100\.0%/);
   single.run("hidden=true; render()");
   const privatePie = single.run("assetTypeChart(summarize(portfolio()))");

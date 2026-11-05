@@ -277,10 +277,17 @@ function assetTypeChart(summary, compact = false) {
   const legend = `<div class="type-legend">${summary.byCategory.map((group) => `<button type="button" class="type-legend-item" data-action="category" data-category="${escape(group.name)}"><span class="type-key" style="background:${color(group.name)}" aria-hidden="true"></span><span class="type-name">${escape(group.name)}${!compact && categoryDescription(group.name) ? `<small>${escape(categoryDescription(group.name))}</small>` : ""}</span><span class="type-figures num">${displayCurrency} ${displayAmount(group.value)}<small>${percentage(group.value, summary.total)} · 查看明细 →</small></span></button>`).join("")}</div>`;
   if (hidden) return `<div class="type-pie-layout"><div class="empty small">分布及占比已隐藏</div>${legend}</div>`;
   if (!(summary.total > 0)) return `<div class="empty small">暂无可绘制的资产类型金额，录入并核算资产后显示饼图。</div>${legend}`;
+  const point = (percent) => {
+    const angle = (percent / 100 * 2 - 0.5) * Math.PI;
+    return `${(110 + 80 * Math.cos(angle)).toFixed(6)} ${(110 + 80 * Math.sin(angle)).toFixed(6)}`;
+  };
   let offset = 0;
   const segments = summary.byCategory.filter((group) => group.value > 0).map((group) => {
     const share = Math.min(100, Math.max(0, group.value / summary.total * 100));
-    const segment = `<circle class="type-pie-segment" data-pie-category="${escape(group.name)}" cx="110" cy="110" r="80" fill="none" style="stroke:${color(group.name)}" stroke-width="27" pathLength="100" stroke-dasharray="${share.toFixed(6)} ${(100 - share).toFixed(6)}" stroke-dashoffset="${(-offset).toFixed(6)}" transform="rotate(-90 110 110)"><title>${escape(group.name)} · ${percentage(group.value, summary.total)} · ${displayCurrency} ${displayAmount(group.value)}</title></circle>`;
+    // Open arcs avoid tiny dash artifacts at a closed circle's seam. A full
+    // ring needs two arcs because one SVG arc cannot start and end together.
+    const arc = share === 100 ? `A 80 80 0 0 1 ${point(offset + 50)} A 80 80 0 0 1 ${point(offset + 100)}` : `A 80 80 0 ${share > 50 ? 1 : 0} 1 ${point(offset + share)}`;
+    const segment = `<path class="type-pie-segment" data-pie-category="${escape(group.name)}" d="M ${point(offset)} ${arc}" fill="none" style="stroke:${color(group.name)}" stroke-width="27" stroke-linecap="butt"><title>${escape(group.name)} · ${percentage(group.value, summary.total)} · ${displayCurrency} ${displayAmount(group.value)}</title></path>`;
     offset += share;
     return segment;
   }).join("");
