@@ -33,7 +33,6 @@ const SETTINGS_MENU = `<div class="settings-menu"><button type="button" class="s
   + `<a class="settings-item" role="menuitem" href="/assets?settings=refresh-schedule">${icon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>')}自动更新</a>`
   + `<a class="settings-item" role="menuitem" href="/assets?settings=statement-passwords">${icon('<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>')}结单密码</a>`
   + `<button type="button" class="settings-item" role="menuitem" data-action="export" data-needs-data disabled>${icon('<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>')}导出备份</button>`
-  + `<button type="button" class="settings-item" role="menuitem" data-action="ai-settings">${icon('<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2M16 7l3 3M18.5 4.5l2 2"/>')}Moonshot 配置</button>`
   + `<button type="button" class="settings-item" role="menuitem" id="theme-toggle" aria-pressed="false">${icon('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>')}<span id="theme-toggle-label">明亮模式</span></button>`
   + `</div></div>`;
 

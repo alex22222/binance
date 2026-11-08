@@ -1,4 +1,3 @@
-import { readAssetAiStatus, reviewPersonalAssets, configureAssetAi } from "./personal-assets-ai.mjs";
 import { readAssetFundStatus, configureAssetFund } from "./personal-assets-funds.mjs";
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -333,17 +332,8 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
       json(response, await assetView(await readPersonalAssets({ stateDir }), { stateDir, force: true }));
       return true;
     }
-    if (request.method === "GET" && path === "/api/assets/ai") {
-      json(response, await readAssetAiStatus({ stateDir }));
-      return true;
-    }
-    if (request.method === "POST" && ["/api/assets/ai/review", "/api/assets/ai/configure"].includes(path)) {
-      if (!request.headers.origin) throw requestError("请从资产页面提交。", 403);
-      requireAllowedOrigin(request);
-      const body = await readAssetBody(request);
-      const assets = await assetView(await readPersonalAssets({ stateDir }), { stateDir });
-      const action = path.endsWith("/configure") ? configureAssetAi : reviewPersonalAssets;
-      json(response, await action({ stateDir, assets, ...(path.endsWith("/configure") ? { apiKey: body.apiKey } : {}) }));
+    if (aiApi) {
+      json(response, { error: "AI 资产点评已停用。" }, 410);
       return true;
     }
     if (request.method === "GET" && path === "/api/assets/sync") {

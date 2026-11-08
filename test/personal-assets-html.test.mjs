@@ -542,7 +542,7 @@ test("overview leads with the asset-type panel holding total, currency, privacy 
   assert.match(html, /股票浮动盈亏[\s\S]*-123\.45/);
   assert.match(html, /已含在当前市值中，不重复加减/);
   assert.match(html, /截图核对[\s\S]*截图时点未核实/);
-  const order = ['aria-label="资产类型"', 'class="currency-toggle"', 'id="privacy-toggle"', 'class="type-pie-total">500.00<', 'class="stock-pnl"', 'aria-label="平台分布"', 'aria-label="AI 资产点评"'].map((marker) => html.indexOf(marker));
+  const order = ['aria-label="资产类型"', 'class="currency-toggle"', 'id="privacy-toggle"', 'class="type-pie-total">500.00<', 'class="stock-pnl"', 'aria-label="平台分布"'].map((marker) => html.indexOf(marker));
   assert.ok(order.every((index, position) => index > (position ? order[position - 1] : -1)), JSON.stringify(order));
   assert.doesNotMatch(html, /class="metrics"|已录入账户 \/ 全部账户|自动更新计划|管理只读同步 →/);
   assert.match(html, /<details class="source-details">/);
@@ -878,7 +878,7 @@ test("page tools sit in a gear menu in the top bar and the eye beside the total 
   assert.match(actions, /id="settings-toggle" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-panel" aria-label="设置"/);
   assert.match(actions, /id="settings-panel" role="menu"[^>]* hidden>/);
   for (const action of ["import", "sync", "export"]) assert.match(actions, new RegExp(`role="menuitem" data-action="${action}" data-needs-data disabled>`));
-  assert.match(actions, /role="menuitem" data-action="ai-settings">[\s\S]*?Moonshot 配置<\/button>/);
+  assert.doesNotMatch(actions, /ai-settings|Moonshot/);
   assert.match(actions, /role="menuitem" id="theme-toggle"/);
   assert.doesNotMatch(html.match(/<header class="asset-head">[\s\S]*?<\/header>/)[0], /<button[^>]*(data-action|privacy-toggle|theme-toggle)/);
   assert.doesNotMatch(actions, /privacy-toggle/);
@@ -1453,38 +1453,11 @@ test("HKD base uses the current quote across views and preserves native records 
   for (const platform of ["币安Agentic Wallet", "OKX Agentic Wallet"]) assert.ok(core.PLATFORMS.includes(platform));
 });
 
-test("opening the page automatically requests AI once, polling does not, and privacy and escaping cover the review", async () => {
- const ui=await view(displayState(),null,{aiHandler:async()=>syncResponse({configured:true,status:"fresh",review:{text:'<img src=x>金额 999',model:'gpt-5.4-mini',revision:3,generatedAt:'2026-10-24T14:00:00Z'}})});
- assert.equal(ui.aiRequests.length,1);
- assert.equal(ui.aiRequests[0].url,"/api/assets/ai/review");
- assert.equal(ui.aiRequests[0].options.body,"{}");
- assert.match(ui.get("asset-content").innerHTML,/AI 资产点评/);
- assert.match(ui.get("asset-content").innerHTML,/&lt;img src=x&gt;金额 999/);
- await ui.run("load()");assert.equal(ui.aiRequests.length,1);
- ui.run("hidden=true;render()");assert.doesNotMatch(ui.get("asset-content").innerHTML,/金额 999/);
- assert.match(ui.get("asset-content").innerHTML,/隐私模式已隐藏点评/);
-});
 
-test("Moonshot configuration clears secrets immediately and preserves assets when verification fails",async()=>{
- const ui=await view(displayState(),null,{aiHandler:async(url)=>url.endsWith("configure")?syncResponse({error:"认证失败"},400):syncResponse({configured:false,status:"unconfigured",review:null})});
- ui.run('openAiSettings();document.getElementById("ai-api-key").value="sk-synthetic-only"');
- await ui.listeners.submit({target:{id:"ai-config-form"},preventDefault(){}});
- assert.equal(ui.get("ai-api-key").value,"");
- assert.equal(ui.run("state.revision"),3);
- assert.match(ui.get("dialog-error").innerHTML,/认证失败/);
- assert.equal(ui.requests.some(row=>row.options.method==="PUT"),false);
-});
 
-test("Moonshot configuration opens from the settings menu instead of the review panel", async () => {
-  const ui = await view(displayState(), null, { aiHandler: async () => syncResponse({ configured: false, status: "unconfigured", review: null }) });
-  const content = ui.get("asset-content").innerHTML;
-  assert.match(content, /AI 资产点评/);
-  assert.doesNotMatch(content, /data-action="ai-settings"|配置 Moonshot<\/button>/);
-  assert.match(content, /设置 → Moonshot 配置/);
-  await ui.listeners.click({ target: { closest: () => ({ dataset: { action: "ai-settings" }, disabled: false }) } });
-  assert.match(ui.get("dialog-title").textContent, /Moonshot/);
-  assert.match(ui.get("dialog-body").innerHTML, /id="ai-api-key" type="password"/);
-});
+
+
+
 
 
 test("overview removes the hero copy and observation module while retaining the analysis tab", async () => {
@@ -1569,34 +1542,9 @@ test("pending, missing-FX and unknown-only platforms never get invented monetary
 });
 
 
-test("Moonshot daily quota disables manual retries and survives the generic busy-state reset", async () => {
-  const quota = {limit:1,timeZone:"Asia/Shanghai",date:entry().asOf,used:1,remaining:0,nextAllowedAt:"2026-10-24T16:00:00Z"};
-  const ui = await view(displayState(),null,{aiHandler:async()=>syncResponse({provider:"moonshot",configured:true,status:"unavailable",quota,error:"今日调用失败",review:null})});
-  assert.match(ui.get("asset-content").innerHTML, /每天最多调用 1 次[\s\S]*调用失败当天也不重试/);
-  assert.match(ui.get("asset-content").innerHTML, /data-action="ai-review" disabled>今日调用已用完/);
-  assert.doesNotMatch(ui.get("asset-content").innerHTML, /配置 OpenAI|5 分钟内复用|重新点评/);
-  await ui.run("loadAi()"); assert.equal(ui.aiRequests.length,1);
-  assert.equal(ui.run(`var dailyButton={dataset:{action:"ai-review"},disabled:false};document.querySelectorAll=(selector)=>selector.includes("ai-review")||selector==="#asset-content button, #asset-content select"?[dailyButton]:[];syncBusy();dailyButton.disabled`),true);
-});
 
-test("Moonshot configuration saves without claiming provider success and labels legacy OpenAI reviews truthfully", async () => {
-  const quota = {limit:1,timeZone:"Asia/Shanghai",date:entry().asOf,used:1,remaining:0};
-  let fail = true;
-  const legacy = {provider:"openai",text:"已保存的历史点评",model:"gpt-5.4-mini",revision:2,generatedAt:"2026-10-23T12:00:00Z"};
-  const ui = await view(displayState(),null,{aiHandler:async(url)=>syncResponse(url.endsWith("configure")?{provider:"moonshot",configured:true,configurationSaved:true,status:fail?"unavailable":"outdated",quota,review:legacy,...(fail?{error:"今日调用未完成"}:{})}:{configured:false,status:"unconfigured",review:null})});
-  ui.run("openAiSettings()");
-  assert.match(ui.get("dialog-title").textContent,/Moonshot/);
-  assert.match(ui.get("dialog-body").innerHTML,/type="password"[\s\S]*Kimi K3.1 Pro/);
-  ui.get("ai-api-key").value="synthetic-moonshot-key"; await ui.run("configureAi()");
-  assert.equal(ui.get("ai-api-key").value,"");
-  assert.match(ui.get("asset-message").textContent,/配置已保存.*点评未完成/);
-  assert.doesNotMatch(ui.get("asset-message").textContent,/已验证|已生成/);
-  assert.match(ui.get("asset-content").innerHTML,/OpenAI（历史点评）[\s\S]*gpt-5.4-mini/);
-  assert.match(ui.get("asset-content").innerHTML,/数据已变化 · 上次点评/);
-  fail=false;ui.get("ai-api-key").value="replacement-only";await ui.run("configureAi()");
-  assert.match(ui.get("asset-message").textContent,/配置已保存.*沿用已保存点评/);
-  assert.equal(ui.requests.some(row=>row.options.method==="PUT"),false);
-});
+
+
 
 test("agentic wallets reuse server Developer credentials without copying secrets and retain explicit network-address drafts", async () => {
   const initial = stateWith(); const status = {...syncStatus(),developerCredentialsAvailable:true};
@@ -2023,4 +1971,19 @@ test("snapshot trend handles empty, single, flat and out-of-range histories with
   ui.run('historyRange="7"');
   assert.match(ui.run("renderHistoryChart()"), /此时间范围暂无快照/);
   assert.doesNotMatch(ui.run("renderHistoryChart()"), /<svg/);
+});
+
+
+test("removed asset commentary never renders or calls AI on load, refresh or old actions", async () => {
+  const ui = await view(displayState());
+  assert.equal(ui.aiRequests.length, 0);
+  assert.doesNotMatch(ui.get("asset-content").innerHTML, /AI 资产点评|今日调用|Moonshot/);
+  assert.doesNotMatch(personalAssetsHtml({ nonce: "safe" }), /ai-settings|Moonshot/);
+  await ui.run("load()");
+  for (const action of ["ai-review", "ai-settings"]) {
+    await ui.listeners.click({ target: { closest: () => ({ dataset: { action }, disabled: false }) } });
+  }
+  await ui.listeners.submit({ target: { id: "ai-config-form" }, preventDefault() {} });
+  assert.equal(ui.aiRequests.length, 0);
+  assert.equal(ui.run("state.revision"), 3);
 });

@@ -69,9 +69,6 @@ const syncPlatforms = { okx: "OKX", futu: "富途", polymarket: "Polymarket", fu
 let syncCallbackHandled = false;
 let fundEditingId = null;
 let stockPnlDraft = null;
-let aiState = null;
-let aiLoading = false;
-let aiOpened = false;
 
 function portfolio() { return state?.portfolio ?? emptyPortfolio(); }
 function refreshTime() { return state?.refreshSchedule?.status === "unavailable" ? "待核实" : state?.refreshSchedule?.time || "07:00"; }
@@ -456,44 +453,9 @@ function showError(message) {
   target.innerHTML = `${escape(message)}${conflict ? '<div class="actions"><button class="button small" data-action="backup-json">导出备份（含当前草稿）</button><button class="button small" data-action="reload">重新载入最新数据</button></div>' : ""}`;
   target.hidden = !message;
 }
-function aiQuotaUsed() { return aiState?.quota?.remaining === 0 && aiState.quota.date === currentDate(); }
-function aiPanel() {
-  const review = aiState?.review; const used = aiQuotaUsed();
-  const label = aiLoading ? "正在读取…" : review && review.revision !== state?.revision ? "数据已变化 · 上次点评" : ({ fresh: "今日点评", cached: "已保存点评", outdated: "数据已变化 · 上次点评", unavailable: "点评不可用 · 保留上次结果", unconfigured: "待配置 Moonshot" })[aiState?.status] || "等待点评";
-  const provider = ({ moonshot: "Moonshot", openai: "OpenAI（历史点评）" })[review?.provider] || "历史点评 · 来源未记录";
-  return `<section class="panel" aria-label="AI 资产点评" style="margin-bottom:20px"><div class="section-head"><div><h2>AI 资产点评</h2><span class="pill">${label}</span></div><div class="actions"><button class="button small" data-action="ai-review"${aiLoading || !aiState?.configured || used ? " disabled" : ""}>${used ? "今日调用已用完" : "生成今日点评"}</button></div></div><p class="muted small">Moonshot · 每天最多调用 1 次，北京时间 00:00 重置。打开页面复用已保存点评；调用失败当天也不重试。${used && aiState?.quota?.nextAllowedAt ? `下次可调用 ${escape(dateTime(aiState.quota.nextAllowedAt))}。` : ""}数据或汇率变化后，旧点评会明确标注。</p>${aiState?.error ? `<p class="notice error">${escape(aiState.error)}</p>` : ""}${hidden ? '<p class="muted">隐私模式已隐藏点评内容。</p>' : review ? `<p class="muted small">${provider} · ${escape(review.model)} · 生成 ${escape(dateTime(review.generatedAt))} · 资产版本 ${escape(review.revision)}</p><div style="white-space:pre-wrap;overflow-wrap:anywhere">${escape(review.text)}</div>` : `<p class="muted">${aiLoading ? "正在读取已保存点评，或按今日额度生成…" : aiState?.status === "unconfigured" ? "请在右上角 设置 → Moonshot 配置 填写 API Key。" : "暂未取得有效 AI 点评，资产记录仍可正常查看。"}</p>`}<p class="muted small">点评结合资产配置与外部市场环境；外部环境来自模型自身知识并会注明时点，不是实时行情。仅向 Moonshot 发送平台/类型/报表币种汇总与占比、估值、系统汇率和历史总额；不发送账户名称、持仓名称、备注、钱包地址或其他平台凭据。资产变化不能直接视为投资收益。</p></section>`;
-}
-async function aiRequest(action, body = {}) {
-  const response = await fetch(`/api/assets/ai/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  let data; try { data = await response.json(); } catch { throw new Error("AI 服务未返回有效数据。"); }
-  if (!response.ok) throw new Error(response.status === 401 ? "登录已过期，请重新登录。" : data.error || "AI 暂时无法完成点评，请稍后重试。");
-  if (!data || typeof data.configured !== "boolean" || !["fresh", "cached", "outdated", "unavailable", "unconfigured"].includes(data.status)) throw new Error("AI 点评格式无法核验，未替换上次结果。");
-  return data;
-}
-async function loadAi() {
-  if (aiLoading || !state || aiQuotaUsed()) return;
-  aiLoading = true; render();
-  try { aiState = await aiRequest("review"); }
-  catch (error) { aiState = { ...aiState, status: "unavailable", error: errorText(error) }; }
-  finally { aiLoading = false; render(); }
-}
-function openAiSettings() {
-  modal = "ai";
-  setDialog("Moonshot 安全配置", "填写 Moonshot 国内平台的 API Key；每天最多调用一次，修改 Key 不会增加当天额度。", '<form id="ai-config-form" autocomplete="off"><div class="field"><label for="ai-api-key">Moonshot API Key</label><input id="ai-api-key" type="password" autocomplete="new-password" spellcheck="false" required maxlength="500"></div><p class="muted small">Key 仅保存在受保护的服务器，不写入导出、快照或浏览器存储。使用 Kimi K3.1 Pro。若今日尚未调用，保存后会尝试生成；调用失败也会消耗今日唯一额度，替换 Key 后需等到次日再调用。</p><button class="button primary" type="submit">保存 Moonshot 配置</button></form>', cancelButton);
-}
-async function configureAi() {
-  const apiKey = $("ai-api-key").value.trim(); $("ai-api-key").value = "";
-  if (!apiKey) { showError("请填写 Moonshot API Key。"); return; }
-  saving = true; syncBusy();
-  try { aiState = await aiRequest("configure", { apiKey }); modal = null; $("asset-dialog").close(); render(); notify(aiState.status === "fresh" ? "Moonshot 资产点评已生成，今日调用已用完" : aiState.configurationSaved ? aiState.status === "unavailable" ? "Moonshot 配置已保存；本次点评未完成，请查看提示" : "Moonshot 配置已保存；今日沿用已保存点评" : "Moonshot 状态已更新"); }
-  catch (error) { showError(errorText(error)); }
-  finally { saving = false; syncBusy(); }
-}
-
 function syncBusy() {
   document.querySelectorAll("[data-needs-data]").forEach((element) => { element.disabled = !state || saving || loading; });
   document.querySelectorAll("#asset-content button, #asset-content select").forEach((element) => { element.disabled = saving || loading || element.dataset.action === "snapshot" && !portfolio().entries.length; });
-  document.querySelectorAll('[data-action="ai-review"]').forEach((element) => { element.disabled = saving || loading || aiLoading || !aiState?.configured || aiQuotaUsed(); });
   document.querySelectorAll('[data-action="display-currency"]').forEach((element) => { element.disabled = loading || saving && !ratesRefreshing; });
   const fieldset = $("dialog-fields");
   if (fieldset) fieldset.disabled = saving;
@@ -527,7 +489,6 @@ async function load() {
     $("asset-error").hidden = true;
     if (modal) showError("最新数据已载入，当前草稿已保留。请核对后再保存。");
     render();
-    if (!aiOpened) { aiOpened = true; void loadAi(); }
     if (!modal && !syncCallbackHandled && /[?&]sync=futu-(?:authorized|error)(?:&|$)/.test(location.search || "")) {
       syncCallbackHandled = true;
       await openSync();
@@ -617,7 +578,7 @@ function sleevePanel(summary) {
 function renderOverview(summary) {
   const initial = !portfolio().accounts.some(accountHasRecords);
   return `<div class="overview-distributions">${assetTypesPanel(summary)}<section class="panel" aria-label="平台分布"><div class="section-head"><h2>平台分布</h2><span class="pill">按已核算 ${displayCurrency}</span></div>${distribution(summary.byPlatform, summary.total)}</section></div>
-  ${sleevePanel(summary)}${displayCurrency !== "CNY" && displayValue(1) === null ? `<div class="notice">${displayCurrency}/CNY 自动汇率暂不可用，总额待换算。可切回 CNY 查看人民币金额。</div>` : ""}${summary.missing.length ? `<div class="notice">${displayCurrency} 合计仅覆盖已完成换算的记录，其余资产见原币参考。缺汇率记录和待确认账户均未计入总额与分布。</div>` : ""}${partialValuationNotice()}${aiPanel()}${pendingAccountsPanel()}
+  ${sleevePanel(summary)}${displayCurrency !== "CNY" && displayValue(1) === null ? `<div class="notice">${displayCurrency}/CNY 自动汇率暂不可用，总额待换算。可切回 CNY 查看人民币金额。</div>` : ""}${summary.missing.length ? `<div class="notice">${displayCurrency} 合计仅覆盖已完成换算的记录，其余资产见原币参考。缺汇率记录和待确认账户均未计入总额与分布。</div>` : ""}${partialValuationNotice()}${pendingAccountsPanel()}
   ${platformAtlas(summary)}
   <details class="source-details"><summary>数据更新与来源 <span>每天 ${escape(refreshTime())} · 汇率、连接状态与基金估值明细</span></summary><div class="source-details-body">${originalCurrencyPanel()}${syncCoveragePanel()}${fundValuationPanel()}</div></details>${initial ? '<div class="notice">从一个真实数字开始：可先录入账户总额，也可导入截图或 CSV。</div>' : ""}`;
 }
@@ -792,7 +753,6 @@ function closeDialog() {
   $("asset-dialog").close();
 }
 function clearSyncSecrets() {
-  if ($("ai-api-key")) $("ai-api-key").value = "";
   for (const provider of ["okx", ...syncWalletProviders]) for (const field of ["key", "secret", "passphrase"]) if ($(`sync-${provider}-${field}`)) $(`sync-${provider}-${field}`).value = "";
 }
 async function syncRequest(path = "", body) {
@@ -1264,8 +1224,6 @@ document.addEventListener("click", async (event) => {
   else if (action === "history-comparison") await toggleHistoryComparison();
   else if (action === "reload") await load();
   else if (action === "stock-pnl") { stockPnlDraft = null; openStockPnl(); }
-  else if (action === "ai-settings") openAiSettings();
-  else if (action === "ai-review") await loadAi();
   else if (action === "fund-edit") openFund(button.dataset.id);
   else if (action === "atlas-platform" && PLATFORMS.includes(button.dataset.platform)) {
     platformFilter = button.dataset.platform; categoryFilter = "all"; page = "holdings"; render(); $("holdings-filter").scrollIntoView({ block: "start" });
@@ -1373,11 +1331,10 @@ document.addEventListener("change", async (event) => {
   }
 });
 document.addEventListener("submit", async (event) => {
-  if (!["stock-pnl-form", "fund-form", "ai-config-form", "entry-form", "account-form", "sync-okx-form", "sync-polymarket-form", "sync-future-form", "sync-okxweb3-form", "sync-tokenpocket-form", "sync-binanceagentic-form", "sync-okxagentic-form"].includes(event.target.id)) return;
+  if (!["stock-pnl-form", "fund-form", "entry-form", "account-form", "sync-okx-form", "sync-polymarket-form", "sync-future-form", "sync-okxweb3-form", "sync-tokenpocket-form", "sync-binanceagentic-form", "sync-okxagentic-form"].includes(event.target.id)) return;
   event.preventDefault();
   if (saving) return;
   if (event.target.id === "stock-pnl-form") await saveStockPnl();
-  else if (event.target.id === "ai-config-form") await configureAi();
   else if (event.target.id === "fund-form") await configureFund();
   else if (event.target.id === "entry-form") await saveEntry();
   else if (event.target.id === "account-form") await saveAccount();
@@ -1395,7 +1352,7 @@ document.addEventListener("keydown", (event) => {
   $("settings-toggle").focus();
 });
 $("asset-dialog").addEventListener("cancel", (event) => { event.preventDefault(); closeDialog(); });
-window.addEventListener("pageshow", (event) => { if (event.persisted) { aiOpened = false; void load(); } });
+window.addEventListener("pageshow", (event) => { if (event.persisted) { void load(); } });
 window.addEventListener("pagehide", () => { clearOcr(); clearSyncSecrets(); });
 setInterval(async () => {
   if (!state || saving || loading || modal || conflict || document.visibilityState === "hidden") return;

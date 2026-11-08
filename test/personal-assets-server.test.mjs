@@ -155,15 +155,12 @@ test("personal assets share Dashboard authentication and persist isolated review
     assert.equal((await (await fetch(passwordApi, { headers })).json()).providers["usmart-hk"].configured, false);
     assert.doesNotMatch(await readFile(configPath, "utf8"), /synthetic statement password/);
     assert.equal(await readFile(statePath, "utf8"), beforeRefresh);
-    for (const action of ["review", "configure"]) {
-      const path = `${origin}/api/assets/ai/${action}`;
-      assert.equal((await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})).status,401);
-      for (const extra of [{},{Origin:"https://attacker.example"}]) assert.equal((await fetch(path,{method:"POST",headers:{...headers,"Content-Type":"application/json",...extra},body:"{}"})).status,403);
+    for (const [path, method] of [["/api/assets/ai", "GET"], ["/api/assets/ai/review", "POST"], ["/api/assets/ai/configure", "POST"]]) {
+      assert.equal((await fetch(`${origin}${path}`, { method })).status, 401);
+      const disabled = await fetch(`${origin}${path}`, { method, headers: { ...headers, Origin: origin, "Content-Type": "application/json" }, ...(method === "POST" ? { body: "{}" } : {}) });
+      assert.equal(disabled.status, 410);
+      assert.match((await disabled.json()).error, /AI 资产点评已停用/);
     }
-    const aiStatus=await (await fetch(`${origin}/api/assets/ai`,{headers})).json();
-    assert.equal(aiStatus.configured,false);assert.equal("apiKey" in aiStatus,false);
-    const aiReview=await fetch(`${origin}/api/assets/ai/review`,{method:"POST",headers:{...headers,Origin:origin,"Content-Type":"application/json"},body:"{}"});
-    assert.equal(aiReview.status,200);assert.equal((await aiReview.json()).status,"unconfigured");
     assert.equal(await readFile(statePath,"utf8"),beforeRefresh);
 
     for (const extra of [{}, { Origin: "https://attacker.example" }]) {
