@@ -135,6 +135,16 @@ test("VOO uses issuer-published market close rather than NAV, preserving price d
   assert.match(next.portfolio.entries[1].note, /市场收盘价|不是盘中实时/); assert.deepEqual(next.portfolio.entries[0], before.portfolio.entries[0]);
 });
 
+test("VOO accepts the issuer's single-quoted profile attribute without relaxing identity checks", async () => {
+  const source = etfSource();
+  const fetchImpl = async (...args) => {
+    const html = await (await source(...args)).text();
+    return new Response(html.replace('data-vgn-funds-profile="', "data-vgn-funds-profile='").replace('"></div>', "'></div>"));
+  };
+  const quote = await fetchAssetFundNav({ isin: "US9229083632", fetchImpl, now });
+  assert.equal(quote.nav, "123.45");
+  assert.equal(quote.date, "2026-10-23");
+});
 test("VOO refuses missing market price, foreign identities and inconsistent dates without substituting NAV", async () => {
   for (const change of [d => { delete d.overview.marketPrice; }, d => { d.overview.cusip = "wrong"; }, d => { d.dashboard.ticker = "VTI"; },
     d => { d.dashboard.fundId = "1234"; }, d => { d.fundFlags.isEtf = false; }, d => { d.price.marketPrice = "$100.00"; },
