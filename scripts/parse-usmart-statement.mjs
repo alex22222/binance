@@ -58,7 +58,7 @@ export function parseUsmartStatement({ pages, expectedAccount, now = new Date() 
     return rows.slice(4, -1);
   });
   const rows = clean.flat(), all = rows.join("\n"), cover = clean[0];
-  const statementType = cover[0] === "证券合并日结单" ? "daily" : cover[0] === "月结单" ? "monthly" : null;
+  const statementType = cover[0] === "证券合并日结单" ? "daily" : ["月结单", "证券合并月结单"].includes(cover[0]) ? "monthly" : null;
   if (!statementType || !clean.at(-1).includes("13.Please inform us immediately of any changes in your personal information.")
     || !rows.includes("融资利息") || !rows.includes("融券利息") || !rows.includes("证券提存") || !rows.includes("重要提示")) fail("需要完整官方结单，包含融资、提存及末页提示");
   const dates = [...all.matchAll(/^结单日期:\s*(\d{4}-\d{2}-\d{2})$/gm)];

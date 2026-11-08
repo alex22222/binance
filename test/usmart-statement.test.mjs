@@ -63,6 +63,15 @@ test("monthly statements use the actual statement date and do not manufacture CN
   assert.equal(value.balances.some(b => b.currency === "CNY"), false);
 });
 
+test("official combined monthly cover parses as monthly without changing the asset date", () => {
+  const pages = fixture().map(p => p.replace("证券合并日结单", "证券合并月结单").replace("2026-10-22", "2026-10-30").replace("2026-10-27 11:00:00", "2026-10-30 11:00:00"));
+  const value = parse(pages);
+  assert.equal(value.statementType, "monthly");
+  assert.equal(value.asOf, "2026-10-30");
+  assert.equal(value.balances[1].cash, -30);
+  assert.ok(value.reviewReasons.includes("signed-cash-or-debt"));
+});
+
 test("normalization handles the compatibility glyphs and fullwidth punctuation used by actual PDF extraction", () => {
   const pages = fixture().map(p => p.replaceAll("账户", "账⼾").replaceAll("香港", "⾹港").replaceAll("持仓明细(", "持仓明细（").replaceAll(")\n", "）\n"));
   assert.equal(parse(pages).holdings[0].quantity, "10");
