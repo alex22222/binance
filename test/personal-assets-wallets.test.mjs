@@ -141,6 +141,21 @@ test("DeFi rows, missing scope, stale data and updating aggregates stay unverifi
   }
 });
 
+test("fresh DeFi protocol names are shown for review without adding reference assets to the wallet total", async () => {
+  const data = fixture();
+  data.defi.walletIdPlatformList = [{ platformList: [
+    { platformName: "Aave V3", analysisPlatformId: "10", currencyAmount: "25" },
+    { platformName: "Morpho", analysisPlatformId: "119170", currencyAmount: "10" },
+  ], totalAssets: "35" }];
+  const result = await run({ wallets: [wallets[0]], ...fakeFetch(data) });
+  assert.equal(result.valuationComplete, false);
+  assert.match(result.coverage.join(" "), /Ethereum：DeFi 近期协议列表显示 Aave V3、Morpho；持仓与估值尚未核对/);
+  assert.equal(result.total, 500 + 100.125 * 0.998);
+  assert.equal(result.holdings.some((row) => row.name.includes("Aave") || row.name.includes("Morpho")), false);
+  data.defi.updateAt = time.getTime() - 301_000;
+  assert.equal((await run({ wallets: [wallets[0]], ...fakeFetch(data) })).coverage.join(" ").includes("Aave V3"), false);
+});
+
 test("wallet sync validates credentials, provider, address formats and duplicate bindings before networking", async () => {
   for (const options of [{ credentials: null }, { credentials: { ...credentials, secret: "\nsecret" } },
     { provider: "constructor" }, { wallets: [] }, { wallets: [{ chainIndex: "10", address: evm }] }, { wallets: [{ chainIndex: 1, address: evm }] },

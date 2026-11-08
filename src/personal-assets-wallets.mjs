@@ -114,12 +114,15 @@ async function readJson(response) {
   } finally { await reader.cancel().catch(() => {}); }
 }
 
-function defiIsEmpty(data, at) {
+function defiOverview(data, at) {
   const updated = typeof data?.updateAt === "string" && /^\d{13}$/.test(data.updateAt) ? Number(data.updateAt) : data?.updateAt;
   if (data?.assetStatus !== 1 || !Number.isSafeInteger(updated) || updated > at.getTime() + 10_000 || at.getTime() - updated > 300_000
-    || !Array.isArray(data.walletIdPlatformList) || data.walletIdPlatformList.length > 10 || !noMorePages(data)) return false;
-  return data.walletIdPlatformList.every((wallet) => wallet && Array.isArray(wallet.platformList) && wallet.platformList.length === 0
-    && (wallet.totalAssets === undefined || (typeof wallet.totalAssets === "string" && /^0(?:\.0+)?$/.test(wallet.totalAssets))));
+    || !Array.isArray(data.walletIdPlatformList) || data.walletIdPlatformList.length > 1 || !noMorePages(data)) return { clear: false, names: [] };
+  if (!data.walletIdPlatformList.length) return { clear: true, names: [] };
+  const wallet = data.walletIdPlatformList[0];
+  if (!wallet || !Array.isArray(wallet.platformList) || wallet.platformList.length > 20) return { clear: false, names: [] };
+  if (!wallet.platformList.length) return { clear: wallet.totalAssets === undefined || typeof wallet.totalAssets === "string" && /^0(?:\.0+)?$/.test(wallet.totalAssets), names: [] };
+  return { clear: false, names: wallet.platformList.map((platform) => label(platform?.platformName, "未知协议", 40)) };
 }
 
 export async function fetchWalletAssets({ provider, credentials, wallets, polymarketSafeOwner = null, fetchImpl = fetch, now = () => new Date() }) {
@@ -202,12 +205,12 @@ export async function fetchWalletAssets({ provider, credentials, wallets, polyma
       if (!contract && symbol !== CHAINS[wallet.chainIndex].symbol) throw invalid();
       return { ...wallet, contract, symbol, name: label(row.tokenName, symbol, 130), quantity, tokenPrice: price(row.tokenPrice), risk: row.isRiskToken };
     }).filter((row) => positive(row.quantity));
-    let defiClear = false;
+    let defi = { clear: false, names: [] };
     try {
       const data = await request(`${HOST}${DEFI}`, { walletAddressList: [{ chainIndex: wallet.chainIndex, walletAddress: wallet.address }] });
-      defiClear = defiIsEmpty(data, atTime(now));
+      defi = defiOverview(data, atTime(now));
     } catch { /* Token inventory remains useful; a failed protocol query never proves zero DeFi. */ }
-    scopes.push({ wallet, rows, defiClear });
+    scopes.push({ wallet, rows, defi });
   }
   const rows = scopes.flatMap((scope) => scope.rows);
   if (rows.length > MAX_ASSETS) throw invalid();
@@ -364,7 +367,7 @@ export async function fetchWalletAssets({ provider, credentials, wallets, polyma
   const finished = atTime(now);
   const total = holdings.reduce((sum, row) => sum + row.amount, 0);
   if (!Number.isFinite(total) || total > MAX_VALUE || fetched.getTime() < started.getTime() || finished.getTime() < fetched.getTime() || finished.getTime() - started.getTime() > 45_000) throw invalid();
-  const pendingDefi = scopes.filter((scope) => !scope.defiClear);
+  const pendingDefi = scopes.filter((scope) => !scope.defi.clear);
   return {
     provider, currency: "USD", total, holdings, unpricedAssets, derivedWallets, breakdownComplete: true,
     valuationComplete: unpricedAssets.length === 0 && pendingDefi.length === 0 && polymarketSafeOwner === null,
@@ -374,7 +377,7 @@ export async function fetchWalletAssets({ provider, credentials, wallets, polyma
     fetchedAt: fetched.toISOString(), observedAt: null, timeBasis: "retrieved",
     coverage: ["指定链和公开地址的原生币与提供商完整返回的 ERC20 / SPL / Token2022 代币；风险与空投过滤已关闭。",
       "不含 NFT、压缩 NFT、其他地址或其他链；未解码的质押、借款和待领取权益不视为零。",
-      ...scopes.map((scope) => `${CHAINS[scope.wallet.chainIndex].name}：${scope.defiClear ? "DeFi 查询明确返回近期空协议列表" : "DeFi 协议资产或覆盖范围待核实"}。`), ...safeCoverage],
+      ...scopes.map((scope) => `${CHAINS[scope.wallet.chainIndex].name}：${scope.defi.clear ? "DeFi 查询明确返回近期空协议列表" : scope.defi.names.length ? `DeFi 近期协议列表显示 ${scope.defi.names.slice(0, 5).join("、")}${scope.defi.names.length > 5 ? `等共 ${scope.defi.names.length} 个` : ""}；持仓与估值尚未核对，未计入小计` : "DeFi 协议资产或覆盖范围待核实"}。`), ...safeCoverage],
     warnings: ["总额仅为已核实币种的已定价小计；缺价资产保留准确数量，未用零金额占位。",
       "代币余额与原生币来源报价未提供精确资产或报价时点，页面标记为获取时间，不代表同一实时区块。",
       "只按链与合约识别资产；未知代币即使返回价格也暂不估值，名称和风险标记不构成身份确认。",
