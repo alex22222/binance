@@ -1,4 +1,4 @@
-export const PLATFORMS = ["汇丰基金", "ZA Bank", "富途", "盈立", "OKX", "币安", "A股", "待确认", "民生银行", "TokenPocket", "Polymarket", "Future", "币安Agentic Wallet", "OKX Agentic Wallet"];
+export const PLATFORMS = ["汇丰基金", "ZA Bank", "富途", "盈立", "OKX", "币安", "A股", "待确认", "民生银行", "TokenPocket", "Polymarket", "Future", "币安Agentic Wallet", "OKX Agentic Wallet", "Supaycard"];
 export const CURRENCIES = ["CNY", "HKD", "USD", "USDT", "USDC", "EUR", "GBP", "JPY", "SGD", "AUD"];
 export const CATEGORIES = ["现金", "定期存款", "货币基金", "股票", "股票ETF", "基金", "债券", "稳定币", "加密资产", "组合资产", "其他", "未分类"];
 

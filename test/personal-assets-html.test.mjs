@@ -1693,6 +1693,20 @@ test("every platform shows how to acquire data without claiming empty accounts a
   assert.equal(ui.requests.length, 1);
 });
 
+test("Supaycard is available to legacy portfolios and explains screenshot cash entry without an automatic-source claim", async () => {
+  const initial = stateWith();
+  initial.portfolio.accounts = initial.portfolio.accounts.filter(account => account.platform !== "Supaycard");
+  const ui = await view(initial);
+  const card = ui.run('platformCard("Supaycard",PLATFORMS.indexOf("Supaycard"),summarize(portfolio()))');
+  assert.match(card, /Supaycard/);
+  assert.match(card, /supaycard\.com\/app\/card/);
+  assert.match(card, /现金/);
+  assert.match(card, /尚未.*自动/);
+  assert.match(card, /添加账户/);
+  assert.doesNotMatch(card, /自动同步已开启|已完成同步|platform-number">0\.00/);
+  assert.equal(ui.requests.length, 1);
+});
+
 test("channel annotations distinguish quote revaluation, remaining cash and account reads", async () => {
   const initial = stateWith([
     entry({id:"quoted",name:"基金持仓",kind:"holding",source:"api"}),

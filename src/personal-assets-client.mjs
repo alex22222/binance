@@ -10,7 +10,7 @@ const accountOptions = (value) => portfolio().accounts.map((account) => `<option
 const basisName = (basis) => basis === "total" ? "账户总额" : "持仓合计";
 const kindName = (kind) => kind === "total" ? "账户总额" : "持仓明细";
 const sourceName = (source) => ({ manual: "手动录入", csv: "CSV 导入", screenshot: "截图核对", api: "只读 API" })[source] || "已录入";
-const marks = ["HS", "ZA", "富", "盈", "OKX", "币", "A", "?", "民", "TP", "PM", "F", "BAW", "OAW"];
+const marks = ["HS", "ZA", "富", "盈", "OKX", "币", "A", "?", "民", "TP", "PM", "F", "BAW", "OAW", "SP"];
 const displayCurrencyKey = "personal-assets-display-currency";
 let displayCurrency = "CNY";
 try { const stored = window.localStorage.getItem(displayCurrencyKey); if (["CNY", "USD", "HKD"].includes(stored)) displayCurrency = stored; } catch {}
@@ -120,7 +120,8 @@ const acquisitionGuides = {
   "Polymarket": "绑定公开交易地址，通过官方 Data API 读取仓位、Polygon 只读 RPC 读取 pUSD 现金，按实际 USDC/USD 报价估值；预览核对后入账。",
   "Future": "绑定已核实的 Polygon 交易地址，经 Polymarket Data API 和 Polygon RPC 核对仓位、pUSD 现金；Solana 入金地址不代表交易账户净资产。",
   "币安Agentic Wallet": "绑定 BSC 公开地址，经 OKX OnchainOS 读取代币余额及已核实价格；不需要钱包签名，不使用币安交易所账户授权。",
-  "OKX Agentic Wallet": "绑定 X Layer 公开地址，经 OKX OnchainOS 读取代币余额及已核实价格；不需要钱包签名，未核实 DeFi 与 NFT 不在覆盖范围。"
+  "OKX Agentic Wallet": "绑定 X Layer 公开地址，经 OKX OnchainOS 读取代币余额及已核实价格；不需要钱包签名，未核实 DeFi 与 NFT 不在覆盖范围。",
+  "Supaycard": "在 https://supaycard.com/app/card 查看各张卡的现金余额，核对币种后按卡分别录入或用截图核对；按持仓合计统计，不与卡片合计重复相加。当前尚未接入自动读取渠道。"
 };
 const acquisitionSources = {
   okx: "OKX 交易所 Read API", futu: "富途 Open API · trade:read",
