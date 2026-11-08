@@ -118,7 +118,7 @@ const acquisitionGuides = {
   "Future": "绑定已核实的 Polygon 交易地址，经 Polymarket Data API 和 Polygon RPC 核对仓位、pUSD 现金；Solana 入金地址不代表交易账户净资产。",
   "币安Agentic Wallet": "绑定 BSC 公开地址，经 OKX OnchainOS 读取代币余额及已核实价格；不需要钱包签名，不使用币安交易所账户授权。",
   "OKX Agentic Wallet": "绑定 X Layer 公开地址，经 OKX OnchainOS 读取代币余额及已核实价格；不需要钱包签名，未核实 DeFi 与 NFT 不在覆盖范围。",
-  "Supaycard": "在 https://supaycard.com/app/card 查看各张卡的现金余额，核对币种后按卡分别录入或用截图核对；按持仓合计统计，不与卡片合计重复相加。当前尚未接入自动读取渠道。"
+  "Supaycard": "在 https://supaycard.com/app/card 查看各张卡的现金余额，核对币种后按卡分别录入或用截图核对；按持仓合计统计，不与卡片合计重复相加。已安排每天北京时间 07:00 在本机尝试只读核对，尚未完成首次自动读取；失败时沿用已核对金额。"
 };
 const acquisitionSources = {
   okx: "OKX 交易所 Read API", futu: "富途 Open API · trade:read",
