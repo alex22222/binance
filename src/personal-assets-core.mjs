@@ -47,6 +47,11 @@ function validAmount(value) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= MAX_AMOUNT;
 }
 
+function validEntryAmount(entry) {
+  return validAmount(entry.amount) || entry.kind === "holding" && entry.category === "现金"
+    && typeof entry.amount === "number" && Number.isFinite(entry.amount) && entry.amount >= -MAX_AMOUNT && entry.amount < 0;
+}
+
 export function emptyPortfolio() {
   return {
     accounts: PLATFORMS.map((platform, index) => ({ id: `account-${index + 1}`, platform, name: platform, basis: "total", ...(platform === "待确认" ? { reviewStatus: "pending" } : {}) })),
@@ -89,7 +94,7 @@ export function validatePortfolio(input) {
       if (totals.has(accountId)) throw new Error("同一账户只能有一条账户总额，请更新现有总额或使用持仓明细");
       totals.add(accountId);
     }
-    if (!validAmount(row.amount)) throw new Error(`第 ${index + 1} 条资产金额须为 0 至 ${MAX_AMOUNT} 的有限数字`);
+    if (!validEntryAmount(row)) throw new Error(`第 ${index + 1} 条资产金额须为 0 至 ${MAX_AMOUNT} 的有限数字；仅现金持仓可为负`);
     if (!validDate(row.asOf)) throw new Error(`第 ${index + 1} 条资产日期须为有效的 YYYY-MM-DD，且不能晚于今天`);
     const entry = {
       id, accountId, kind,
@@ -205,6 +210,7 @@ export function summarize(portfolio) {
     return true;
   };
   let total = 0;
+  let negativeCash = 0;
   for (const entry of portfolio.entries) {
     const account = accounts.get(entry.accountId);
     if (account?.reviewStatus === "pending" || account?.platform === "待确认") {
@@ -212,7 +218,7 @@ export function summarize(portfolio) {
       excluded.push(entry);
       continue;
     }
-    if (!account || !validDate(entry.asOf) || !validAmount(entry.amount) || entry.kind !== (account.basis === "total" ? "total" : "holding") || (entry.kind === "total" && usedTotals.has(entry.accountId))) {
+    if (!account || !validDate(entry.asOf) || !validEntryAmount(entry) || entry.kind !== (account.basis === "total" ? "total" : "holding") || (entry.kind === "total" && usedTotals.has(entry.accountId))) {
       excluded.push(entry);
       continue;
     }
@@ -227,6 +233,10 @@ export function summarize(portfolio) {
     total += value;
     included.push(entry);
     byPlatform.set(account.platform, (byPlatform.get(account.platform) ?? 0) + value);
+    if (value < 0) {
+      negativeCash -= value;
+      continue;
+    }
     byCategory.set(entry.category, (byCategory.get(entry.category) ?? 0) + value);
     byCurrency.set(entry.currency, (byCurrency.get(entry.currency) ?? 0) + value);
     const { sleeve, group } = assetSleeve(entry, account);
@@ -243,7 +253,7 @@ export function summarize(portfolio) {
     stockPnl.total = (stockPnl.total ?? 0) + row.amount * rate;
     stockPnl.included.push(row);
   }
-  return { total: included.length ? total : null, included, excluded, missing, stale, pending, stockPnl, byPlatform: groups(byPlatform), byCategory: groups(byCategory), byCurrency: groups(byCurrency),
+  return { total: included.length ? total : null, negativeCash, grossTotal: total + negativeCash, included, excluded, missing, stale, pending, stockPnl, byPlatform: groups(byPlatform), byCategory: groups(byCategory), byCurrency: groups(byCurrency),
     sleeves: { core: sleeve(bySleeve.core), satellite: sleeve(bySleeve.satellite), unassigned: sleeve(bySleeve.unassigned), lookedThrough } };
 }
 

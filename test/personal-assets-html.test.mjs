@@ -84,6 +84,33 @@ test("loads the real API and shows all supported empty platforms without invente
   assert.doesNotMatch(ui.get("asset-content").innerHTML, /¥<\/small>0\.00/);
 });
 
+test("negative statement cash is labeled and can be corrected without losing its sign", async () => {
+  const initial = stateWith([entry({ id: "cash-debit", kind: "holding", name: "美元现金", category: "现金", currency: "USD", amount: -0.16 })]);
+  initial.portfolio.accounts[0].basis = "holdings";
+  initial.portfolio.rates.USD = { value: 7, date: initial.portfolio.entries[0].asOf };
+  const ui = await view(initial);
+  ui.run("page = 'holdings'; render()");
+  assert.match(ui.get("asset-content").innerHTML, /负现金 · 持仓明细/);
+  assert.match(ui.get("asset-content").innerHTML, /USD -0\.16/);
+  ui.run("openEntry(portfolio().entries[0])");
+  assert.match(ui.get("dialog-body").innerHTML, /value="-0\.16"/);
+  assert.doesNotMatch(ui.get("dialog-body").innerHTML, /id="entry-amount"[^>]*min="0"/);
+});
+
+test("asset type ring uses positive categories while its centre shows the net of negative cash", async () => {
+  const initial = stateWith([
+    entry({ id: "stock", kind: "holding", name: "证券", category: "股票", amount: 100 }),
+    entry({ id: "cash-debit", kind: "holding", name: "现金欠额", category: "现金", amount: -20 }),
+  ]);
+  initial.portfolio.accounts[0].basis = "holdings";
+  const ui = await view(initial);
+  const html = ui.get("asset-content").innerHTML;
+  assert.match(html, /class="type-pie-total">80\.00/);
+  assert.match(html, /股票 · 100\.0%/);
+  assert.match(html, /负现金冲减/);
+  assert.doesNotMatch(html, /125\.0%/);
+});
+
 test("fund NAV updates keep confirmation distinct from expiry, hide quantities and allow reviewed correction", async () => {
   const initial = stateWith([entry({ id: "fund-one", kind: "holding", category: "货币基金", source: "api" })]);
   initial.portfolio.accounts[0].basis = "holdings";

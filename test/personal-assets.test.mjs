@@ -406,6 +406,29 @@ test("negative, non-finite, excessive and string amounts are rejected", () => {
   assert.throws(() => validatePortfolio({ ...emptyPortfolio(), entries: Array.from({ length: 5001 }, (_, i) => entry({ id: String(i) })) }), /5000/);
 });
 
+test("a statement's negative cash is counted once in holdings without admitting negative securities or totals", () => {
+  const value = portfolio([
+    entry({ id: "stock", kind: "holding", name: "证券", category: "股票", currency: "USD", amount: 100 }),
+    entry({ id: "cash", kind: "holding", name: "美元现金", category: "现金", currency: "USD", amount: -0.16 }),
+  ]);
+  value.accounts[0].basis = "holdings";
+  value.rates.USD = { value: 7, date: today };
+  const clean = validatePortfolio(value);
+  assert.equal(clean.entries[1].amount, -0.16);
+  assert.equal(summarize(clean).total, 698.88);
+  assert.equal(summarize(clean).included.length, 2);
+  assert.equal(summarize(clean).negativeCash, 1.12);
+  assert.equal(summarize(clean).grossTotal, 700);
+  assert.deepEqual(summarize(clean).byCategory.map(group => group.name), ["股票"]);
+  assert.equal(summarize(clean).sleeves.satellite.value, 700);
+  assert.throws(() => validatePortfolio({ ...value, entries: [{ ...value.entries[1], kind: "total" }] }), /金额/);
+  assert.throws(() => validatePortfolio({ ...value, entries: [{ ...value.entries[1], category: "股票" }] }), /金额/);
+  assert.throws(() => validatePortfolio({ ...value, entries: [{ ...value.entries[1], amount: 1e13 }] }), /金额/);
+  const missingFx = { ...clean, rates: { CNY: clean.rates.CNY } };
+  assert.equal(summarize(missingFx).total, null);
+  assert.equal(summarize(missingFx).missing.length, 2);
+});
+
 test("invalid FX dates and values are rejected and not used by summary", () => {
   for (const rate of [{ value: 0, date: today }, { value: -1, date: today }, { value: 7, date: "2099-01-01" }]) {
     const value = portfolio([entry({ currency: "USD" })], { rates: { USD: rate } });
@@ -610,6 +633,22 @@ test("new asset storage directories are private", async (context) => {
   const stateDir = join(await fixture(context), "private-assets");
   await savePersonalAssets({ stateDir, portfolio: emptyPortfolio(), revision: 0 });
   assert.equal((await stat(stateDir)).mode & 0o777, 0o700);
+});
+
+test("negative statement cash survives a versioned save and immutable snapshot as a debit", async (context) => {
+  const stateDir = await fixture(context);
+  const value = portfolio([
+    entry({ id: "stock", kind: "holding", name: "证券", category: "股票", amount: 100 }),
+    entry({ id: "cash", kind: "holding", name: "现金欠额", category: "现金", amount: -0.16 }),
+  ]);
+  value.accounts[0].basis = "holdings";
+  const saved = await savePersonalAssets({ stateDir, portfolio: value, revision: 0 });
+  assert.equal(saved.revision, 1);
+  assert.equal(summarize((await readPersonalAssets({ stateDir })).portfolio).total, 99.84);
+  const snapshot = await createPersonalAssetsSnapshot({ stateDir, revision: 1 });
+  const stored = JSON.parse(await readFile(join(stateDir, "personal-assets-snapshots", `${snapshot.snapshots[0].id}.json`), "utf8"));
+  assert.equal(stored.portfolio.entries.find(row => row.id === "cash").amount, -0.16);
+  assert.equal(snapshot.snapshots[0].total, 99.84);
 });
 
 test("pending screenshot details and provenance survive save, reload and snapshot without entering totals", async (context) => {
