@@ -104,12 +104,12 @@ function visibleNote(note) { return !hidden && note ? `<p class="muted small" st
 function entryDateBasis(entry) { const fund = state?.funds?.bindings?.find(row => row.entryId === entry.id); return fund ? fund.priceBasis === "market-quote" ? `行情日期 · 股数${fund.quantityBasis === "screenshot" ? "来自截图" : "手动确认"}` : fund.priceBasis === "market-close" ? "市场收盘价日期 · 股数手动确认" : "净值日期 · 份额手动确认" : entry.asOfBasis === "imported" ? entry.source === "api" ? "读取日期 · 源未提供资产时点" : "导入日期 · 截图日期未核实" : "资产日期"; }
 function accountSyncDetails(account) { return Object.entries(state?.sync?.providers || {}).find(([, details]) => details.targetAccountId === account.id); }
 const acquisitionGuides = {
-  "汇丰基金": "汇丰环球投资管理官方净值 × 确认单位数；在汇丰 App 核对完整基金持仓或结单，申赎后更新份额。",
+  "汇丰基金": "当前按已核对的汇丰 One 账户总额统计，原基金份额与现金仅供核对、不重复相加；每日网银网页读取已取消，仍检查 QQ 邮箱中的完整汇丰结单，核对账户、资产日期和全部项目后才更新。",
   "ZA Bank": "泰康、高腾官方净值及 Vanguard 市场收盘价 × 确认数量；从 ZA Bank App 获取完整投资结单，核对基金、VOO 及现金。",
   "富途": "设置 → 只读同步 → 富途，以 trade:read 授权官方 Open API，预览并确认证券账户资产与持仓后入账。",
   "盈立": "从 QQ 邮箱下载日结单／月结单，在设置 → 结单密码分别保存香港、新加坡 PDF 密码，核对账户、日期、现金与结算后入账；证券另按确认股数 × 腾讯行情重估。",
   "OKX": "交易所：在设置 → 只读同步保存仅 Read 权限的 API 凭据；Web3：另绑定公开地址和网络，使用 OKX OnchainOS Developer 只读接口。均需预览确认入账。",
-  "币安": "当前尚未接入交易所账户只读来源；从币安导出完整资产报表／CSV，或上传截图核对录入。币安Agentic Wallet 单独统计。",
+  "币安": "每天北京时间 07:00 在本机检查已登录的币安官方网页，只有出现较新的可导出日期才生成一次 All 账户完整 PDF；核对全部现货、合约与资产日期后入账。会话失效时保留上次金额；币安Agentic Wallet 单独统计。",
   "A股": "腾讯未复权行情 × 确认股数；从平安证券导出完整持仓及资金结单／CSV，或上传截图核对数量与现金。当前没有券商账户只读连接。",
   "待确认": "先核对原始截图、CSV 或手动记录的实际平台及账户范围，再选择对应获取渠道；确认前不计入总额。",
   "民生银行": "从民生银行香港个人网银或邮箱取得个人电子月结单、未到期定期单及到期／续存记录，核对后导入；当前未接入银行账户只读接口。",
