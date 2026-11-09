@@ -149,7 +149,8 @@ test("fresh DeFi protocol names are shown for review without adding reference as
   ], totalAssets: "35" }];
   const result = await run({ wallets: [wallets[0]], ...fakeFetch(data) });
   assert.equal(result.valuationComplete, false);
-  assert.match(result.coverage.join(" "), /Ethereum：DeFi 近期协议列表显示 Aave V3、Morpho；持仓与估值尚未核对/);
+  assert.match(result.coverage.join(" "), /Aave V3（参考 25 USD）、Morpho（参考 10 USD）/);
+  assert.match(result.coverage.join(" "), /2026-10-24T12:30:00.000Z.*未计入小计/);
   assert.equal(result.total, 500 + 100.125 * 0.998);
   assert.equal(result.holdings.some((row) => row.name.includes("Aave") || row.name.includes("Morpho")), false);
   data.defi.updateAt = time.getTime() - 301_000;

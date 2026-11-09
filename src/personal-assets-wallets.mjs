@@ -122,7 +122,10 @@ function defiOverview(data, at) {
   const wallet = data.walletIdPlatformList[0];
   if (!wallet || !Array.isArray(wallet.platformList) || wallet.platformList.length > 20) return { clear: false, names: [] };
   if (!wallet.platformList.length) return { clear: wallet.totalAssets === undefined || typeof wallet.totalAssets === "string" && /^0(?:\.0+)?$/.test(wallet.totalAssets), names: [] };
-  return { clear: false, names: wallet.platformList.map((platform) => label(platform?.platformName, "未知协议", 40)) };
+  return { clear: false, updatedAt: new Date(updated).toISOString(), names: wallet.platformList.map((platform) => {
+    const name = label(platform?.platformName, "未知协议", 40);
+    return price(platform?.currencyAmount) ? `${name}（参考 ${platform.currencyAmount} USD）` : name;
+  }) };
 }
 
 export async function fetchWalletAssets({ provider, credentials, wallets, polymarketSafeOwner = null, fetchImpl = fetch, now = () => new Date() }) {
@@ -377,7 +380,7 @@ export async function fetchWalletAssets({ provider, credentials, wallets, polyma
     fetchedAt: fetched.toISOString(), observedAt: null, timeBasis: "retrieved",
     coverage: ["指定链和公开地址的原生币与提供商完整返回的 ERC20 / SPL / Token2022 代币；风险与空投过滤已关闭。",
       "不含 NFT、压缩 NFT、其他地址或其他链；未解码的质押、借款和待领取权益不视为零。",
-      ...scopes.map((scope) => `${CHAINS[scope.wallet.chainIndex].name}：${scope.defi.clear ? "DeFi 查询明确返回近期空协议列表" : scope.defi.names.length ? `DeFi 近期协议列表显示 ${scope.defi.names.slice(0, 5).join("、")}${scope.defi.names.length > 5 ? `等共 ${scope.defi.names.length} 个` : ""}；持仓与估值尚未核对，未计入小计` : "DeFi 协议资产或覆盖范围待核实"}。`), ...safeCoverage],
+      ...scopes.map((scope) => `${CHAINS[scope.wallet.chainIndex].name}：${scope.defi.clear ? "DeFi 查询明确返回近期空协议列表" : scope.defi.names.length ? `DeFi 近期协议列表显示 ${scope.defi.names.slice(0, 5).join("、")}${scope.defi.names.length > 5 ? `等共 ${scope.defi.names.length} 个` : ""}；协议概览更新于 ${scope.defi.updatedAt}；持仓与估值尚未核对，未计入小计` : "DeFi 协议资产或覆盖范围待核实"}。`), ...safeCoverage],
     warnings: ["总额仅为已核实币种的已定价小计；缺价资产保留准确数量，未用零金额占位。",
       "代币余额与原生币来源报价未提供精确资产或报价时点，页面标记为获取时间，不代表同一实时区块。",
       "只按链与合约识别资产；未知代币即使返回价格也暂不估值，名称和风险标记不构成身份确认。",
