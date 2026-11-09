@@ -141,6 +141,25 @@ test("DeFi rows, missing scope, stale data and updating aggregates stay unverifi
   }
 });
 
+test("DeFi coverage distinguishes updating, stale, incomplete and failed reads without counting them", async () => {
+  const cases = [
+    [{ assetStatus: 2, updateAt: time.getTime(), walletIdPlatformList: [] }, "协议概览仍在更新"],
+    [{ assetStatus: 1, updateAt: time.getTime() - 301_000, walletIdPlatformList: [] }, "协议概览已过期"],
+    [{ assetStatus: 1, updateAt: time.getTime() }, "协议概览范围不完整"],
+  ];
+  for (const [defi, reason] of cases) {
+    const data = fixture(); data.defi = defi;
+    const result = await run({ wallets: [wallets[0]], ...fakeFetch(data) });
+    assert.match(result.coverage.join(" "), new RegExp(reason));
+    assert.equal(result.total, 500 + 100.125 * 0.998);
+    assert.equal(result.valuationComplete, false);
+  }
+  const failed = await run({ wallets: [wallets[0]], ...fakeFetch(fixture(), (url) =>
+    url.pathname === defiPath ? new Response("private upstream text", { status: 500 }) : undefined) });
+  assert.match(failed.coverage.join(" "), /协议概览请求失败/);
+  assert.equal(failed.coverage.join(" ").includes("private upstream text"), false);
+});
+
 test("fresh DeFi protocol names are shown for review without adding reference assets to the wallet total", async () => {
   const data = fixture();
   data.defi.walletIdPlatformList = [{ platformList: [
