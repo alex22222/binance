@@ -56,6 +56,18 @@ test("Futu token exchange validates read scopes and refresh retains its non-rota
   assert.equal(new URLSearchParams(mock.calls[1].options.body).get("grant_type"), "refresh_token");
 });
 
+test("Futu refresh failure reports only the upstream status and no response secrets", async () => {
+  for (const status of [400, 401, 403, 500]) {
+    const mock = mockFetch([new Response("synthetic-token synthetic-secret", { status })]);
+    await assert.rejects(() => refreshFutuToken({ clientId: "client", refreshToken: "synthetic-token", ...mock }), (error) => {
+      assert.match(error.message, new RegExp(`HTTP ${status}`));
+      assert.doesNotMatch(error.message, /synthetic-token|synthetic-secret/);
+      return true;
+    });
+    assert.equal(mock.calls.length, 1);
+  }
+});
+
 test("Futu rejects missing, write, wildcard permission and unexpected token scopes", async () => {
   for (const scope of [undefined, "quote:read", "trade:*", "trade:read trade:write", "trade:read quote:write", "trade:read *", "trade:read admin:read"]) {
     const mock = mockFetch([{ ...token, scope }]);

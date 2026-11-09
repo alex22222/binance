@@ -65,7 +65,7 @@ async function readJson(response) {
   } catch { throw new FutuAssetsError("富途响应格式无效，未导入资产"); }
 }
 
-async function request(path, { fetchImpl = fetch, method = "GET", accessToken, body, contentType } = {}) {
+async function request(path, { fetchImpl = fetch, method = "GET", accessToken, body, contentType, refresh = false } = {}) {
   let response;
   try {
     response = await fetchImpl(`${FUTU_ORIGIN}${path}`, {
@@ -79,7 +79,14 @@ async function request(path, { fetchImpl = fetch, method = "GET", accessToken, b
       },
       ...(body === undefined ? {} : { body }),
     });
-    if (!response.ok) throw new FutuAssetsError(response.status === 401 ? "富途授权已失效，请重新授权" : "富途请求失败，请稍后重试");
+    if (!response.ok) {
+      if (refresh) throw new FutuAssetsError(
+        [400, 401, 403].includes(response.status)
+          ? `富途刷新授权被拒绝（上游 HTTP ${response.status}），请重新授权`
+          : `富途令牌刷新请求失败（上游 HTTP ${response.status}），请稍后重试`
+      );
+      throw new FutuAssetsError(response.status === 401 ? "富途授权已失效，请重新授权" : "富途请求失败，请稍后重试");
+    }
     return await readJson(response);
   } catch (error) {
     if (error instanceof FutuAssetsError) throw error;
@@ -158,6 +165,7 @@ export async function exchangeFutuCode({ clientId, redirectUri, code, codeVerifi
 export async function refreshFutuToken({ clientId, refreshToken, fetchImpl, now }) {
   const value = await request("/oauth2/token", {
     fetchImpl,
+    refresh: true,
     method: "POST",
     contentType: "application/x-www-form-urlencoded",
     body: new URLSearchParams({
