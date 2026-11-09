@@ -281,6 +281,20 @@ test("Binance Agentic public BSC balances price native BNB and verified USDT wit
   assert.ok(result.warnings.some(line => /BSC.*Binance-Peg/.test(line)));
 });
 
+test("Moat.fun named token with a different contract is not priced as official MOAT", async () => {
+  const wallet = { chainIndex: "56", address: evm };
+  const contract = "0x5995a5dcdcc15c96b2294bf78eaaf2ea4bdb98d7";
+  const data = fixture();
+  data.balances["56"] = [token(wallet, contract, "Moat.fun", "42069", "1")];
+  const { fetchImpl, calls } = fakeFetch(data);
+  const result = await run({ provider: "binanceagentic", wallets: [wallet], fetchImpl });
+  assert.equal(result.holdings.length, 0);
+  assert.equal(result.unpricedAssets[0].quantity, "42069");
+  assert.match(result.unpricedAssets[0].reason, /moat\.fun.*官方.*MOAT.*合约.*不一致/);
+  assert.equal(result.total, 0);
+  assert.equal(calls.length, 2);
+});
+
 test("OKX Agentic X Layer identifies USDt0 by chain and official contract and uses actual provider USD price", async () => {
   const wallet = { chainIndex: "196", address: evm };
   const contract = "0x779ded0c9e1022225f8e0630b35a9b54be713736";

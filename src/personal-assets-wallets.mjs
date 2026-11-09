@@ -30,6 +30,8 @@ const USDT = Object.freeze({ "1": "0xdac17f958d2ee523a2206206994597c13d831ec7", 
 const SOURCE_PRICED = Object.freeze({ "196:0x779ded0c9e1022225f8e0630b35a9b54be713736": { symbol: "USDT0", category: "稳定币" },
   "56:0x6a708ead771238919d85930b5a0f10454e1c331a": { symbol: "SPYon", name: "SPYon · Ondo 代币化ETF", category: "股票ETF" },
   "56:0xc008c5f579ec1450f20099c39f587547e27c7523": { symbol: "SGOVon", name: "SGOVon · Ondo 代币化美债ETF", category: "债券" } });
+// https://moat.fun/moat identifies official MOAT on BSC as 0x35eac35731e48d69d7f86f5ecdf95499cc8e0579.
+const MOAT_NAME_MISMATCH = "56:0x5995a5dcdcc15c96b2294bf78eaaf2ea4bdb98d7";
 const PROVIDER_NAMES = Object.freeze({ okxweb3: "OKX Web3", tokenpocket: "TokenPocket", binanceagentic: "币安Agentic Wallet", okxagentic: "OKX Agentic Wallet" });
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
@@ -362,7 +364,7 @@ export async function fetchWalletAssets({ provider, credentials, wallets, polyma
     const externalId = `token:${digest(`${row.chainIndex}:${row.address}:${row.contract || "native"}`)}`;
     if (!usdPrice) {
       unpricedAssets.push({ externalId, chainIndex: row.chainIndex, contract: row.contract, symbol: row.symbol, name: row.name, quantity: row.quantity,
-        reason: pusd ? `pUSD 未取得 5 分钟内 USDC/USD 参考报价，暂不估值；已核实 Safe 余额区块 ${row.proof.cashBlockNumber}，时点 ${row.proof.cashObservedAt}` : zero ? row.risk ? "ZERO 被提供商标记风险，保留数量暂不估值" : zeroReason : !known || row.risk ? "代币身份、风险或报价时点尚未核实，未采用提供商估值" : "缺少可核实的有效 USD 报价，未按固定美元价格估值" });
+        reason: pusd ? `pUSD 未取得 5 分钟内 USDC/USD 参考报价，暂不估值；已核实 Safe 余额区块 ${row.proof.cashBlockNumber}，时点 ${row.proof.cashObservedAt}` : zero ? row.risk ? "ZERO 被提供商标记风险，保留数量暂不估值" : zeroReason : `${row.chainIndex}:${row.contract}` === MOAT_NAME_MISMATCH ? "与 moat.fun 官方 MOAT 合约不一致，保留数量且未按 MOAT 估值" : !known || row.risk ? "代币身份、风险或报价时点尚未核实，未采用提供商估值" : "缺少可核实的有效 USD 报价，未按固定美元价格估值" });
       continue;
     }
     const amount = Number(row.quantity) * usdPrice;
