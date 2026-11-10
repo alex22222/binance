@@ -46,4 +46,31 @@
 
 合并后的正式全量回归：**1,268 项，1,266 通过，2 项平台跳过，0 失败**。个人资产盈亏专项 31 项全通过。重新采集发布基线，确认交易源码、Bot/Caddy、授权与所有受保护定时任务相对初始基线完全不变。
 
-服务器验收将在本节追加；未完成验收前不声明已部署。
+## 发布守卫发现的既有源码漂移
+
+第二次尝试仍在 stage 前被拦截：生产源码身份为上述 `c40bae…`，但原授权发布清单要求 `f42b7f29af0826b645c4ecebd885ca0f222554d7d48dc37e5aafd9da2c5678b5`。未放宽守卫、更新授权基线或重启服务。
+
+只读核验定位到北京时间 11 月 11 日 00:03:59 的并行页面发布，将 `src/fund-manager-html.mjs` 写入了保护目录。用 `/var/backups/binance-agentic-stock-bot/fund-manager-html-20261111T160359Z/fund-manager-html.mjs` 在内存替换该文件，完整身份精确恢复为原 `f42b7f…`，证实只有该文件导致此次源码漂移。这不改写既有 `STRATEGY_CONTROL_CHANGED` 停止事件的成因。
+
+用户随后明确批准：恢复这一文件备份原字节，将新页面放入独立 UI 包，只重启 Dashboard，继续保持授权停止。执行前保留错误落入生产目录的页面及完整保护基线；独立包中的页面与被迁移的新页面字节一致。恢复后核验其他全部源码不变，原授权清单、策略/审批/风控/凭据文件均不变。Bot/Caddy/各 timer 不变。
+
+- 修复备份与回执：`/var/backups/binance-agentic-stock-bot/20261111-fund-manager-ui-isolation-repair/`。
+- 旧文件 SHA-256：`452d0d95de816d6204a2cd0a292b90c7805ff6279cfc8ec534f9bde803675294`。
+- 迁入独立包的新页面 SHA-256：`f8bfae5f3ac0ece84f1f026d5f1e966cb3ff937653764596c8a57f7e43be6b2f`。
+
+## 最终部署验收
+
+北京时间 2026-11-11 01:30 完成线上复核：
+
+- 当前 UI release：`/opt/binance-agentic-personal-assets/releases/20261111-reviewed-wallet-strategy-v3`。
+- 代码来源提交：`7c90f16e5ea71316f70ce1978eb1df300e34498c`，已 push。64 个本次发布文件与提交字节一致；完整清单 95 项校验通过，其余保留前版文件（含 OCR 等资源）。
+- `check`、`stage`、实际生产依赖导入、Linux preflight 均通过；页面切换在全部检查之后执行。
+- 通过认证验证 12 个页面：首页、个人资产、市场、双钱包总览与 OKX 选项、原执行详情、策略研究、基金经理、数字货币、BTC 详情、OKX 独立来源、运维页。钱包 API 返回 `binance` / `okx`，偏好 GET 与策略研究 API 正常；未在生产 POST 保存任何测试方案。
+- 匿名 API 为 401，匿名首页为 303 登录跳转；实际提供的资产客户端和核心模块与发布清单哈希一致。
+- 仅 Dashboard 重启为 PID `2574822`；Bot PID `646628`、Caddy PID 不变。Dashboard 为 active，Result=success、ExecMainStatus=0；本次启动后的日志未发现新增错误。
+- 交易源码身份为恢复后的原 `f42b7f…`，部署前后不变；授权保持 **HALTED / STRATEGY_CONTROL_CHANGED**，未续签、重绑或恢复买入。
+- A/F、策略验证、四组 Paper、旧 SPY 合计 8 组 timer 仍 disabled/inactive。策略日报 timer 仍未安装；个人资产同步、日快照、BTC 雷达、市场、数字货币、授权检查 timer 状态均保持原样。
+- BTC API 明确仍为 `pressure-v2-no-touch-probability`。BTC v3 与离线研究只提交归档，未切换生产模型、运行研究或启用任务。
+- 发布备份和服务器验收回执：`/var/backups/binance-agentic-stock-bot/20261111-reviewed-wallet-strategy-v3/`。失败尝试的暂存材料保留，没有覆盖或清理失败证据。
+
+GitHub HTTPS 两次连接超时后，通过已知主机密钥验证的 GitHub SSH 443 完成 push；未修改仓库 origin 或 SSH 配置。最后的文档验收提交不涉及运行字节，不需要再次部署或重启。
