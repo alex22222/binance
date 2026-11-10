@@ -367,6 +367,29 @@ test("fixed-share closing valuation refreshes signed PnL without deducting it fr
   assert.equal(next.portfolio.entries.reduce((sum,e) => sum + e.amount,0), 7490.32);
   assert.equal((await readAssetFundStatus({ stateDir, now: later })).stockPnlEstimates[0].lastError, null);
 });
+test("ZA VOO closing price refreshes its USD floating PnL without changing the other fund", async t => {
+  const stateDir = await mkdtemp(join(tmpdir(), "assets-za-voo-pnl-")); t.after(() => rm(stateDir, { recursive: true, force: true }));
+  const portfolio = emptyPortfolio(); portfolio.accounts[0].platform = "ZA Bank"; portfolio.accounts[0].basis = "holdings";
+  portfolio.entries = [
+    { id: "voo", accountId: "account-1", kind: "holding", name: "Vanguard 标普500 ETF（VOO）", category: "股票ETF", currency: "USD", amount: 246.9, asOf: "2026-10-23", source: "screenshot" },
+    { id: "fund", accountId: "account-1", kind: "holding", name: "货币基金", category: "货币基金", currency: "USD", amount: 100, asOf: "2026-10-23", source: "screenshot" },
+  ];
+  portfolio.stockPnl = [{ accountId: "account-1", amount: -13.1, currency: "USD", asOf: "2026-10-23", source: "screenshot" }];
+  let state = await savePersonalAssets({ stateDir, portfolio, revision: 0 });
+  state = await configureAssetFund({ stateDir, entryId: "voo", isin: "US9229083632", quantity: "2", confirmedOn: "2026-10-24", revision: state.revision, fetchImpl: etfSource(), now });
+  const { configureAssetStockPnlEstimate } = await import("../src/personal-assets-funds.mjs");
+  state = await configureAssetStockPnlEstimate({ stateDir, accountId: "account-1", costBasisAmount: 260, confirmedOn: "2026-10-24", revision: state.revision, now });
+  const changed = etfSource(data => {
+    data.overview.marketPrice = data.dashboard.marketPrice = data.price.marketPrice = "$130.00";
+    data.overview.marketPriceAsOfDate = data.dashboard.marketPriceAsOfDate = data.price.marketPriceAsOfDate = "10/26/2026";
+  });
+  const cycle = await runAssetFundCycle({ stateDir, now: new Date("2026-10-26T23:00:00Z"), fetchImpl: changed });
+  const next = await readPersonalAssets({ stateDir });
+  assert.deepEqual(cycle.stockPnl, { attempted: 1, applied: 1, failed: 0 });
+  assert.deepEqual(next.portfolio.stockPnl[0], { accountId: "account-1", amount: 0, currency: "USD", asOf: "2026-10-26", source: "api", asOfBasis: "statement", fetchedAt: next.portfolio.stockPnl[0].fetchedAt, estimated: true, costBasis: 260 });
+  assert.equal(next.portfolio.entries.find(row => row.id === "voo").amount, 260);
+  assert.equal(next.portfolio.entries.find(row => row.id === "fund").amount, 100);
+});
 test("an incomplete stock close retains the full last good PnL and its date and timestamp", async t => {
   const { stateDir, state } = await pnlFixture(t); const oldPnl = state.portfolio.stockPnl;
   const result = await runAssetFundCycle({ stateDir, now: new Date("2026-10-26T23:00:00Z"), fetchImpl: url => {

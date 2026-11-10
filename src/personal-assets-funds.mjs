@@ -261,21 +261,22 @@ export async function configureAssetFund({ stateDir, entryId, isin, symbol, quan
 const pnlFingerprint = (state, accountId) => hash({ account: state.portfolio.accounts.find(row => row.id === accountId), pnl: state.portfolio.stockPnl?.find(row => row.accountId === accountId) || null });
 function estimateStockPnl(state, config, estimate) {
   const account = state.portfolio.accounts.find(row => row.id === estimate.accountId);
-  if (account?.platform !== "A股" || account.basis !== "holdings" || account.reviewStatus === "pending") throw fail("账户统计口径已变化，浮动盈亏估算暂停。", 409);
+  const currency = account?.platform === "A股" ? "CNY" : account?.platform === "ZA Bank" ? "USD" : null;
+  if (!currency || account.basis !== "holdings" || account.reviewStatus === "pending") throw fail("账户统计口径已变化，浮动盈亏估算暂停。", 409);
   const entries = state.portfolio.entries.filter(row => row.accountId === account.id && row.kind === "holding" && ["股票", "股票ETF"].includes(row.category));
   const bindings = entries.map(entry => config.bindings.find(row => row.entryId === entry.id));
-  if (!entries.length || bindings.some(row => !row?.enabled || !row.symbol || STOCKS[row.symbol]?.currency !== "CNY")
+  if (!entries.length || bindings.some(row => !row?.enabled || (currency === "CNY" ? !row.symbol || STOCKS[row.symbol]?.currency !== "CNY" : row.isin !== "US9229083632"))
     || bindings.some(row => target(state, row.entryId).fingerprint !== row.fingerprint)) throw fail("股票或固定数量已修改，浮动盈亏估算暂停。", 409);
-  const positions = bindings.map(({ entryId, symbol, quantity, confirmedOn }) => ({ entryId, symbol, quantity, confirmedOn })).sort((a,b) => a.entryId.localeCompare(b.entryId));
+  const positions = bindings.map(({ entryId, symbol, isin, quantity, confirmedOn }) => ({ entryId, ...(symbol ? { symbol } : { isin }), quantity, confirmedOn })).sort((a,b) => a.entryId.localeCompare(b.entryId));
   if (estimate.positions && hash(positions) !== hash(estimate.positions)) throw fail("股票或固定数量已修改，浮动盈亏估算暂停。", 409);
   const dates = new Set(bindings.map(row => row.quote?.date));
-  if (dates.size !== 1 || bindings.some(row => row.lastError || row.quote?.priceBasis !== "market-close" || !row.quote.observedAt || !row.lastFetchedAt)
-    || entries.some((entry, i) => entry.currency !== "CNY" || entry.asOf !== bindings[i].quote.date || entry.amount !== Number((Number(bindings[i].quantity) * Number(bindings[i].quote.price)).toFixed(8)))) {
+  if (dates.size !== 1 || bindings.some(row => row.lastError || row.quote?.priceBasis !== "market-close" || currency === "CNY" && !row.quote.observedAt || !row.lastFetchedAt)
+    || entries.some((entry, i) => entry.currency !== currency || entry.asOf !== bindings[i].quote.date || entry.amount !== Number((Number(bindings[i].quantity) * Number(bindings[i].quote.price ?? bindings[i].quote.nav)).toFixed(8)))) {
     throw fail("收盘报价未完整对齐，保留上次浮动盈亏估算。");
   }
   const amount = Number((entries.reduce((sum, row) => sum + row.amount, 0) - estimate.costBasisAmount).toFixed(2));
   const fetchedAt = bindings.map(row => row.lastFetchedAt).sort().at(-1);
-  return { positions, pnl: { accountId: account.id, amount, currency: "CNY", asOf: bindings[0].quote.date, source: "api", asOfBasis: "statement", fetchedAt, estimated: true, costBasis: estimate.costBasisAmount } };
+  return { positions, pnl: { accountId: account.id, amount, currency, asOf: bindings[0].quote.date, source: "api", asOfBasis: "statement", fetchedAt, estimated: true, costBasis: estimate.costBasisAmount } };
 }
 export async function configureAssetStockPnlEstimate({ stateDir, accountId, costBasisAmount, confirmedOn, revision, now = new Date() }) {
   if (!validCost(costBasisAmount) || !validDate(confirmedOn) || confirmedOn > day(now)) throw fail("请核对固定持仓成本及确认日期。", 400);
