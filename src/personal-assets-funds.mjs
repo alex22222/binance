@@ -282,13 +282,20 @@ function estimateStockPnl(state, config, estimate) {
   const fetchedAt = bindings.map(row => row.lastFetchedAt).sort().at(-1);
   return { positions, pnl: { accountId: account.id, amount, currency, asOf: bindings[0].quote.date, source: "api", asOfBasis: "statement", fetchedAt, estimated: true, costBasis: estimate.costBasisAmount } };
 }
-export async function configureAssetStockPnlEstimate({ stateDir, accountId, costBasisAmount, confirmedOn, revision, now = new Date() }) {
+export async function configureAssetStockPnlEstimate({ stateDir, accountId, costBasisAmount, confirmedOn, revision, preserveCurrentPnl = false, now = new Date() }) {
   if (!validCost(costBasisAmount) || !validDate(confirmedOn) || confirmedOn > day(now)) throw fail("请核对固定持仓成本及确认日期。", 400);
   return locked(stateDir, async (config, persist) => {
     const current = await readPersonalAssets({ stateDir });
     if (current.revision !== revision) throw fail("资产版本已更新，请重新核对。", 409);
     const estimate = { accountId, costBasisAmount, confirmedOn, enabled: true };
     const { positions, pnl } = estimateStockPnl(current, config, estimate);
+    if (preserveCurrentPnl) {
+      const previous = current.portfolio.stockPnl?.find(row => row.accountId === accountId);
+      if (!previous || !["screenshot", "manual"].includes(previous.source) || previous.currency !== pnl.currency || previous.asOfBasis !== "imported") throw fail("需要已核对的当前截图盈亏，才能保留原值等待每日行情。", 400);
+      Object.assign(estimate, { positions, fingerprint: pnlFingerprint(current, accountId), lastAttemptAt: now.toISOString(), lastError: null });
+      config.stockPnlEstimates = [...(config.stockPnlEstimates || []).filter(row => row.accountId !== accountId), estimate];
+      await persist(); return current;
+    }
     const valued = await valuePersonalAssetState(current, { stateDir });
     await createPersonalAssetsSnapshot({ stateDir, revision, valuation: { rates: valued.portfolio.rates, fx: valued.fx } });
     await writePrivate(join(resolve(stateDir), "personal-assets-funds-previous.json"), current);

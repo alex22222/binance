@@ -416,8 +416,14 @@ test("uSmart five US holdings use screenshot cost and refresh floating PnL only 
       fetchImpl: usSource(symbol, f => { f[3] = price; }) });
   }
   const { configureAssetStockPnlEstimate } = await import("../src/personal-assets-funds.mjs");
+  await assert.rejects(configureAssetStockPnlEstimate({ stateDir, accountId: "usmart-us", costBasisAmount: 6186.05, confirmedOn: "2026-10-24", preserveCurrentPnl: true, revision: state.revision, now: initial }), /截图盈亏/);
   state = await configureAssetStockPnlEstimate({ stateDir, accountId: "usmart-us", costBasisAmount: 6186.05, confirmedOn: "2026-10-24", revision: state.revision, now: initial });
   assert.equal(state.portfolio.stockPnl[0].amount, -1455.48);
+  const screenshot = { accountId: "usmart-us", amount: -1400, currency: "USD", asOf: "2026-10-24", source: "screenshot", asOfBasis: "imported" };
+  state = await savePersonalAssets({ stateDir, revision: state.revision, portfolio: { ...state.portfolio, stockPnl: [screenshot] } });
+  const revision = state.revision;
+  state = await configureAssetStockPnlEstimate({ stateDir, accountId: "usmart-us", costBasisAmount: 6186.05, confirmedOn: "2026-10-24", preserveCurrentPnl: true, revision, now: initial });
+  assert.equal(state.revision, revision); assert.deepEqual(state.portfolio.stockPnl[0], screenshot);
   const later = new Date("2026-10-26T23:00:00Z");
   const fetchImpl = (url, init) => {
     const symbol = url.split("=")[1]; const position = positions.find(row => row[1] === symbol);
