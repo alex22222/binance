@@ -245,7 +245,7 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
   const refreshPage = ["/assets", "/assets/"].includes(path) && new URL(request.url, "http://localhost").searchParams.get("settings") === "refresh-schedule";
   const statementApi = path === "/api/assets/statement-passwords";
   const statementPage = ["/assets", "/assets/"].includes(path) && new URL(request.url, "http://localhost").searchParams.get("settings") === "statement-passwords";
-  const syncAction = path.match(/^\/api\/assets\/sync\/(okx|futu|polymarket|future|okxweb3|tokenpocket|binanceagentic|okxagentic)\/(bind|connect|authorize|accounts|preview|apply|disconnect)$/);
+  const syncAction = path.match(/^\/api\/assets\/sync\/(okx|futu|polymarket|future|okxweb3|tokenpocket|binanceagentic|okxagentic)\/(bind|connect|authorize|accounts|preview|apply|resume|disconnect)$/);
   const aiApi = ["/api/assets/ai", "/api/assets/ai/review", "/api/assets/ai/configure"].includes(path);
   const syncApi = path === "/api/assets/sync" || path === "/api/assets/sync/futu/callback" || syncAction;
   const file = files.get(path);

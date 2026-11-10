@@ -720,6 +720,54 @@ test("saving an equivalent empty account note does not pause automatic collectio
   assert.equal((await readAssetSyncStatus({ stateDir })).providers.okx.enabled, true);
 });
 
+test("changing only the synced total category keeps automatic values and the chosen category", async (context) => {
+  const stateDir = await fixture(context);
+  await enabled(stateDir);
+  const current = await readPersonalAssets({ stateDir });
+  current.portfolio.entries.find((row) => row.id === "sync-okx-total").category = "加密资产";
+  await savePersonalAssets({ stateDir, portfolio: current.portfolio, revision: current.revision });
+  const cycle = await runAssetSyncCycle({ stateDir, now: later, api: { fetchOkxAssets: async () => synthetic({ total: 120, holdings: [{ ...synthetic().holdings[0], amount: 120 }], fetchedAt: later.toISOString() }) } });
+  assert.deepEqual(cycle, { attempted: 1, applied: 1, failed: 0 });
+  const after = await readPersonalAssets({ stateDir });
+  assert.equal(after.portfolio.entries.find((row) => row.id === "sync-okx-total").amount, 120);
+  assert.equal(after.portfolio.entries.find((row) => row.id === "sync-okx-total").category, "加密资产");
+});
+
+test("Polymarket keeps a manually classified reference total while refreshing holdings", async (context) => {
+  const stateDir = await fixture(context);
+  const targetAccountId = (await readPersonalAssets({ stateDir })).portfolio.accounts.find((row) => row.platform === "Polymarket").id;
+  const connected = await action(stateDir, "polymarket", "connect", { address: publicAddress, targetAccountId }, { api: predictionApi() });
+  const preview = connected.providers.polymarket.preview;
+  await action(stateDir, "polymarket", "apply", { previewId: preview.id, revision: preview.revision });
+  const current = await readPersonalAssets({ stateDir });
+  current.portfolio.entries.find((row) => row.id === "sync-polymarket-total").category = "加密资产";
+  await savePersonalAssets({ stateDir, portfolio: current.portfolio, revision: current.revision });
+  const cycle = await runAssetSyncCycle({ stateDir, now: later, api: predictionApi({ total: 120, holdings: [{ ...synthetic().holdings[0], amount: 120 }], fetchedAt: later.toISOString() }) });
+  assert.deepEqual(cycle, { attempted: 1, applied: 1, failed: 0 });
+  const after = await readPersonalAssets({ stateDir });
+  assert.equal(after.portfolio.entries.find((row) => row.id === "sync-polymarket-total").amount, 120);
+  assert.equal(after.portfolio.entries.find((row) => row.id === "sync-polymarket-total").category, "加密资产");
+});
+
+test("a category-only Polymarket pause can resume without fetching or changing the ledger", async (context) => {
+  const stateDir = await fixture(context);
+  const targetAccountId = (await readPersonalAssets({ stateDir })).portfolio.accounts.find((row) => row.platform === "Polymarket").id;
+  const connected = await action(stateDir, "polymarket", "connect", { address: publicAddress, targetAccountId }, { api: predictionApi() });
+  const preview = connected.providers.polymarket.preview;
+  await action(stateDir, "polymarket", "apply", { previewId: preview.id, revision: preview.revision });
+  const current = await readPersonalAssets({ stateDir });
+  current.portfolio.entries.find((row) => row.id === "sync-polymarket-total").category = "加密资产";
+  await savePersonalAssets({ stateDir, portfolio: current.portfolio, revision: current.revision });
+  const before = await readFile(join(stateDir, "personal-assets.json"), "utf8");
+  const resumed = await action(stateDir, "polymarket", "resume");
+  assert.equal(resumed.providers.polymarket.enabled, true);
+  assert.equal(await readFile(join(stateDir, "personal-assets.json"), "utf8"), before);
+  const changed = await readPersonalAssets({ stateDir });
+  changed.portfolio.entries.find((row) => row.id === "sync-polymarket-total").amount += 1;
+  await savePersonalAssets({ stateDir, portfolio: changed.portfolio, revision: changed.revision });
+  await assert.rejects(action(stateDir, "polymarket", "resume"), /金额或持仓仍有手动修改/);
+});
+
 test("real account notes and changes to amount, currency, category or counted basis still pause collection", async (context) => {
   for (const change of [
     (portfolio) => { portfolio.accounts.find((row) => row.id === "okx-exchange").note = "Do not overwrite my allocation"; },
