@@ -75,9 +75,16 @@ test("screenshot stock quantities revalue only the existing holding and preserve
 });
 
 function usSource(symbol, change = () => {}) {
-  const product = symbol === "usSPY" ? ["标普500指数ETF-SPDR", "SPY.AM", "State Street Spdr S&P 500 Etf", "GP-ETF"] : ["SpaceX", "SPCX.OQ", "Space Exploration Technologies Corp.", "GP"];
+  const products = {
+    usSPY: ["标普500指数ETF-SPDR", "SPY.AM", "State Street Spdr S&P 500 Etf", "GP-ETF", "b1eac6d5353030d6b8cafd4554462d53504452"],
+    usSPCX: ["SpaceX", "SPCX.OQ", "Space Exploration Technologies Corp.", "GP"],
+    usTEM: ["Tempus AI", "TEM.OQ", "Tempus Ai, Inc.", "GP"],
+    usPONY: ["小马智行", "PONY.OQ", "Pony Ai Inc", "GP", "d0a1c2edd6c7d0d0"],
+    usSFTBY: ["软银", "SFTBY.PS", "Softbank Group Corp", "GP", "c8edd2f8"],
+  };
+  const product = products[symbol];
   const fields = Array(73).fill(""); fields[0] = "200"; fields[1] = "NAME"; fields[2] = product[1]; fields[3] = "147.49"; fields[30] = "2026-10-23 16:00:01"; fields[35] = "USD"; fields[46] = product[2]; fields[56] = product[3]; change(fields);
-  const name = symbol === "usSPY" ? Buffer.from("b1eac6d5353030d6b8cafd4554462d53504452", "hex") : Buffer.from(product[0]);
+  const name = product[4] ? Buffer.from(product[4], "hex") : Buffer.from(product[0]);
   const text = fields.join("~").split("NAME");
   const body = Buffer.concat([Buffer.from(`v_${symbol}="` + text[0]), name, Buffer.from(text[1] + '\";\n')]);
   return async (url, init) => { assert.equal(url, "https://qt.gtimg.cn/q=" + symbol); assert.equal(init.redirect, "error"); return new Response(body); };
@@ -389,6 +396,46 @@ test("ZA VOO closing price refreshes its USD floating PnL without changing the o
   assert.deepEqual(next.portfolio.stockPnl[0], { accountId: "account-1", amount: 0, currency: "USD", asOf: "2026-10-26", source: "api", asOfBasis: "statement", fetchedAt: next.portfolio.stockPnl[0].fetchedAt, estimated: true, costBasis: 260 });
   assert.equal(next.portfolio.entries.find(row => row.id === "voo").amount, 260);
   assert.equal(next.portfolio.entries.find(row => row.id === "fund").amount, 100);
+});
+test("uSmart five US holdings use screenshot cost and refresh floating PnL only after complete matching quotes", async t => {
+  const stateDir = await mkdtemp(join(tmpdir(), "assets-usmart-pnl-")); t.after(() => rm(stateDir, { recursive: true, force: true }));
+  const positions = [
+    ["spy", "usSPY", "SPDR 标普500 ETF（SPY）", "股票ETF", "2", "752.612"],
+    ["spcx", "usSPCX", "SpaceX（SPCX）", "股票", "10", "138.895"],
+    ["tem", "usTEM", "Tempus AI（TEM）", "股票", "10", "82.590"],
+    ["pony", "usPONY", "小马智行（PONY）", "股票", "150", "4.780"],
+    ["sftby", "usSFTBY", "软银集团 ADR（SFTBY）", "股票", "25", "11.740"],
+  ];
+  const portfolio = emptyPortfolio(); portfolio.accounts[0].id = "usmart-us"; portfolio.accounts[0].platform = "盈立"; portfolio.accounts[0].basis = "holdings";
+  portfolio.entries = positions.map(([id, , name, category]) => ({ id, accountId: "usmart-us", kind: "holding", name, category, currency: "USD", amount: 1, asOf: "2026-10-23", source: "screenshot" }));
+  portfolio.entries.push({ id: "cash", accountId: "usmart-us", kind: "holding", name: "美元现金", category: "现金", currency: "USD", amount: 0.01, asOf: "2026-10-23", source: "manual" });
+  let state = await savePersonalAssets({ stateDir, portfolio, revision: 0 });
+  const initial = now;
+  for (const [id, symbol, , , quantity, price] of positions) {
+    state = await configureAssetFund({ stateDir, entryId: id, symbol, quantity, confirmedOn: "2026-10-24", revision: state.revision, now: initial,
+      fetchImpl: usSource(symbol, f => { f[3] = price; }) });
+  }
+  const { configureAssetStockPnlEstimate } = await import("../src/personal-assets-funds.mjs");
+  state = await configureAssetStockPnlEstimate({ stateDir, accountId: "usmart-us", costBasisAmount: 6186.05, confirmedOn: "2026-10-24", revision: state.revision, now: initial });
+  assert.equal(state.portfolio.stockPnl[0].amount, -1455.48);
+  const later = new Date("2026-10-26T23:00:00Z");
+  const fetchImpl = (url, init) => {
+    const symbol = url.split("=")[1]; const position = positions.find(row => row[1] === symbol);
+    return usSource(symbol, f => { f[3] = String(Number(position[5]) + 1); f[30] = "2026-10-26 16:00:01"; })(url, init);
+  };
+  const cycle = await runAssetFundCycle({ stateDir, now: later, fetchImpl });
+  assert.deepEqual(cycle.stockPnl, { attempted: 1, applied: 1, failed: 0 });
+  const updated = await readPersonalAssets({ stateDir });
+  assert.equal(updated.portfolio.stockPnl[0].amount, -1258.48);
+  assert.equal(updated.portfolio.stockPnl[0].asOf, "2026-10-26");
+  assert.equal(updated.portfolio.entries.find(row => row.id === "cash").amount, 0.01);
+  const before = updated.portfolio.stockPnl[0];
+  const failed = await runAssetFundCycle({ stateDir, now: new Date("2026-10-27T23:00:00Z"), fetchImpl: (url, init) => {
+    if (url.endsWith("usPONY")) throw Error("missing quote");
+    return usSource(url.split("=")[1], f => { f[30] = "2026-10-27 16:00:01"; })(url, init);
+  } });
+  assert.equal(failed.stockPnl.applied, 0); assert.equal(failed.stockPnl.failed, 1);
+  assert.deepEqual((await readPersonalAssets({ stateDir })).portfolio.stockPnl[0], before);
 });
 test("an incomplete stock close retains the full last good PnL and its date and timestamp", async t => {
   const { stateDir, state } = await pnlFixture(t); const oldPnl = state.portfolio.stockPnl;

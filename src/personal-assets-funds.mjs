@@ -261,18 +261,22 @@ export async function configureAssetFund({ stateDir, entryId, isin, symbol, quan
 const pnlFingerprint = (state, accountId) => hash({ account: state.portfolio.accounts.find(row => row.id === accountId), pnl: state.portfolio.stockPnl?.find(row => row.accountId === accountId) || null });
 function estimateStockPnl(state, config, estimate) {
   const account = state.portfolio.accounts.find(row => row.id === estimate.accountId);
-  const currency = account?.platform === "A股" ? "CNY" : account?.platform === "ZA Bank" ? "USD" : null;
+  const usmart = account?.id === "usmart-us" && account.platform === "盈立";
+  const currency = account?.platform === "A股" ? "CNY" : account?.platform === "ZA Bank" || usmart ? "USD" : null;
   if (!currency || account.basis !== "holdings" || account.reviewStatus === "pending") throw fail("账户统计口径已变化，浮动盈亏估算暂停。", 409);
   const entries = state.portfolio.entries.filter(row => row.accountId === account.id && row.kind === "holding" && ["股票", "股票ETF"].includes(row.category));
   const bindings = entries.map(entry => config.bindings.find(row => row.entryId === entry.id));
-  if (!entries.length || bindings.some(row => !row?.enabled || (currency === "CNY" ? !row.symbol || STOCKS[row.symbol]?.currency !== "CNY" : row.isin !== "US9229083632"))
+  if (!entries.length || usmart && (entries.length !== 5 || new Set(bindings.map(row => row?.symbol)).size !== 5
+    || bindings.some(row => !["usSPY", "usSPCX", "usTEM", "usPONY", "usSFTBY"].includes(row?.symbol)))
+    || bindings.some(row => !row?.enabled || (currency === "CNY" ? !row.symbol || STOCKS[row.symbol]?.currency !== "CNY" : usmart ? STOCKS[row.symbol]?.currency !== "USD" : row.isin !== "US9229083632"))
     || bindings.some(row => target(state, row.entryId).fingerprint !== row.fingerprint)) throw fail("股票或固定数量已修改，浮动盈亏估算暂停。", 409);
   const positions = bindings.map(({ entryId, symbol, isin, quantity, confirmedOn }) => ({ entryId, ...(symbol ? { symbol } : { isin }), quantity, confirmedOn })).sort((a,b) => a.entryId.localeCompare(b.entryId));
   if (estimate.positions && hash(positions) !== hash(estimate.positions)) throw fail("股票或固定数量已修改，浮动盈亏估算暂停。", 409);
   const dates = new Set(bindings.map(row => row.quote?.date));
-  if (dates.size !== 1 || bindings.some(row => row.lastError || row.quote?.priceBasis !== "market-close" || currency === "CNY" && !row.quote.observedAt || !row.lastFetchedAt)
+  if (dates.size !== 1 || bindings.some(row => row.lastError || row.quote?.priceBasis !== (usmart ? "market-quote" : "market-close")
+    || currency === "CNY" && !row.quote.observedAt || usmart && (!row.quote.sourceTime?.startsWith(row.quote.date + " ") || row.quote.timeBasis !== "provider-timezone-unverified") || !row.lastFetchedAt)
     || entries.some((entry, i) => entry.currency !== currency || entry.asOf !== bindings[i].quote.date || entry.amount !== Number((Number(bindings[i].quantity) * Number(bindings[i].quote.price ?? bindings[i].quote.nav)).toFixed(8)))) {
-    throw fail("收盘报价未完整对齐，保留上次浮动盈亏估算。");
+    throw fail("持仓报价未完整对齐，保留上次浮动盈亏估算。");
   }
   const amount = Number((entries.reduce((sum, row) => sum + row.amount, 0) - estimate.costBasisAmount).toFixed(2));
   const fetchedAt = bindings.map(row => row.lastFetchedAt).sort().at(-1);
