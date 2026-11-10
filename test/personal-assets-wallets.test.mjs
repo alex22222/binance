@@ -160,6 +160,22 @@ test("DeFi coverage distinguishes updating, stale, incomplete and failed reads w
   assert.equal(failed.coverage.join(" ").includes("private upstream text"), false);
 });
 
+test("DeFi incomplete scope reports the specific shape without exposing source values", async () => {
+  const cases = [
+    [{ assetStatus: 1, updateAt: time.getTime() }, "协议概览范围不完整：缺少钱包列表"],
+    [{ assetStatus: 1, updateAt: time.getTime(), walletIdPlatformList: [{ platformList: [] }, { platformList: [] }] }, "协议概览范围不完整：返回多个钱包"],
+    [{ assetStatus: 1, updateAt: time.getTime(), walletIdPlatformList: [], hasMore: true }, "协议概览范围不完整：存在未读取分页"],
+    [{ assetStatus: 1, updateAt: time.getTime(), walletIdPlatformList: [{ platformList: null }] }, "协议概览范围不完整：协议列表格式无效"],
+  ];
+  for (const [defi, reason] of cases) {
+    const data = fixture(); data.defi = defi;
+    const result = await run({ wallets: [wallets[0]], ...fakeFetch(data) });
+    assert.match(result.coverage.join(" "), new RegExp(reason));
+    assert.equal(result.total, 500 + 100.125 * 0.998);
+    assert.equal(result.valuationComplete, false);
+  }
+});
+
 test("fresh DeFi protocol names are shown for review without adding reference assets to the wallet total", async () => {
   const data = fixture();
   data.defi.walletIdPlatformList = [{ platformList: [

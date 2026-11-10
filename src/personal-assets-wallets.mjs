@@ -123,10 +123,12 @@ function defiOverview(data, at) {
   if (data?.assetStatus !== 1) return unknown("协议概览状态未完成");
   if (!Number.isSafeInteger(updated) || updated > at.getTime() + 10_000) return unknown("协议概览时点无效");
   if (at.getTime() - updated > 300_000) return unknown("协议概览已过期");
-  if (!Array.isArray(data.walletIdPlatformList) || data.walletIdPlatformList.length > 1 || !noMorePages(data)) return unknown("协议概览范围不完整");
+  if (!Array.isArray(data.walletIdPlatformList)) return unknown("协议概览范围不完整：缺少钱包列表");
+  if (data.walletIdPlatformList.length > 1) return unknown("协议概览范围不完整：返回多个钱包");
+  if (!noMorePages(data)) return unknown("协议概览范围不完整：存在未读取分页");
   if (!data.walletIdPlatformList.length) return { clear: true, names: [] };
   const wallet = data.walletIdPlatformList[0];
-  if (!wallet || !Array.isArray(wallet.platformList) || wallet.platformList.length > 20) return unknown("协议概览范围不完整");
+  if (!wallet || !Array.isArray(wallet.platformList) || wallet.platformList.length > 20) return unknown("协议概览范围不完整：协议列表格式无效");
   if (!wallet.platformList.length) return wallet.totalAssets === undefined || typeof wallet.totalAssets === "string" && /^0(?:\.0+)?$/.test(wallet.totalAssets)
     ? { clear: true, names: [] } : unknown("空协议列表与来源总额不一致");
   return { clear: false, updatedAt: new Date(updated).toISOString(), names: wallet.platformList.map((platform) => {
