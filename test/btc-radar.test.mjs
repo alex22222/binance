@@ -90,7 +90,8 @@ test("evaluates public data without OKX credentials and keeps a deduplicated his
   assert.equal(first.snapshot.data_status.algoId, null);
   assert.deepEqual(first.snapshot.data_status.staleSources, []);
   assert.equal(first.snapshot.data_status.sourceFetchedAt.btcMarket, new Date(NOW).toISOString());
-  assert.deepEqual(first.snapshot.factors.find(({ key }) => key === "deriv").metrics[2], ["舆情多 / 空", "未接入"]);
+  assert.equal(first.snapshot.score, null, "short or missing history never creates a neutral full score");
+  assert.equal(first.snapshot.modelData.missingScore, true);
   assert.deepEqual(first.alert, { status: "NONE", reasons: [] });
   assert.equal(first.snapshot.ladders, undefined, "the UI no longer interpolates touch probabilities");
   assert.deepEqual(first.snapshot.indicators, {
@@ -102,23 +103,23 @@ test("evaluates public data without OKX credentials and keeps a deduplicated his
   await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW + 4 * 3_600_000 });
   const history = await readJson(directory, "history");
   assert.deepEqual(history.map(({ ts }) => ts), ["2026-10-01T21:00:00+08:00", "2026-10-02T01:00:00+08:00"]);
-  assert.deepEqual(Object.keys(history[0].f), ["poly", "fed", "ust", "gold", "tech", "deriv"]);
+  assert.deepEqual(Object.keys(history[0].f), ["rates", "flow", "tech", "deriv", "gold", "poly"]);
   assert.equal((await readJson(directory, "latest")).ts, "2026-10-02T01:00:00+08:00");
 });
 
-test("reuses the last good value of a failed source and fails without one", async () => {
+test("preserves source failure evidence without inventing a current complete score", async () => {
   const directory = await mkdtemp(join(tmpdir(), "btc-radar-stale-"));
   await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW });
   const later = NOW + 4 * 3_600_000;
   const { snapshot } = await runBtcRadar({
     directory, environment: {}, fetchImpl: responses({ "daily-treasury-rates.csv": "FAIL" }), nowMs: later
   });
-  assert.deepEqual(snapshot.data_status.staleSources, [{ key: "treasury", label: "美债收益率", since: new Date(NOW).toISOString() }]);
-  assert.deepEqual(snapshot.factors.find(({ key }) => key === "ust").metrics.at(-1), ["数据日期", "2026-09-30"]);
+  assert.ok(snapshot.modelData.sourceErrors.some(row => row.key === "treasury"));
+  assert.equal(snapshot.score, null);
   const empty = await mkdtemp(join(tmpdir(), "btc-radar-empty-"));
   await assert.rejects(
-    runBtcRadar({ directory: empty, environment: {}, fetchImpl: responses({ "funding-rate-history": "FAIL" }), nowMs: NOW }),
-    /资金费率获取失败且没有可沿用的旧值/
+    runBtcRadar({ directory: empty, environment: {}, fetchImpl: responses({ "/market/ticker": "FAIL" }), nowMs: NOW }),
+    /BTC 行情获取失败且没有可沿用的旧值/
   );
   await assert.rejects(readFile(join(empty, "latest.json")), { code: "ENOENT" });
 });
@@ -131,7 +132,7 @@ test("shows reference indicators without scoring them and survives their outage"
   assert.deepEqual(missing.snapshot.data_status.staleSources, []);
   const available = await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW + 60_000 });
   assert.equal(available.snapshot.score, missing.snapshot.score);
-  assert.deepEqual(available.snapshot.factors, missing.snapshot.factors);
+  assert.equal(available.snapshot.score, null);
   const stale = await runBtcRadar({ directory, environment: {}, fetchImpl: responses(unavailable), nowMs: NOW + 120_000 });
   assert.equal(stale.snapshot.indicators.fearGreed.value, 72);
   assert.deepEqual(stale.snapshot.data_status.staleSources.map(({ key }) => key).sort(), ["fearGreed", "rsi"]);
@@ -146,7 +147,7 @@ test("tracks the contract DCA bot with read-only credentials and alerts when it 
   assert.equal(first.snapshot.position.avg, 83000);
   assert.equal(first.snapshot.position.sl, 79000);
   assert.equal(first.snapshot.data_status.algoId, "bot-1");
-  assert.deepEqual(first.snapshot.factors.find(({ key }) => key === "deriv").metrics[2], ["舆情多 / 空", "50% / 20%"]);
+  assert.equal(first.snapshot.factors.find(({ key }) => key === "deriv").weight, 20);
   assert.equal((await readJson(directory, "state")).trackedAlgoId, "bot-1");
 
   const ended = await runBtcRadar({
@@ -167,12 +168,12 @@ test("tracks the contract DCA bot with read-only credentials and alerts when it 
 test("records an undeliverable alert without losing the evaluation", async () => {
   const directory = await mkdtemp(join(tmpdir(), "btc-radar-alert-"));
   const { snapshot } = await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW });
-  await writeFile(join(directory, "latest.json"), JSON.stringify({ ...snapshot, level: "green", level_name: "偏多 / 低风险" }));
-  const skipped = await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW + 60_000 });
+  const urgent = responses({ "/market/ticker": { code: "0", data: [{ last: "88000" }] } });
+  const skipped = await runBtcRadar({ directory, environment: {}, fetchImpl: urgent, nowMs: NOW + 60_000 });
   assert.equal(skipped.alert.status, "SKIPPED_NO_FEISHU");
   await writeFile(join(directory, "latest.json"), JSON.stringify({ ...snapshot, level: "green" }));
   const failed = await runBtcRadar({
-    directory, environment: { FEISHU_WEBHOOK_URL: "https://open.feishu.cn/hook/test" }, fetchImpl: responses(), nowMs: NOW + 120_000,
+    directory, environment: { FEISHU_WEBHOOK_URL: "https://open.feishu.cn/hook/test" }, fetchImpl: urgent, nowMs: NOW + 120_000,
     send: async () => { throw new Error("Feishu rejected request: HTTP 500"); }
   });
   assert.equal(failed.alert.status, "FAILED");
@@ -259,7 +260,7 @@ test("adopts the first trend state silently and pushes each later switch once", 
     "[BTC 趋势状态] 切换为回避环境",
     "2026-09-30 日收盘 70,000，低于 200 日均线 79,751 约 12.2%（切换线 ±3%）",
     "此前：多头环境",
-    `参考（回测中没有稳定预测力）：雷达 ${Math.round(switched.snapshot.score)} 分（${switched.snapshot.level_name}） · 恐惧贪婪 72（贪婪） · 日线 RSI ${switched.snapshot.indicators.rsi14.closed} · 资金费率均值 0.0100%`,
+    `参考（回测中没有稳定预测力）：雷达评分未就绪 · 恐惧贪婪 72（贪婪） · 日线 RSI ${switched.snapshot.indicators.rsi14.closed} · 3日平均资金费率 当前未核实`,
     "规则：日收盘高于 200 日均线 3% 以上为多头环境，低于 3% 以下为回避环境。回避只表示不持有多头，不是做空信号。",
     "看板：https://spaceflag.site/btc-radar"
   ]);
@@ -319,7 +320,7 @@ test("records the candidate rules each day without pushing them", async () => {
 
 test("applies the routine's important-change rules", () => {
   const position = (overrides = {}) => ({ level: "green", sl: 79000, safety_filled: 2, safety_max: 10, ...overrides });
-  const snapshot = (overrides = {}) => ({ level: "yellow", level_name: "中性", price: 84000, position: position(), ...overrides });
+  const snapshot = (overrides = {}) => ({ score: 50, level: "yellow", level_name: "中性", price: 84000, position: position(), ...overrides });
   assert.deepEqual(btcRadarAlertReasons(snapshot(), snapshot()), []);
   assert.deepEqual(btcRadarAlertReasons(null, snapshot()), []);
   assert.deepEqual(btcRadarAlertReasons(snapshot(), snapshot({ level: "orange", level_name: "警戒" })), ["综合等级升至警戒"]);
@@ -355,7 +356,7 @@ test("applies the routine's important-change rules", () => {
 test("serves saved radar data with an explicit availability status", async () => {
   const directory = await mkdtemp(join(tmpdir(), "btc-radar-view-"));
   assert.deepEqual(await loadBtcRadarView(directory), { status: "MISSING", latest: null, history: [], settings: {} });
-  await writeFile(join(directory, "latest.json"), JSON.stringify({ ts: "2026-10-01T21:00:00+08:00", modelVersion: "pressure-v2-no-touch-probability", score: 60 }));
+  await writeFile(join(directory, "latest.json"), JSON.stringify({ ts: "2026-10-01T21:00:00+08:00", modelVersion: "pressure-v3-trailing-percentiles", score: 60 }));
   await writeFile(join(directory, "history.json"), JSON.stringify(Array.from({ length: 200 }, (_, index) => ({ ts: String(index) }))));
   const view = await loadBtcRadarView(directory, NOW);
   assert.equal(view.status, "AVAILABLE");
@@ -382,7 +383,7 @@ test("stores the total capital used for the page's loss share and rejects bad in
 test("expired required cache is rejected and the API suppresses conclusions after five hours", async () => {
   const directory = await mkdtemp(join(tmpdir(), "btc-radar-p0-expiry-"));
   await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW });
-  await assert.rejects(runBtcRadar({ directory, environment: {}, fetchImpl: responses({ "daily-treasury-rates.csv": "FAIL" }), nowMs: NOW + 6 * HOUR }), /旧值已过期/);
+  await assert.rejects(runBtcRadar({ directory, environment: {}, fetchImpl: responses({ "/market/ticker": "FAIL" }), nowMs: NOW + 6 * HOUR }), /旧值已过期/);
   const view = await loadBtcRadarView(directory, NOW + 6 * HOUR);
   assert.equal(view.status, "STALE");
   assert.equal(view.latest.score, null);
@@ -431,7 +432,7 @@ test("measures returns after each current-version snapshot against the UTC close
   assert.equal(late.forward[30], null, "a horizon past the last close stays empty");
 });
 
-test("each run adds today's daily snapshot, seeded from the four-hour history on the first run", async () => {
+test("warmup scores do not enter daily statistics and historical evidence is retained", async () => {
   const directory = await mkdtemp(join(tmpdir(), "btc-radar-daily-"));
   await writeFile(join(directory, "history.json"), JSON.stringify([
     { ts: "2026-09-30T08:43:00+08:00", modelVersion: "pressure-v2-no-touch-probability", price: 83000, score: 61, level: "orange", f: {} },
@@ -441,23 +442,23 @@ test("each run adds today's daily snapshot, seeded from the four-hour history on
   const fetchImpl = responses({ "bar=1Dutc": dailyCandles(closes) });
   await runBtcRadar({ directory, environment: {}, fetchImpl, nowMs: NOW });
   let daily = await readJson(directory, "daily");
-  assert.deepEqual(daily.snapshots.map(({ date, ts }) => [date, ts]), [["2026-09-30", "2026-09-30T08:43:00+08:00"], ["2026-10-01", "2026-10-01T21:00:00+08:00"]]);
+  assert.deepEqual(daily.snapshots.map(({ date, ts }) => [date, ts]), [["2026-09-30", "2026-09-30T08:43:00+08:00"]]);
   assert.equal(daily.closes.at(-1).date, "2026-09-30");
   assert.equal(daily.closes.length, 210);
   await runBtcRadar({ directory, environment: {}, fetchImpl, nowMs: NOW + 4 * HOUR });
-  assert.equal((await readJson(directory, "daily")).snapshots.length, 2, "01:00 Beijing is before the daily snapshot hour");
+  assert.equal((await readJson(directory, "daily")).snapshots.length, 1);
   await runBtcRadar({ directory, environment: {}, fetchImpl, nowMs: NOW + 12 * HOUR });
   daily = await readJson(directory, "daily");
-  assert.deepEqual(daily.snapshots.map(({ date }) => date), ["2026-09-30", "2026-10-01", "2026-10-02"]);
+  assert.deepEqual(daily.snapshots.map(({ date }) => date), ["2026-09-30"]);
   const view = await loadBtcRadarView(directory, NOW + 12 * HOUR);
-  assert.equal(view.daily.snapshots.length, 3);
-  assert.ok(Math.abs(view.daily.snapshots[0].forward[1] - (closes.at(-1) / 83000 - 1)) < 1e-12);
+  assert.equal(view.daily.snapshots.length, 0, "v2 dates are not relabelled v3");
+  assert.equal(view.daily.otherVersionDays, 1);
 });
 
 test("the API serves daily evidence from saved history before the first daily file and survives a broken one", async () => {
   const directory = await mkdtemp(join(tmpdir(), "btc-radar-daily-view-"));
-  await writeFile(join(directory, "latest.json"), JSON.stringify({ ts: "2026-10-01T21:00:00+08:00", modelVersion: "pressure-v2-no-touch-probability", score: 60 }));
-  await writeFile(join(directory, "history.json"), JSON.stringify([{ ts: "2026-10-01T08:43:00+08:00", modelVersion: "pressure-v2-no-touch-probability", price: 83000, score: 60, level: "orange", f: {} }]));
+  await writeFile(join(directory, "latest.json"), JSON.stringify({ ts: "2026-10-01T21:00:00+08:00", modelVersion: "pressure-v3-trailing-percentiles", score: 60 }));
+  await writeFile(join(directory, "history.json"), JSON.stringify([{ ts: "2026-10-01T08:43:00+08:00", modelVersion: "pressure-v3-trailing-percentiles", price: 83000, score: 60, level: "orange", f: {} }]));
   await writeFile(join(directory, "inputs.json"), JSON.stringify({ trend: { fetchedAt: "x", value: [{ date: "2026-09-30", close: 82000 }, { date: "2026-10-01", close: 84000 }] } }));
   const seeded = await loadBtcRadarView(directory, NOW);
   assert.equal(seeded.daily.snapshots.length, 1);
@@ -468,17 +469,14 @@ test("the API serves daily evidence from saved history before the first daily fi
   assert.equal(broken.daily, null);
 });
 
-test("legacy days are rescored exactly by the current rules from their saved factor scores", async () => {
+test("v2 factor-only records cannot be reconstructed into v3 raw-data percentiles", async () => {
   const directory = await mkdtemp(join(tmpdir(), "btc-radar-rescore-"));
   const { snapshot } = await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW });
   const [entry] = await readJson(directory, "history");
   const asLegacy = { date: "2026-10-01", ts: entry.ts, modelVersion: "legacy", score: 1, level: "green", price: entry.price, f: entry.f };
   const view = btcRadarDailyView({ snapshots: [asLegacy, { ...asLegacy, date: "2026-10-02", f: { fed: 50 } }], closes: [] }, snapshot.modelVersion);
-  assert.equal(view.snapshots.length, 1);
-  assert.equal(view.snapshots[0].score, snapshot.score, "the current model's own score is reproduced from its factor scores");
-  assert.deepEqual(view.snapshots[0].rescoredFrom, { modelVersion: "legacy", score: 1 });
-  assert.equal(view.snapshots[0].modelVersion, snapshot.modelVersion);
-  assert.deepEqual([view.rescoredDays, view.otherVersionDays], [1, 1]);
+  assert.equal(view.snapshots.length, 0);
+  assert.deepEqual([view.rescoredDays, view.otherVersionDays], [0, 2]);
   const manual = btcRadarDailyView({ snapshots: [{ ...asLegacy, f: { poly: 90, fed: 80, ust: 70, gold: 50, tech: 40, deriv: 60 } }], closes: [] }, "pressure-v2-no-touch-probability");
   assert.equal(manual.snapshots[0].score, 62.7);
   assert.equal(manual.snapshots[0].level, "orange");
@@ -491,4 +489,24 @@ test("an unreadable daily file never stops the evaluation and is preserved for r
   const { snapshot } = await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW });
   assert.equal((await readJson(directory, "latest")).ts, snapshot.ts);
   assert.equal(await readFile(join(directory, "daily.json"), "utf8"), "{broken");
+});
+
+test("a calibrated raw-history cache produces a complete v3 score and expired observations cannot be restamped", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "btc-radar-v3-ready-"));
+  const points = Array.from({ length: 400 }, (_, i) => ({
+    date: new Date(NOW - (400 - i) * 86400000).toISOString().slice(0, 10), value: Math.sin(i / 13) + i / 100,
+    availableAt: new Date(NOW - (399 - i) * 86400000).toISOString()
+  }));
+  const history = Object.fromEntries(["yield2", "yield10Change", "etf5", "stable7", "premium", "momentum3", "vol7", "gold10", "funding3", "oi7"].map(key => [key, points]));
+  await writeFile(join(directory, "inputs.json"), JSON.stringify({ percentiles: { fetchedAt: new Date(NOW).toISOString(), value: { history } } }));
+  const first = await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW });
+  assert.equal(first.snapshot.modelVersion, "pressure-v3-trailing-percentiles");
+  assert.ok(Number.isFinite(first.snapshot.score));
+  const factors = first.snapshot.factors.filter(f => f.weight > 0);
+  assert.equal(factors.length, 5);
+  assert.equal(Number(factors.reduce((s, f) => s + f.score * f.weight / 100, 0).toFixed(1)), first.snapshot.score);
+  assert.equal((await readJson(directory, "daily")).snapshots.length, 1);
+  assert.ok(first.snapshot.modelData.sourceErrors.length > 0, "cached daily source reuse retains the outage evidence");
+  const later = await runBtcRadar({ directory, environment: {}, fetchImpl: responses(), nowMs: NOW + 8 * 86400000 });
+  assert.equal(later.snapshot.score, null, "a new HTTP/evaluation timestamp cannot make old raw observations current");
 });

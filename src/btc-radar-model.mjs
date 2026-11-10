@@ -1,11 +1,13 @@
-// BTC pressure model. Non-Polymarket factor formulas retain the original port.
+import { scorePercentileFactors } from "./btc-radar-percentiles.mjs";
+
+// Legacy formulas remain frozen solely for reproducible historical comparison.
 // Calendar touch contracts are quotes only, not future barrier probabilities.
 // Rounding and
 // number formatting reproduce Python exactly: round() and the "f" format spec
 // round the exact binary value half-to-even, which toFixed() does not.
 
 export const BTC_RADAR_LEVELS = Object.freeze(["green", "yellow", "orange", "red"]);
-export const BTC_RADAR_MODEL_VERSION = "pressure-v2-no-touch-probability";
+export const BTC_RADAR_MODEL_VERSION = "pressure-v3-trailing-percentiles";
 
 function exactParts(value) {
   const view = new DataView(new ArrayBuffer(8));
@@ -112,25 +114,28 @@ export function evaluateRadarPosition(held, price) {
   };
 }
 
-// Sentiment may be null when the OKX news API is not configured.
-export function evaluateBtcRadar(input) {
+function rawPredictionQuotes(input) {
   const price = input.price;
-  const btc = input.btc_closes;
-  const gold = input.gold_closes;
-  const factors = [];
-
   const quote = (period, side, below) => {
     const points = Object.entries(period?.[side] || {}).map(([px, yes]) => [Number(px), Number(yes)])
       .filter(([px, yes]) => px > 0 && yes >= 0 && yes < 1 && (below ? px < price : px > price))
       .sort((a, b) => Math.abs(a[0] - price) - Math.abs(b[0] - price));
     return points.length ? `$${pyFixed(points[0][0], 0, { grouping: true })} · Yes ${pyFixed(points[0][1] * 100, 1)}¢` : "暂无有效报价";
   };
-  factors.push({
+  return {
     key: "poly", name: "预测市场 Polymarket", weight: 0, score: null,
     metrics: [["本周下沿触价盘", quote(input.poly_week, "dips", true)], ["本周上沿触价盘", quote(input.poly_week, "reaches", false)],
       ["本月下沿触价盘", quote(input.poly_month, "dips", true)], ["本月上沿触价盘", quote(input.poly_month, "reaches", false)]],
     note: "仅展示有效合约原始 Yes 报价，各自按合约约定区间结算；不是从现在起的触价概率，不插值、不计分。"
-  });
+  };
+}
+
+// Sentiment may be null when the OKX news API is not configured.
+export function evaluateLegacyBtcRadar(input) {
+  const price = input.price;
+  const btc = input.btc_closes;
+  const gold = input.gold_closes;
+  const factors = [rawPredictionQuotes(input)];
 
   const fed = input.fed;
   let score = clamp(50 + 50 * (0.6 * (fed.p_hike_2026_any - fed.p_cut_2026_any) + 0.4 * (fed.p_hike_next - fed.p_cut_next)));
@@ -195,7 +200,7 @@ export function evaluateBtcRadar(input) {
   const top = [...scored].sort((left, right) => (-left.score * left.weight) - (-right.score * right.weight)).slice(0, 2);
   return {
     ts: input.ts,
-    modelVersion: BTC_RADAR_MODEL_VERSION,
+    modelVersion: "pressure-v2-no-touch-probability",
     price,
     score: pyRound(total, 1),
     level: riskLevel,
@@ -205,4 +210,23 @@ export function evaluateBtcRadar(input) {
     position,
     sources: input.sources || []
   };
+}
+
+export function evaluateBtcRadar(input) {
+  const { factors, score } = scorePercentileFactors({ ...input.percentiles, nowMs: Date.parse(input.ts) });
+  factors.push(rawPredictionQuotes(input));
+  const fed = input.fed;
+  if (fed) {
+    const rates = factors.find(f => f.key === "rates");
+    rates.metrics.push([`${fed.next_meeting} · Polymarket原始加息报价（不计分）`,
+      fed.contract?.eventId && Number.isFinite(fed.p_hike_next) ? percent(fed.p_hike_next) : "未核实"]);
+    rates.metrics.push(["FOMC合约", fed.contract?.url || "旧缓存无合约身份，不采用"]);
+  }
+  const [riskLevel, levelName] = score === null ? ["unknown", "评分未就绪"] : level(score);
+  const top = factors.filter(f => f.score !== null).sort((a, b) => (b.score - 50) * b.weight - (a.score - 50) * a.weight).slice(0, 2);
+  return { ts: input.ts, modelVersion: BTC_RADAR_MODEL_VERSION, price: input.price,
+    score: score === null ? null : pyRound(score, 1), level: riskLevel, level_name: levelName,
+    summary: score === null ? "一年历史或资金流数据不完整，不补50分、不发布杠杆额度。" :
+      `综合 ${pyFixed(score, 0)} 分（${levelName}）。主要压力来自${top.map(f => f.name).join("和")}；非预测。`,
+    factors, position: input.position ? evaluateRadarPosition(input.position, input.price) : null, sources: input.sources || [] };
 }

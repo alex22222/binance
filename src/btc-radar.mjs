@@ -11,39 +11,33 @@ import {
   loadDcaPosition,
   loadAccountPositions,
   loadGridPositions,
+  loadLeveragedAccountRisk,
+  loadRadarPercentiles,
   loadFearGreed,
   loadFearGreedHistory,
   loadFedExpectations,
   loadFundingHistory,
-  loadFundingRates,
-  loadGoldCloses,
   loadMacroSeries,
-  loadOpenInterestChange,
   loadPolymarketMonth,
-  loadPolymarketWeek,
-  loadSentiment,
-  loadTreasuryYields
+  loadPolymarketWeek
 } from "./btc-radar-sources.mjs";
 import { observationRows, updateObservations } from "./btc-observe.mjs";
 import { BTC_TREND_LABELS, btcTrendSummary } from "./btc-trend.mjs";
 import { dashboardPublicOrigin } from "./dashboard-auth.mjs";
 import { sendManagerFeishu } from "./fund-manager-delivery.mjs";
-import { btcRadarFreshness } from "./btc-radar-risk.mjs";
+import { btcRadarFreshness, leverageRisk } from "./btc-radar-risk.mjs";
 
 export const BTC_RADAR_HISTORY_LIMIT = 180;
 const HISTORY_RETENTION_MS = 60 * 86_400_000;
 
 const PUBLIC_SOURCES = [
   ["btcMarket", "BTC 行情", loadBtcMarket],
-  ["gold", "黄金", loadGoldCloses],
-  ["funding", "资金费率", loadFundingRates],
-  ["openInterest", "持仓量", loadOpenInterestChange],
-  ["fed", "美联储利率预期", loadFedExpectations],
-  ["treasury", "美债收益率", loadTreasuryYields]
+  ["percentiles", "一年分位数输入", loadRadarPercentiles]
 ];
 
 // Displayed beside the factors but never scored.
 const REFERENCE_SOURCES = [
+  ["fed", "FOMC原始报价（不计分）", loadFedExpectations],
   ["polyWeek", "Polymarket 本周", loadPolymarketWeek],
   ["polyMonth", "Polymarket 本月", loadPolymarketMonth],
   ["rsi", "BTC 日线 RSI", loadBtcDailyRsi],
@@ -218,7 +212,7 @@ const levelRank = (level) => BTC_RADAR_LEVELS.indexOf(level);
 
 export function btcRadarAlertReasons(previous, current, events = []) {
   const reasons = [];
-  if (previous && previous.modelVersion === current.modelVersion && levelRank(current.level) > levelRank(previous.level)) reasons.push(`综合等级升至${current.level_name}`);
+  if (previous && Number.isFinite(previous.score) && Number.isFinite(current.score) && previous.modelVersion === current.modelVersion && levelRank(current.level) > levelRank(previous.level)) reasons.push(`综合等级升至${current.level_name}`);
   for (const now of current.positions || (current.position ? [current.position] : [])) {
     if (now.stale) continue;
     const before = now.id ? previous?.positions?.find((held) => held.id === now.id) : previous?.position || null;
@@ -245,7 +239,7 @@ export function btcRadarAlertText(snapshot, reasons, environment = process.env) 
   const distance = (value) => value == null ? "未确认" : `${pyFixed(value, 2, { sign: true })}%`;
   const lines = [
     `[BTC 风控雷达] ⚠️ 需要关注：${reasons.join("；")}`,
-    `综合 ${pyFixed(snapshot.score, 0)} 分（${snapshot.level_name}），主要压力：${top.map(({ name }) => name).join("、")}`,
+    Number.isFinite(snapshot.score) ? `综合 ${pyFixed(snapshot.score, 0)} 分（${snapshot.level_name}），主要压力：${top.map(({ name }) => name).join("、")}` : "综合评分未就绪，未发布杠杆额度；账户风险单独核对。",
     position
       ? `现价 ${pyFixed(snapshot.price, 0, { grouping: true })}；距止损 ${distance(position.d_sl)}，距强平 ${distance(position.d_liq)}，距止盈 ${distance(position.d_tp)}`
       : `现价 ${pyFixed(snapshot.price, 0, { grouping: true })}；未接入持仓`
@@ -276,7 +270,7 @@ function radarLink(environment) {
 // Pushed once for each switch between the long and avoid environments.
 export function btcTrendAlertText(trend, snapshot, environment = process.env) {
   const band = pyFixed(trend.band * 100, 0);
-  const references = [`雷达 ${pyFixed(snapshot.score, 0)} 分（${snapshot.level_name}）`];
+  const references = [Number.isFinite(snapshot.score) ? `雷达 ${pyFixed(snapshot.score, 0)} 分（${snapshot.level_name}）` : "雷达评分未就绪"];
   const { fearGreed, rsi14 } = snapshot.indicators || {};
   if (fearGreed) references.push(`恐惧贪婪 ${fearGreed.value}（${fearGreed.label}）`);
   if (rsi14) references.push(`日线 RSI ${rsi14.closed}`);
@@ -313,7 +307,7 @@ export async function runBtcRadar({
     // An unreadable daily file must not stop the evaluation; it is left as is.
     readJson(paths.daily, null).catch(() => undefined)
   ]);
-  const context = { fetchImpl, nowMs };
+  const context = { fetchImpl, nowMs, previousPercentiles: previousInputs.percentiles?.value };
   if (!previousInputs.dcaPositions && previousInputs.position) {
     const legacy = previousInputs.position.value;
     const position = legacy ? { ...legacy, id: legacy.id || `dca:${state.trackedAlgoId || "legacy"}`,
@@ -332,8 +326,13 @@ export async function runBtcRadar({
   let events = [];
   let algoId = state.trackedAlgoId || null;
   if (credentials) {
-    const privateGet = createOkxReadOnlyClient({ ...credentials, fetchImpl });
-    await collectSource(["sentiment", "OKX 舆情", () => loadSentiment(privateGet)], previousInputs, context, stale, inputs);
+    const get = createOkxReadOnlyClient({ ...credentials, fetchImpl });
+    const requests = new Map();
+    const privateGet = (path, params = {}) => {
+      const key = JSON.stringify([path, params]);
+      if (!requests.has(key)) requests.set(key, get(path, params));
+      return requests.get(key);
+    };
     await collectSource(["dcaPositions", "OKX 合约马丁格尔", async () => {
       const result = await loadDcaPosition(privateGet, {
         pinnedAlgoId: environment.BTC_RADAR_DCA_ALGO_ID || null,
@@ -346,6 +345,7 @@ export async function runBtcRadar({
     }], previousInputs, context, stale, inputs, { optional: true, reportFailure: true });
     await Promise.all([
       collectSource(["accountPositions", "OKX 普通永续", () => loadAccountPositions(privateGet)], previousInputs, context, stale, inputs, { optional: true, reportFailure: true }),
+      collectSource(["accountRisk", "OKX 全部杠杆与止损覆盖", () => loadLeveragedAccountRisk(privateGet)], previousInputs, context, stale, inputs, { optional: true, reportFailure: true }),
       collectSource(["gridPositions", "OKX 合约网格", () => loadGridPositions(privateGet)], previousInputs, context, stale, inputs, { optional: true, reportFailure: true })
     ]);
   }
@@ -362,18 +362,20 @@ export async function runBtcRadar({
     ts: beijingTimestamp(nowMs),
     price: inputs.btcMarket.value.price,
     btc_closes: inputs.btcMarket.value.btc_closes,
-    gold_closes: inputs.gold.value,
-    funding: inputs.funding.value,
-    oi_7d_change_pct: inputs.openInterest.value,
-    sentiment: inputs.sentiment?.value ?? null,
+    percentiles: inputs.percentiles.value,
     poly_week: inputs.polyWeek?.expired ? null : inputs.polyWeek?.value,
     poly_month: inputs.polyMonth?.expired ? null : inputs.polyMonth?.value,
-    fed: inputs.fed.value,
-    treasury: inputs.treasury.value,
+    fed: inputs.fed?.expired ? null : inputs.fed?.value,
     position: primary,
     sources: BTC_RADAR_SOURCES
   });
   snapshot.positions = positions.map((held) => evaluateRadarPosition(held, inputs.btcMarket.value.price));
+  const accountStale = !inputs.accountRisk || inputs.accountRisk.expired || stale.some(s => s.key === "accountRisk");
+  const account = inputs.accountRisk?.value || { positions: [], complete: false, errors: [credentials ? "ACCOUNT_SOURCE_UNAVAILABLE" : "OKX_NOT_CONFIGURED"] };
+  snapshot.accountRisk = leverageRisk({ ...account, fetchedAt: inputs.accountRisk?.fetchedAt || null,
+    complete: account.complete && !accountStale, positions: account.positions.map(row => accountStale ?
+      { ...row, stale: true, stopCoverage: null, stopSize: null, coverageLevel: "unknown" } : row) }, snapshot.score);
+  snapshot.modelData = { sourceErrors: inputs.percentiles.value.sourceErrors || [], calibration: "trailing-365-calendar-days", missingScore: snapshot.score === null };
   snapshot.indicators = {
     rsi14: inputs.rsi?.expired ? null : inputs.rsi?.value ?? null,
     fearGreed: inputs.fearGreed?.expired ? null : inputs.fearGreed?.value ?? null
@@ -500,6 +502,12 @@ export async function loadBtcRadarView(directory, nowMs = Date.now()) {
         ...(freshness.expired || stale ? { stale: true, level: "yellow", level_name: "持仓数据失效" } : {}) };
     });
     const position = positions.find(held => held.id === latest.position?.id) || positions[0] || null;
+    const accountStale = !latest.accountRisk?.fetchedAt || btcRadarFreshness({ ts: latest.accountRisk.fetchedAt }, nowMs).expired;
+    const accountRisk = leverageRisk({ ...latest.accountRisk,
+      complete: Boolean(latest.accountRisk?.complete) && !accountStale,
+      positions: (latest.accountRisk?.positions || []).map(row => accountStale || freshness.expired ?
+        { ...row, stale: true, stopCoverage: null, stopSize: null, coverageLevel: "unknown" } : row)
+    }, freshness.expired ? null : latest.score);
     // Saved daily evidence stays visible when the current conclusion expires.
     let daily = null;
     try {
@@ -508,7 +516,7 @@ export async function loadBtcRadarView(directory, nowMs = Date.now()) {
         (await readJson(join(directory, "inputs.json"), {}))?.trend?.value || []), latest.modelVersion);
     } catch {}
     return { status: freshness.expired ? "STALE" : "AVAILABLE", latest: {
-      ...latest, positions, position,
+      ...latest, positions, position, accountRisk,
       ...(freshness.expired ? { score: null, level: "unknown", level_name: "数据失效", summary: "评估版本或数据时效失效，仅保留历史快照。", factors: freshness.expiredSources.includes("modelVersion") ? [] : (latest.factors || []).map(f => ({ ...f, score: null })) } : {})
     }, history: history.slice(-BTC_RADAR_HISTORY_LIMIT), daily, settings, freshness };
   } catch {

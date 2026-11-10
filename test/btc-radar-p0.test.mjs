@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { evaluateBtcRadar, evaluateRadarPosition } from "../src/btc-radar-model.mjs";
+import { evaluateLegacyBtcRadar as evaluateBtcRadar, evaluateRadarPosition } from "../src/btc-radar-model.mjs";
 import { priceLadder, selectWeeklyEvent } from "../src/btc-radar-sources.mjs";
 import * as risk from "../src/btc-radar-risk.mjs";
 import { btcRadarAlertReasons } from "../src/btc-radar.mjs";
@@ -63,9 +63,9 @@ test("freshness expires the oldest scored input, not merely the newly stamped sn
   const old = new Date(NOW - 6 * HOUR).toISOString();
   assert.equal(risk.btcRadarFreshness({ ts }, NOW).expired, false);
   assert.equal(risk.btcRadarFreshness({ ts }, NOW + 5 * HOUR + 1).expired, true);
-  const stale = risk.btcRadarFreshness({ ts, data_status: { sourceFetchedAt: { treasury: old } } }, NOW);
+  const stale = risk.btcRadarFreshness({ ts, data_status: { sourceFetchedAt: { percentiles: old } } }, NOW);
   assert.equal(stale.expired, true);
-  assert.ok(stale.expiredSources.includes("treasury"));
+  assert.ok(stale.expiredSources.includes("percentiles"));
   assert.equal(risk.btcRadarFreshness({ ts: "invalid" }, NOW).expired, true);
 });
 

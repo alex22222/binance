@@ -34,7 +34,7 @@ async function render(payload, status = 200, post = null) {
 }
 
 const latest = {
-  modelVersion: "pressure-v2-no-touch-probability",
+  modelVersion: "pressure-v3-trailing-percentiles",
   ts: new Date().toISOString(),
   price: 83555.9,
   score: 63.5,
@@ -60,7 +60,7 @@ test("renders the migrated radar from the server API and escapes every saved str
     latest,
     history: [{ modelVersion: latest.modelVersion, ts: "2026-10-01T09:00:00+08:00", price: 83000, score: 60 }, { modelVersion: latest.modelVersion, ts: latest.ts, price: 83555.9, score: 63.5 }]
   });
-  assert.match(html, /<a href="\/btc-radar" aria-current="page">BTC 风控<\/a>/);
+  assert.match(html, /<a href="\/crypto" aria-current="page">BTC 与收藏<\/a>/);
   assert.doesNotMatch(html, /fonts\.googleapis|window\.claude/);
   assert.equal(get("pressureValue").textContent, "64");
   assert.equal(get("lvpill").className, "pill lv-orange");
@@ -346,7 +346,7 @@ test("factor cards show raw data, score, contribution and the scoring rule, and 
   const view = await render({ status: "AVAILABLE", latest: v2Latest, history: [] });
   assert.equal(view.get("pressureValue").textContent, "63");
   const cards = view.get("factors").innerHTML;
-  assert.match(cards, /美联储利率预期[\s\S]*权重 20 \/ 75[\s\S]*lv-t-red">80<[\s\S]*贡献 \+8\.0 分[\s\S]*10月加息[\s\S]*评分规则 · 截断在 0–100[\s\S]*0\.6 ×（年内加息 − 年内降息概率）[\s\S]*模型解读（未验证）：市场押注加息/);
+  assert.match(cards, /美联储利率预期[\s\S]*权重 20 \/ 75[\s\S]*lv-t-red">80<[\s\S]*贡献 \+8\.0 分[\s\S]*10月加息[\s\S]*评分规则 · 0–100[\s\S]*0\.6 ×（年内加息 − 年内降息概率）[\s\S]*模型解读（未验证）：市场押注加息/);
   assert.match(cards, /BTC 技术面[\s\S]*贡献 −2\.0 分/);
   assert.match(cards, /预测市场 Polymarket[\s\S]*原始盘口 · 不计分[\s\S]*不计分：只展示各合约区间的原始 Yes 报价/);
   assert.doesNotMatch(cards, /Polymarket<\/h3><span class="tag">原始盘口 · 不计分<\/span><\/div><div class="fac-score">/);
@@ -415,4 +415,33 @@ test("the validity verdict follows the sign and size of the 7-day rank correlati
   assert.match(empty.get("dailyTable").innerHTML, /当前版本尚无每日快照/);
   const missing = await render({ status: "AVAILABLE", latest: v2Latest, history: [] });
   assert.match(missing.get("daily").innerHTML, /每日快照暂时读取失败/);
+});
+
+test("v3 renders HYPE partial stops red, all-symbol leverage breaches, and expires them on the browser clock", async () => {
+  const accountRisk = { fetchedAt: new Date().toISOString(), complete: true, positions: [
+    { id: "hype", source: "account", instId: "HYPE-USDT-SWAP", direction: "short", marginMode: "cross", size: 10, sizeUnit: "contracts", leverage: 10, stopCoverage: 0.4, overLimit: true },
+    { id: "btc", source: "account", instId: "BTC-USDT-SWAP", direction: "long", marginMode: "isolated", size: 2, sizeUnit: "contracts", leverage: 3, stopCoverage: 1, overLimit: false }
+  ] };
+  const view = await render({ status: "AVAILABLE", latest: { ...latest, position: null, score: 60, accountRisk } });
+  assert.equal(view.get("pospill").textContent, "退出测算未就绪");
+  assert.match(view.get("leverageLimit").textContent, /3x/);
+  assert.match(view.get("leverageTable").innerHTML, /HYPE-USDT-SWAP[\s\S]*class="neg">40%/);
+  assert.match(view.get("leverageTable").innerHTML, /class="neg">杠杆超限/);
+  assert.match(view.get("accountAlert").textContent, /HYPE.*超限/);
+  view.run('radar.score=70;renderLeverage(radar)');
+  assert.match(view.get("leverageLimit").textContent, /仅限现货/);
+  assert.equal(view.get("leverageTable").innerHTML.match(/class="neg">杠杆超限/g).length, 2);
+  view.run('Date.now=()=>Date.parse(radar.ts)+6*3600000;updateHealth()');
+  assert.doesNotMatch(view.get("leverageTable").innerHTML, /40%|未超限/);
+  assert.match(view.get("leverageLimit").textContent, /未核实/);
+});
+
+test("missing full-model score never grants 5x and unknown stops are not labelled 100%", async () => {
+  const view = await render({ status: "AVAILABLE", latest: { ...latest, score: null, accountRisk: {
+    fetchedAt: new Date().toISOString(), complete: false, positions: [
+      { instId: "HYPE-USDT-SWAP", source: "account", size: 10, leverage: 10, stopCoverage: null, overLimit: null }
+    ] } } });
+  assert.match(view.get("leverageLimit").textContent, /未核实/);
+  assert.doesNotMatch(view.get("leverageLimit").textContent, /5x/);
+  assert.doesNotMatch(view.get("leverageTable").innerHTML, /100\.0%|未超限/);
 });

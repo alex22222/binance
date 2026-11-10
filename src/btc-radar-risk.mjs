@@ -7,14 +7,24 @@
 // its existing one-hour grace period; this is not real-time position monitoring.
 export function btcRadarFreshness(snapshot, nowMs = Date.now()) {
   const maxAgeMs = 5 * 3_600_000;
-  const scored = new Set(["btcMarket", "gold", "funding", "openInterest", "fed", "treasury", "sentiment"]);
+  const scored = new Set(["btcMarket", "percentiles"]);
   const stamps = [["snapshot", snapshot?.ts], ...Object.entries(snapshot?.data_status?.sourceFetchedAt || {}).filter(([key]) => scored.has(key))];
   const expiredSources = stamps.filter(([, stamp]) => {
     const ms = Date.parse(stamp);
     return !Number.isFinite(ms) || nowMs - ms > maxAgeMs || ms - nowMs > 60_000;
   }).map(([key]) => key);
-  if (Object.hasOwn(snapshot || {}, "score") && snapshot.modelVersion !== "pressure-v2-no-touch-probability") expiredSources.push("modelVersion");
+  if (Object.hasOwn(snapshot || {}, "score") && snapshot.modelVersion !== "pressure-v3-trailing-percentiles") expiredSources.push("modelVersion");
   return { expired: expiredSources.length > 0, expiredSources, ageHours: (nowMs - Date.parse(snapshot?.ts)) / 3_600_000 };
+}
+
+// Advisory only. No call to the trading Bot, order API or leverage settings.
+export function leverageRisk(account, score) {
+  const limit = typeof score !== "number" || !Number.isFinite(score) ? null : score >= 70 ? 1 : score >= 55 ? 3 : 5;
+  const spotOnly = limit === 1;
+  return { ...account, limit, spotOnly, advisoryOnly: true,
+    positions: (account?.positions || []).map(row => ({ ...row,
+      overLimit: limit === null || row.stale ? null : spotOnly ? true :
+        typeof row.leverage === "number" && Number.isFinite(row.leverage) ? row.leverage > limit : null })) };
 }
 
 // What a long or short DCA position looks like if the stop or take-profit

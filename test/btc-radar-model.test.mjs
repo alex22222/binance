@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { evaluateBtcRadar, pyFixed, pyRound, pyRoundInt } from "../src/btc-radar-model.mjs";
+import { evaluateLegacyBtcRadar as evaluateBtcRadar, pyFixed, pyRound, pyRoundInt } from "../src/btc-radar-model.mjs";
 
 const fixture = async (name) => JSON.parse(await readFile(new URL(`./fixtures/btc-radar/${name}.json`, import.meta.url), "utf8"));
 

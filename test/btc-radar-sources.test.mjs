@@ -63,7 +63,7 @@ test("derives Fed expectations from the next decision and the current-year marke
     markets: [
       market(`Will the Fed decrease interest rates by 50+ bps after the ${month} 2026 meeting?`, cuts[0], { groupItemTitle: "50+ bps decrease" }),
       market(`Will the Fed decrease interest rates by 25 bps after the ${month} 2026 meeting?`, cuts[1], { groupItemTitle: "25 bps decrease" }),
-      market(`Will there be no change in Fed interest rates after the ${month} 2026 meeting?`, 0.6, { groupItemTitle: "No change" }),
+      market(`Will there be no change in Fed interest rates after the ${month} 2026 meeting?`, 1 - hikes.reduce((a, b) => a + b, 0) - cuts.reduce((a, b) => a + b, 0), { groupItemTitle: "No change" }),
       market(`Will the Fed increase interest rates by 25 bps after the ${month} 2026 meeting?`, hikes[0], { groupItemTitle: "25 bps increase" }),
       market(`Will the Fed increase interest rates by 50+ bps after the ${month} 2026 meeting?`, hikes[1], { groupItemTitle: "50+ bps increase" })
     ]
@@ -75,12 +75,13 @@ test("derives Fed expectations from the next decision and the current-year marke
     { title: "Another Fed rate hike in 2026?", endDate: "2026-12-10T04:59:00Z", markets: [market("Another Fed rate hike in 2026?", 0.815)] },
     { title: "How many Fed rate cuts in 2026?", endDate: "2027-01-01T04:59:00Z", markets: [market("Will no Fed rate cuts happen in 2026?", 0.9685), market("Will 1 Fed rate cut happen in 2026?", 0.0185)] }
   ];
-  assert.deepEqual(fedExpectations(events, now), {
-    next_meeting: "10月议息", p_hike_next: 0.3405, p_cut_next: 0.007, p_hike_2026_any: 0.815, p_cut_2026_any: 0.0315
-  });
+  const mapped = fedExpectations(events, now);
+  assert.deepEqual([mapped.next_meeting, mapped.p_hike_next, mapped.p_cut_next, mapped.p_hike_year_any, mapped.p_cut_year_any],
+    ["2026年10月议息", 0.3405, 0.007, 0.815, 0.0315]);
+  assert.equal(mapped.contract.outcomeSum, 1);
   const fallback = fedExpectations(events.slice(0, 3), now);
-  assert.equal(fallback.p_hike_2026_any, 0.7595);
-  assert.equal(fallback.p_cut_2026_any, 0.013);
+  assert.equal(fallback.p_hike_year_any, null);
+  assert.equal(fallback.p_cut_year_any, null);
   assert.throws(() => fedExpectations(events.slice(3), now), /Next Fed decision/);
 });
 

@@ -1,4 +1,4 @@
-import { btcRadarFreshness, dcaScenario } from "./btc-radar-risk.mjs";
+import { btcRadarFreshness, dcaScenario, leverageRisk } from "./btc-radar-risk.mjs";
 import { SITE_CSS, siteHeader } from "./site-shell.mjs";
 
 // BTC risk radar page, migrated from the claude.ai artifact. Data comes from
@@ -165,6 +165,7 @@ summary:focus-visible{outline:2px solid var(--brand);outline-offset:3px;border-r
 .vtable th:first-child,.vtable td:first-child{text-align:left}
 .vtable th{color:var(--muted);font-weight:600}
 .vtable td{font-family:var(--f-num)}.vtable td small{display:block;color:var(--muted);font-size:11px;font-family:var(--f-body)}
+#leverageTable :is(th,td):first-child{position:sticky;left:0;background:var(--surface);z-index:1}
 @media(max-width:1000px){.score-hero{grid-template-columns:minmax(0,1fr);gap:20px}}
 @media(max-width:600px){.layer-nav{grid-template-columns:repeat(2,minmax(0,1fr))}.contrib-row{grid-template-columns:minmax(0,1fr) auto 52px;gap:4px 10px}.contrib-row .contrib-bar{grid-column:1/-1;order:5}.score-main .pressure-number{font-size:44px}}
 @media(max-width:1000px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.account-layout{grid-template-columns:minmax(0,1fr)}.account-boundary{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}}
@@ -189,7 +190,7 @@ ${siteHeader("/btc-radar")}
   <a id="accountAlert" class="account-alert" href="#account-risk" aria-live="polite" hidden></a>
 
   <section id="market-background" class="layer" aria-labelledby="market-background-title">
-    <div class="layer-heading"><div><div class="layer-title"><span class="index">01</span><h2 id="market-background-title">市场背景与评分</h2></div><p>五个背景因子各打 0–100 分，按 20:20:15:10:10 加权成下跌压力分：50 为中性，越高表示背景越不利于 BTC。</p></div><span class="tag">未验证 / 非预测</span></div>
+    <div class="layer-heading"><div><div class="layer-title"><span class="index">01</span><h2 id="market-background-title">市场背景与评分</h2></div><p>一年滚动分位数：利率20% · 资金流20% · 短期动量/波动35% · 杠杆拥挤20% · 黄金5%。越高表示压力越大，非预测。</p></div><span class="tag">未验证 / 非预测</span></div>
     <div class="panel score-hero" aria-label="当前评分">
       <div class="score-main">
         <div class="pressure-label">下跌压力分 · 当前</div>
@@ -206,7 +207,7 @@ ${siteHeader("/btc-radar")}
     <div class="grid" id="factors"></div>
     <details id="score-method" class="disclosure">
       <summary>评分规则与等级<small>公式、权重、阈值与局限</small></summary>
-      <div class="detail-body method"><p>总分 = 50 + Σ（因子分 − 50）× 权重 / 75，等于五个因子按 20:20:15:10:10 的加权平均。每个因子分都截断在 0–100。等级：≥70 高风险、55–70 警戒、40–55 中性、&lt;40 下跌压力较低。</p><p>这是未验证的下跌压力分，不是亏损概率、低风险证明或多空交易信号。因子规则是模型假设，不是已经核实的因果关系；「评分与 BTC 走势」按每日快照对照之后的真实收盘价，用来检验它。Polymarket 只展示各合约区间的原始报价，不计分。新版评分与旧版历史不连线比较。</p><p>「参考」指标不计分：RSI(14) 使用 OKX UTC 日线和 Wilder 平滑；恐惧贪婪指数来自 alternative.me。</p></div>
+      <div class="detail-body method"><p>总分 = Σ 因子分 × 权重 / 100。每项指标按此前365个日历日已知数据的经验分位数映射到0–100，同值取中秩；反向指标用100−分位数。至少180个独立日期、跨度330天，当前观测不参与自己的校准。缺指标不补50、不重分配权重。等级：≥70 高风险、55–70 警戒、40–55 中性、&lt;40 下跌压力较低。</p><p>这是未验证的下跌压力分，不是亏损概率、低风险证明或多空交易信号。FOMC只展示可核对的原始合约报价，不与美债重复计分；停止缩表不等于加/降息。新版评分与旧版历史不连线比较。波动压缩提示突破风险，不预测突破方向。</p><p>ETF采用5个已公布交易日净流入，历史回放保守滞后2天；稳定币采用美元锚定币面值供应，不混入币价涨跌；Coinbase BTC/USD与OKX BTC/USDT按同日USDT/USD归一，不冒充通用Coinbase溢价指数。所有日线均为UTC已完成日线。</p></div>
     </details>
   </section>
 
@@ -245,6 +246,7 @@ ${siteHeader("/btc-radar")}
 
   <section id="account-risk" class="layer" aria-labelledby="account-risk-title">
     <div class="layer-heading"><div><div class="layer-title"><span class="index">04</span><h2 id="account-risk-title">账户风险</h2></div><p id="accountSummary">等待只读账户快照，当前风险未核实。</p></div><span class="tag readonly">OKX / 只读</span></div>
+    <div class="panel validity"><h3>全部杠杆仓位 · 止损覆盖与杠杆上限</h3><p id="leverageLimit" class="foot"></p><div id="leverageTable" class="table-scroll"></div><p class="foot">只读提醒，不调整杠杆、不下单。&lt;55 最多5x；55–70 最多3x；≥70只做现货（含1x合约也超限）。止损覆盖=可确认的减仓止损数量/持仓数量；低于100%标红，来源失败显示未核实。触发不保证成交。</p></div>
     <div class="account-layout">
       <div class="panel pos">
         <div class="pos-head"><h2 id="poshead">OKX · BTCUSDT 永续持仓</h2><span class="pill" id="pospill">—</span></div>
@@ -254,7 +256,7 @@ ${siteHeader("/btc-radar")}
       </div>
       <aside class="account-boundary" aria-label="账户风险边界">
         <div class="panel method"><h3>先检查什么</h3><ol><li>强平是否会先于止损。</li><li>距强平、距止损还有多远。</li><li>补仓后的敞口与假设退出损益。</li></ol><p>绿色也只是距离参考，不是安全保证。</p></div>
-        <div class="panel method"><h3>这页不做什么</h3><p>仅覆盖只读账户中的 BTC-USDT 永续、合约网格与马丁格尔，不代表现货、其他币对或股票 Bot 的全部资产。</p><p>每 4 小时采集、每 60 秒查看缓存；不是实时保护。五小时失效后不保留当前风险结论。</p><p>拖动止损/止盈仅作本页预览。总资金设置只保存展示占比，不修改 OKX 或交易参数。</p></div>
+        <div class="panel method"><h3>这页不做什么</h3><p>上表核对OKX全部杠杆仓位；下方退出测算仍仅覆盖BTC-USDT普通永续、合约网格与马丁格尔，不代表全部资产。不同币对/账户的张数不可相加。</p><p>每 4 小时采集、每 60 秒查看缓存；不是实时保护。五小时失效后不保留当前风险结论。</p><p>拖动止损/止盈仅作本页预览。总资金设置只保存展示占比，不修改 OKX 或交易参数。</p></div>
       </aside>
     </div>
   </section>
@@ -274,6 +276,7 @@ const esc = s => String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&
 const httpsUrl = u => { try { const url = new URL(String(u)); return url.protocol === "https:" ? url.href : null; } catch { return null; } };
 ${btcRadarFreshness.toString()}
 ${dcaScenario.toString()}
+${leverageRisk.toString()}
 let radar = null, settings = {}, preview = {}, dragging = null, scale = null, selectedId = null, connectionError = null, dataUsable = true;
 const sourceName = p => p.source === "grid" ? "合约网格" : p.source === "account" ? "普通永续" : "合约马丁格尔";
 const activePosition = () => (radar && (radar.positions || []).find(p => p.id === selectedId)) || (radar && radar.position);
@@ -292,16 +295,32 @@ function renderPositions(d){
   select.onchange = () => selectPosition(select.value);
   renderPosition(activePosition(), d.price, d.data_status);
   renderAccountAttention(d);
+  renderLeverage(d);
+}
+
+function renderLeverage(d){
+  const account=d.accountRisk;
+  const expired=!dataUsable||!account?.fetchedAt||btcRadarFreshness({ts:account.fetchedAt}).expired;
+  const risk=leverageRisk(account,expired?null:d.score);
+  const notes={BOT_INTERNAL_STOP_NOT_ORDINARY_OCO:"机器人内部止损数量未核实",OCO_CONDITIONAL_AND_ATTACHED_ONLY:"仅计可确认的OCO、条件及附带止损",STOP_SOURCE_FAILED:"止损源读取失败",AMBIGUOUS_POSITION_IDENTITY:"持仓归属有歧义"};
+  $("leverageLimit").textContent=(risk.limit===null?"评分或数据未就绪，杠杆额度未核实":risk.spotOnly?"当前仅限现货":"当前建议杠杆上限 "+risk.limit+"x")+(account?.complete?"":" · 账户/止损来源不完整");
+  const rows=(risk.positions||[]).map(p=>{
+    const stale=expired||p.stale, coverage=stale?NaN:num(p.stopCoverage), over=stale?null:p.overLimit;
+    return '<tr><td>'+esc(p.instId)+" · "+(p.direction==="short"?"做空":p.direction==="long"?"做多":"未核实")+"<small>"+esc(p.source)+" / "+esc(p.marginMode||"—")+'</small></td><td class="'+(Number.isFinite(coverage)&&coverage<1?"neg":"")+'">'+(Number.isFinite(coverage)?(coverage<1?String(Math.floor(coverage*100000)/1000):fmt(coverage*100,1))+"%":"未核实")+'<small>'+esc(notes[p.coverageNote]||p.coverageNote||"")+'</small></td><td>'+fmt(p.leverage,1)+'x</td><td class="'+(over===true?"neg":"")+'">'+(over===true?"杠杆超限":over===false?"未超限":"未核实")+'</td><td>'+fmt(p.size,4)+" "+(p.sizeUnit==="base"?"币":"张")+'</td></tr>';
+  }).join("");
+  $("leverageTable").innerHTML=rows?'<table class="vtable"><thead><tr><th>持仓 / 方向</th><th>止损覆盖率</th><th>当前杠杆</th><th>上限检查</th><th>数量 / 单位</th></tr></thead><tbody>'+rows+'</tbody></table>':'<div class="empty">'+(account?.complete?"本次未读取到杠杆仓位":"当前账户风险未核实")+'</div>';
 }
 
 function renderAccountAttention(d){
   const positions=d.positions||(d.position?[d.position]:[]);
   const stale=p=>p.stale||(p.fetchedAt&&btcRadarFreshness({ts:p.fetchedAt}).expired);
-  const incomplete=positions.some(stale)||(d.data_status?.staleSources||[]).some(s=>["dcaPositions","accountPositions","gridPositions"].includes(s.key));
+  const incomplete=positions.some(stale)||(d.data_status?.staleSources||[]).some(s=>["dcaPositions","accountPositions","gridPositions","accountRisk"].includes(s.key))||(d.accountRisk&&!d.accountRisk.complete);
   const attention=positions.filter(p=>!stale(p)&&["red","orange"].includes(p.level));
   $("accountSummary").textContent=!d.data_status?.okxConfigured?"未接入只读账户，当前账户风险未核实。":incomplete?"持仓来源不完整或非最新，当前账户风险未核实。":positions.length?positions.length+" 笔 BTC 永续快照 · 分来源展示，不合并均价或收益。":"本次快照未读取到 BTC 永续持仓，不代表其他资产空仓。";
-  $("accountAlert").hidden=attention.length===0&&!incomplete;
-  $("accountAlert").textContent=attention.length?"账户风险需关注 · "+attention.map(p=>sourceName(p)+"："+p.level_name).join("；")+" · 查看账户风险":"账户数据非最新或不完整，当前风险未核实 · 查看账户风险";
+  if(d.accountRisk?.positions?.length&&!incomplete) $("accountSummary").textContent=d.accountRisk.positions.length+" 笔全部杠杆仓位 · "+positions.length+" 笔BTC退出测算快照 · 不合并不同币种的张数。";
+  const breaches=(d.accountRisk?.positions||[]).filter(p=>!p.stale&&(p.stopCoverage!==null&&p.stopCoverage<1||p.overLimit===true));
+  $("accountAlert").hidden=attention.length===0&&!incomplete&&!breaches.length;
+  $("accountAlert").textContent=breaches.length?"账户风险需关注 · "+breaches.map(p=>p.instId+"："+(p.overLimit?"杠杆超限":"止损覆盖不足100%")).join("；"):attention.length?"账户风险需关注 · "+attention.map(p=>sourceName(p)+"："+p.level_name).join("；")+" · 查看账户风险":"账户数据非最新或不完整，当前风险未核实 · 查看账户风险";
 }
 
 function renderPressure(score){
@@ -321,8 +340,8 @@ function renderPosition(p, price, status){
   const risk = $("risk");
   if(!p){
     $("poshead").textContent="OKX · BTCUSDT 永续持仓"; $("rulerHelp").textContent="";
-    $("pospill").textContent="未接入持仓";$("pospill").className="pill";$("ruler").innerHTML="";risk.hidden=true;
-    $("posstats").innerHTML='<div class="empty">'+(status&&status.okxConfigured?"当前只读账户未读取到 BTC-USDT 永续持仓、合约网格或马丁格尔。请核对账户/子账户、实盘和合约品种；数据失败请看顶部来源提示。":"服务器尚未配置 OKX 只读 API Key，持仓与舆情暂未接入。")+'</div>';
+    $("pospill").textContent=radar?.accountRisk?.positions?.some(p=>p.instId==="BTC-USDT-SWAP")?"退出测算未就绪":"未接入持仓";$("pospill").className="pill";$("ruler").innerHTML="";risk.hidden=true;
+    $("posstats").innerHTML='<div class="empty">'+(radar?.accountRisk?.positions?.some(p=>p.instId==="BTC-USDT-SWAP")?"上表已读取到BTC杠杆仓位；详细退出测算暂缺，请先核对止损覆盖率。":status&&status.okxConfigured?"当前只读账户未读取到 BTC-USDT 永续持仓、合约网格或马丁格尔。请核对账户/子账户、实盘和合约品种；数据失败请看顶部来源提示。":"服务器尚未配置 OKX 只读 API Key，持仓与舆情暂未接入。")+'</div>';
     return;
   }
   price = p.reference_price > 0 ? p.reference_price : price;
@@ -491,7 +510,7 @@ function contributions(F){
 function renderContrib(F){
   const rows=contributions(F);
   if(!rows.length||rows.some(r=>!Number.isFinite(r.delta))){
-    $("contrib").innerHTML='<div class="empty">'+(rows.length?"数据失效，当前不显示分数构成。":"等待第一次评估写入数据。")+'</div>';
+    $("contrib").innerHTML='<div class="empty">'+(rows.length?(dataUsable?"指标缺失或一年历史不足，暂不计算总分。":"数据失效，当前不显示分数构成。"):"等待第一次评估写入数据。")+'</div>';
     return;
   }
   const max=Math.max(...rows.map(r=>Math.abs(r.delta)),1), sum=rows.reduce((total,r)=>total+r.delta,0);
@@ -504,15 +523,15 @@ function renderContrib(F){
 }
 
 function renderFactors(F, indicators){
-  F=F.filter(f=>f.key!=="poly"||radar.modelVersion==="pressure-v2-no-touch-probability");
+  const total=F.reduce((sum,f)=>sum+(num(f.weight)||0),0);
   const delta=Object.fromEntries(contributions(F).map(r=>[r.f.key,r.delta]));
   $("factors").innerHTML=F.map(f=>{
     const scored=num(f.weight)>0, score=dataUsable?num(f.score):NaN, refs=referenceRows(f.key, indicators), d=delta[f.key];
-    return '<article class="panel fac"><div class="fac-head"><h3>'+esc(f.name)+'</h3><span class="tag">'+(scored?"权重 "+fmt(f.weight)+" / 75":"原始盘口 · 不计分")+'</span></div>'
+    return '<article class="panel fac"><div class="fac-head"><h3>'+esc(f.name)+'</h3><span class="tag">'+(scored?"权重 "+fmt(f.weight)+" / "+fmt(total):"原始盘口 · 不计分")+'</span></div>'
       +(scored?'<div class="fac-score"><b class="'+(Number.isFinite(score)?"lv-t-"+lvOf(score):"")+'">'+fmt(score)+'</b><small>/ 100</small><span class="delta">贡献 '+signed(d)+' 分</span></div>':"")
       +'<dl class="kv">'+(f.metrics||[]).map(([k,v])=>'<dt>'+esc(k)+'</dt><dd>'+esc(v)+'</dd>').join("")
       +refs.map(([k,v],i)=>'<dt class="'+(i?"":"ref-first")+'">'+esc(k)+'<span class="ref">参考</span></dt><dd class="'+(i?"":"ref-first")+'">'+esc(v)+'</dd>').join("")+'</dl>'
-      +'<p class="rule"><span>评分规则'+(scored?" · 截断在 0–100":"")+'</span>'+esc(RULES[f.key]||"规则未记录")+'</p>'
+      +'<p class="rule"><span>评分规则'+(scored?" · 0–100":"")+'</span>'+esc(f.rule||RULES[f.key]||"规则未记录")+'</p>'
       +'<p class="note">'+(scored?"模型解读（未验证）：":"")+esc(f.note)+'</p></article>';
   }).join("");
   renderContrib(F);
@@ -658,11 +677,13 @@ function updateHealth(){
   const stale=(radar.data_status&&radar.data_status.staleSources)||[];
   const wasUsable=dataUsable;
   dataUsable=!connectionError&&!freshness.expired;
+  renderLeverage(radar);
   $("stamp").innerHTML='最近评估 <b class="num">'+esc(t.toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false}))+'</b> · 每 4 小时更新'
     +(freshness.expired?' · <span class="stale">'+(freshness.expiredSources.includes("modelVersion")?'旧版评估已停用，等待新版采集':'数据已过期（五小时有效期），当前结论失效')+'</span>':'')
     +(connectionError==='AUTH'?' · 登录已过期，请<a href="/login">重新登录</a>':connectionError?' · <span class="stale">连接中断，当前结论失效</span>':'')
     +(stale.some(s=>s.since!==null)?' · <span class="stale">沿用旧数据：'+stale.filter(s=>s.since!==null).map(s=>esc(s.label)).join("、")+'</span>':'')
     +(stale.some(s=>s.since===null)?' · <span class="stale">采集失败：'+stale.filter(s=>s.since===null).map(s=>esc(s.label)).join("、")+'</span>':'');
+  if(radar.modelData?.sourceErrors?.length) $("stamp").innerHTML+=' · <span class="stale">一年历史来源失败：'+radar.modelData.sourceErrors.map(s=>esc(s.key)).join("、")+'；仅使用已记录且未过时的日指标，缺项不计总分</span>';
   if(!dataUsable){
     renderPressure(null); $("lvpill").textContent=connectionError?"连接中断":"数据失效"; $("lvpill").className="pill lv-yellow";
     $("summary").textContent="仅保留历史快照，不能用于当前交易判断。";

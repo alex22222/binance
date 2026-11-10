@@ -11,7 +11,7 @@
 // page. The derivatives factor (funding, open interest, sentiment: no usable
 // history) is held at 50, and so is the Fed factor in part B.
 import { readFileSync } from "node:fs";
-import { evaluateBtcRadar } from "../../src/btc-radar-model.mjs";
+import { evaluateLegacyBtcRadar as evaluateBtcRadar } from "../../src/btc-radar-model.mjs";
 import { parseTreasuryCsv } from "../../src/btc-radar-sources.mjs";
 
 const data = (name) => JSON.parse(readFileSync(new URL(`./data/${name}`, import.meta.url), "utf8"));

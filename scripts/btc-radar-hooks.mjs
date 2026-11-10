@@ -1,6 +1,6 @@
 const RADAR_MODULES = new Set([
   "btc-radar.mjs", "btc-radar-html.mjs", "btc-radar-model.mjs",
-  "btc-radar-risk.mjs", "btc-radar-sources.mjs"
+  "btc-radar-risk.mjs", "btc-radar-sources.mjs", "btc-radar-percentiles.mjs"
 ]);
 let source;
 let release;

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-test("radar release remaps only its five modules, keeps shared dependencies and leaves Bot source intact", async () => {
+test("radar release remaps its percentile module too, keeps shared dependencies and leaves Bot source intact", async () => {
   const directory = await mkdtemp(join(tmpdir(), "btc-radar-release-"));
   const source = join(directory, "bot");
   const release = join(directory, "release");
@@ -18,8 +18,9 @@ test("radar release remaps only its five modules, keeps shared dependencies and 
   await writeFile(join(source, "src", "btc-radar-risk.mjs"), 'export const risk = "legacy-risk";');
   await writeFile(join(source, "src", "site-shell.mjs"), 'export const shared = "original-shared";');
   await writeFile(join(release, "src", "btc-radar-risk.mjs"), 'export const risk = "new-risk";');
+  await writeFile(join(release, "src", "btc-radar-percentiles.mjs"), 'export const percentile = "isolated-percentile";');
   await writeFile(join(release, "src", "site-shell.mjs"), 'throw new Error("must not load copied shared code");');
-  await writeFile(join(release, "src", "btc-radar-html.mjs"), 'import {risk} from "./btc-radar-risk.mjs"; import {shared} from "./site-shell.mjs"; import {createHash} from "node:crypto"; export const identity = `new/${risk}/${shared}/${typeof createHash}`;');
+  await writeFile(join(release, "src", "btc-radar-html.mjs"), 'import {risk} from "./btc-radar-risk.mjs"; import {percentile} from "./btc-radar-percentiles.mjs"; import {shared} from "./site-shell.mjs"; import {createHash} from "node:crypto"; export const identity = `new/${risk}/${shared}/${typeof createHash}/${percentile}`;');
   const current = join(directory, "current");
   await symlink(release, current);
   const run = (root) => spawnSync(process.execPath, ["--import", "./scripts/btc-radar-loader.mjs", "--input-type=module", "-e",
@@ -28,7 +29,7 @@ test("radar release remaps only its five modules, keeps shared dependencies and 
   });
   const isolated = run(current);
   assert.equal(isolated.status, 0, isolated.stderr);
-  assert.equal(isolated.stdout.trim(), "new/new-risk/original-shared/function");
+  assert.equal(isolated.stdout.trim(), "new/new-risk/original-shared/function/isolated-percentile");
   assert.equal(await readFile(join(source, "src", "btc-radar-html.mjs"), "utf8"), original);
   assert.equal(run("").stdout.trim(), "legacy");
   assert.notEqual(run(join(directory, "missing")).status, 0, "a configured missing release must fail closed");
