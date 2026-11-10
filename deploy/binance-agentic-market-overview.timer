@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh public capital market overview every 15 minutes
+
+[Timer]
+OnCalendar=*-*-* *:00/15:00 UTC
+RandomizedDelaySec=20
+Persistent=true
+Unit=binance-agentic-market-overview.service
+
+[Install]
+WantedBy=timers.target

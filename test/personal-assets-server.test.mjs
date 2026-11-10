@@ -50,27 +50,27 @@ test("personal assets share Dashboard authentication and persist isolated review
     const html = await page.text();
     assert.match(html, /href="\/assets" aria-current="page"/);
     const landing = await fetch(`${origin}/`, { headers, redirect: "manual" });
-    assert.equal(landing.status, 302);
-    assert.equal(landing.headers.get("location"), "/assets");
+    assert.equal(landing.status, 200);
+    assert.match(await landing.text(), /资本市场温度/);
     assert.equal(landing.headers.get("cache-control"), "no-store");
     for (const userAgent of [
       "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Lark/7.30.0 LarkLocale/zh_CN ChannelName/Feishu",
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Feishu/7.30.0 Chrome/120.0 Safari/537.36"
     ]) {
       const fromFeishu = await fetch(`${origin}/`, { headers: { ...headers, "User-Agent": userAgent }, redirect: "manual" });
-      assert.equal(fromFeishu.status, 302);
-      assert.equal(fromFeishu.headers.get("location"), "/dashboard", userAgent);
-      assert.equal(fromFeishu.headers.get("vary"), "User-Agent");
+      assert.equal(fromFeishu.status, 200);
+      assert.match(await fromFeishu.text(), /资本市场温度/, userAgent);
     }
     const fromSafari = await fetch(`${origin}/`, { headers: { ...headers, "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1" }, redirect: "manual" });
-    assert.equal(fromSafari.headers.get("location"), "/assets");
+    assert.equal(fromSafari.status, 200);
+    assert.match(await fromSafari.text(), /资本市场温度/);
     for (const path of ["/dashboard", "/dashboard/"]) {
       const dashboard = await fetch(origin + path, { headers, redirect: "manual" });
       assert.equal(dashboard.status, 200, path);
       assert.equal(dashboard.headers.get("cache-control"), "no-store", path);
       const dashboardHtml = await dashboard.text();
-      assert.match(dashboardHtml, /<summary>币安Agent Wallet<\/summary><div class="site-submenu"><a href="\/dashboard" aria-current="page">交易总览<\/a>/, path);
-      assert.match(dashboardHtml, /id="autoApprovalToggle"/, path);
+      assert.match(dashboardHtml, /<summary>Agentic wallet<\/summary><div class="site-submenu"><a href="\/dashboard" aria-current="page">交易总览<\/a>/, path);
+      assert.match(dashboardHtml, /id="wallet-okx"/, path);
     }
     for (const path of ["/dashboard", "/dashboard/"]) {
       const anonymous = await fetch(origin + path, { redirect: "manual" });

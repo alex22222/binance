@@ -2,12 +2,21 @@ import { readAssetFundStatus, configureAssetFund } from "./personal-assets-funds
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { personalAssetsHtml, statementPasswordsHtml, refreshScheduleHtml, operationsHtml } from "./personal-assets-html.mjs";
 import { readPersonalAssets, savePersonalAssets, createPersonalAssetsSnapshot, readPersonalAssetsComparison, readStatementPasswordStatus, configureStatementPassword, readAssetRefreshSchedule, configureAssetRefreshSchedule } from "./personal-assets.mjs";
 import { valuePersonalAssetState } from "./personal-assets-fx.mjs";
 import { readAssetSyncStatus, performAssetSyncAction, completeFutuAuthorization } from "./personal-assets-sync.mjs";
+import { loadCryptoWatch } from "./crypto-watch.mjs";
+import { loadMarketOverview } from "./market-overview.mjs";
+import { loadLandingReports, marketOverviewHtml } from "./market-overview-html.mjs";
+import { loadBtcRadarView } from "./btc-radar.mjs";
+import { digitalCurrencyHtml } from "./digital-currency-html.mjs";
+import { loadOkxAgenticStatus, projectOkxAgenticAssets } from "./okx-agentic-status.mjs";
+import { okxAgenticHtml } from "./okx-agentic-html.mjs";
+import { projectAgenticWallets, readWalletPreferences, saveWalletPreference } from "./agentic-wallet-overview.mjs";
+import { agenticWalletHtml } from "./agentic-wallet-html.mjs";
 
 const sourceFile = (name) => fileURLToPath(new URL(name, import.meta.url));
 const files = new Map([
@@ -94,8 +103,10 @@ const latestTime = (values) => values.filter((value) => typeof value === "string
   .sort((a, b) => Date.parse(b) - Date.parse(a))[0] || null;
 const sessionDate = (json) => json.lastObservation?.sessionDate;
 export const OPERATIONS_TASKS = Object.freeze([
+  { unit: "binance-agentic-market-overview", group: "市场总览", label: "资本市场热图", cadence: "每15分钟", file: "market-overview/state.json", asOf: (json) => json.lastRunAt, staleHours: 1 },
   { unit: "binance-agentic-authorization", group: "交易与风控", label: "交易授权续签", cadence: "每分钟", renewal: true },
-  { unit: "binance-agentic-btc-radar", group: "交易与风控", label: "BTC 风控雷达", cadence: "约每 4 小时", file: "btc-radar/state.json", asOf: (json) => json.lastRunAt, staleHours: 12 },
+  { unit: "binance-agentic-btc-radar", group: "数字货币", label: "BTC 风控雷达", cadence: "约每 4 小时", file: "btc-radar/state.json", asOf: (json) => json.lastRunAt, staleHours: 12 },
+  { unit: "binance-agentic-crypto-watch", group: "数字货币", label: "OKX 收藏日报", cadence: "每天 08:00 北京时间", file: "crypto/state.json", asOf: (json) => json.lastRunAt, staleHours: 36 },
   { unit: "binance-agentic-premarket-brief", group: "交易与风控", label: "盘前简报", cadence: "交易日", dir: "trade-reviews/premarket", asOf: (json) => json.tradingDate, staleHours: 96 },
   { unit: "binance-agentic-trade-review", group: "交易与风控", label: "交易复盘", cadence: "每周", file: "trade-reviews/latest.json", asOf: (json) => json.tradingDate, staleHours: 216 },
   { unit: "binance-agentic-spy-open-check", group: "交易与风控", label: "SPY 开盘检查", cadence: "一次性" },
@@ -212,20 +223,99 @@ export async function readOperationsOverview({ stateDir, now = new Date(), syste
 
 export async function handlePersonalAssetsRequest({ request, response, stateDir, requireAllowedOrigin }) {
   const path = new URL(request.url, "http://localhost").pathname;
-  // The site lands on personal assets. The trading dashboard moved to
-  // /dashboard, but the Dashboard entry's own "/" route (which the
-  // authorization loader extends) still renders it, so hand the request back.
-  // Bot notifications link the bare origin as "打开手机 Dashboard", so Feishu's
-  // in-app browser still lands on the trading dashboard.
-  if (request.method === "GET" && path === "/") {
-    const feishu = /\b(?:Lark|Feishu)\/|\bLarkLocale\//i.test(String(request.headers["user-agent"] || ""));
-    response.writeHead(302, { Location: feishu ? "/dashboard" : "/assets", Vary: "User-Agent", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
-    response.end();
+  if (["/api/agentic-wallets", "/api/agentic-wallets/preferences"].includes(path)) {
+    try {
+      if (path === "/api/agentic-wallets/preferences" && request.method === "POST") {
+        if (!request.headers.origin) throw requestError("请从钱包总览保存待启用方案。", 403);
+        requireAllowedOrigin(request);
+        json(response, await saveWalletPreference(stateDir, await readAssetBody(request)));
+        return true;
+      }
+      if (request.method !== "GET") { json(response, { error: "钱包总览仅支持读取；方案保存请使用独立入口。" }, 405); return true; }
+      if (path.endsWith("/preferences")) { json(response, await readWalletPreferences(stateDir)); return true; }
+      const now = new Date();
+      const [assets, sync, okxStatus, preferences] = await Promise.all([
+        readPersonalAssets({ stateDir }).catch(() => ({ status: "ERROR" })),
+        readAssetSyncStatus({ stateDir, now }).catch(() => null),
+        loadOkxAgenticStatus(process.env.OKX_AGENTIC_STATUS_DIR || join(stateDir, "okx-agentic"), { now }),
+        readWalletPreferences(stateDir).catch(() => null)
+      ]);
+      json(response, { ...projectAgenticWallets({ assets, sync, now }), okxStatus, preferences });
+    } catch (error) {
+      json(response, { error: error.statusCode && error.statusCode < 500 ? error.message : "钱包总览暂时无法读取或保存；运行策略未改变。" }, error.statusCode || 500);
+    }
     return true;
   }
-  if (request.method === "GET" && ["/dashboard", "/dashboard/"].includes(path)) {
-    request.url = "/";
+  if (["/agentic-wallet/okx", "/agentic-wallet/okx/", "/api/agentic-wallet/okx"].includes(path)) {
+    if (request.method !== "GET") { json(response, { error: "OKX Agentic Wallet 概览仅支持读取。" }, 405); return true; }
+    const now = new Date();
+    const [status, assets] = await Promise.all([
+      loadOkxAgenticStatus(process.env.OKX_AGENTIC_STATUS_DIR || join(stateDir, "okx-agentic"), { now }),
+      readPersonalAssets({ stateDir }).then(projectOkxAgenticAssets).catch(() => ({ status: "ERROR", accounts: [], error: "已保存钱包资产暂不可读取。" }))
+    ]);
+    if (path === "/api/agentic-wallet/okx") { json(response, { status, assets }); return true; }
+    response.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      "X-Content-Type-Options": "nosniff"
+    });
+    response.end(okxAgenticHtml({ status, assets, now }));
+    return true;
+  }
+  if (["/", "/market", "/market/", "/api/market-overview"].includes(path)) {
+    if (request.method !== "GET") { json(response, { error: "市场总览仅支持读取。" }, 405); return true; }
+    const period = new URL(request.url, "http://localhost").searchParams.get("period") || "5d";
+    if (!["1d", "5d", "20d"].includes(period)) { json(response, { error: "请选择1日、5日或20日。" }, 400); return true; }
+    const now = new Date();
+    const [market, reports] = await Promise.all([
+      loadMarketOverview(process.env.MARKET_OVERVIEW_DIR || join(stateDir, "market-overview"), { now }),
+      loadLandingReports(resolve(process.env.FUND_MANAGER_DIR || join(stateDir, "fund-manager")), { now })
+    ]);
+    if (path === "/api/market-overview") { json(response, { market, reports }); return true; }
+    response.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      "X-Content-Type-Options": "nosniff"
+    });
+    response.end(marketOverviewHtml({ market, reports, period, now }));
+    return true;
+  }
+  if (path === "/btc-radar" && request.method === "GET" && new URL(request.url, "http://localhost").searchParams.get("view") === "detail") {
+    // Keep the deployed radar's advanced scenario UI and model pinned together.
+    request.url = "/btc-radar";
     return false;
+  }
+  if (["/crypto", "/crypto/", "/btc-radar", "/api/crypto", "/api/digital-currency"].includes(path)) {
+    if (request.method !== "GET") { json(response, { error: "数字货币概览仅支持读取。" }, 405); return true; }
+    const status = await loadCryptoWatch({ directory: process.env.CRYPTO_WATCH_DIR || join(stateDir, "crypto") });
+    if (path === "/api/crypto") { json(response, status); return true; }
+    const radar = await loadBtcRadarView(process.env.BTC_RADAR_DIR || join(stateDir, "btc-radar")).catch(() => ({ status: "ERROR", latest: null, history: [], settings: {} }));
+    if (path === "/api/digital-currency") { json(response, { radar, watch: status }); return true; }
+    response.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      "X-Content-Type-Options": "nosniff"
+    });
+    response.end(digitalCurrencyHtml({ radar, watch: status, now: new Date() }));
+    return true;
+  }
+  // Keep the original execution UI and all of its gates in the frozen checkout.
+  // The wallet overview and draft preference store are Dashboard-only modules.
+  if (request.method === "GET" && ["/dashboard", "/dashboard/"].includes(path)) {
+    if (new URL(request.url, "http://localhost").searchParams.get("view") === "execution") {
+      request.url = "/";
+      return false;
+    }
+    const nonce = randomBytes(16).toString("base64");
+    response.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
+    });
+    response.end(agenticWalletHtml({ nonce }));
+    return true;
   }
   if (request.method === "GET" && ["/operations", "/operations/", "/api/operations"].includes(path)) {
     const overview = await readOperationsOverview({ stateDir });
@@ -245,7 +335,7 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
   const refreshPage = ["/assets", "/assets/"].includes(path) && new URL(request.url, "http://localhost").searchParams.get("settings") === "refresh-schedule";
   const statementApi = path === "/api/assets/statement-passwords";
   const statementPage = ["/assets", "/assets/"].includes(path) && new URL(request.url, "http://localhost").searchParams.get("settings") === "statement-passwords";
-  const syncAction = path.match(/^\/api\/assets\/sync\/(okx|futu|polymarket|future|okxweb3|tokenpocket|binanceagentic|okxagentic)\/(bind|connect|authorize|accounts|preview|apply|disconnect)$/);
+  const syncAction = path.match(/^\/api\/assets\/sync\/(okx|futu|polymarket|future|okxweb3|tokenpocket|binanceagentic|okxagentic)\/(bind|connect|authorize|accounts|preview|apply|resume|disconnect)$/);
   const aiApi = ["/api/assets/ai", "/api/assets/ai/review", "/api/assets/ai/configure"].includes(path);
   const syncApi = path === "/api/assets/sync" || path === "/api/assets/sync/futu/callback" || syncAction;
   const file = files.get(path);

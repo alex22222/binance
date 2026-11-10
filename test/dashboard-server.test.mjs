@@ -116,19 +116,19 @@ test("dashboard records one exact approval without writing the bot state", async
     assert.equal((await fetch(`${origin}/api/weekly-strategy`).then((response) => response.json())).available, false);
     assert.equal((await fetch(`${origin}/weekly-strategy?week=invalid`)).status, 400);
 
-    const radarPage = await fetch(`${origin}/btc-radar`);
+    const radarPage = await fetch(`${origin}/btc-radar?view=detail`);
     assert.equal(radarPage.status, 200);
     const radarPolicy = radarPage.headers.get("content-security-policy");
     const radarNonce = radarPolicy.match(/script-src 'nonce-([^']+)'/)[1];
     const radarHtml = await radarPage.text();
     assert.ok(radarHtml.includes(`<script nonce="${radarNonce}">`));
     assert.match(radarPolicy, /default-src 'none'.*connect-src 'self'.*frame-ancestors 'none'/);
-    assert.match(radarHtml, /href="\/btc-radar" aria-current="page"/);
-    const nextRadarPolicy = (await fetch(`${origin}/btc-radar`)).headers.get("content-security-policy");
+    assert.match(radarHtml, /href="\/crypto" aria-current="page"/);
+    const nextRadarPolicy = (await fetch(`${origin}/btc-radar?view=detail`)).headers.get("content-security-policy");
     assert.notEqual(nextRadarPolicy, radarPolicy);
     assert.deepEqual(await fetch(`${origin}/api/btc-radar`).then((response) => response.json()), { status: "MISSING", latest: null, history: [], settings: {} });
     await mkdir(join(directory, "btc-radar"), { recursive: true });
-    const radarLatest = { ts: new Date().toISOString(), modelVersion: "pressure-v2-no-touch-probability", score: 63.5, level: "orange" };
+    const radarLatest = { ts: new Date().toISOString(), modelVersion: "pressure-v3-trailing-percentiles", score: 63.5, level: "orange" };
     await writeFile(join(directory, "btc-radar", "latest.json"), JSON.stringify(radarLatest));
     await writeFile(join(directory, "btc-radar", "history.json"), JSON.stringify([{ ts: "2026-10-01T21:43:00+08:00", price: 83555.9, score: 63.5 }]));
     const radarResponse = await fetch(`${origin}/api/btc-radar`);

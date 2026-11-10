@@ -254,6 +254,9 @@ test("the core/satellite rule classifies by category and index exposure and leav
   assert.equal(sleeve("SPYD 高股息", "股票ETF"), "satellite:股票与ETF");
   assert.equal(sleeve("隆基绿能", "股票"), "satellite:股票与ETF");
   assert.equal(sleeve("TSLAon", "股票", "币安Agentic Wallet"), "satellite:链上股票代币");
+  assert.equal(sleeve("SGOVon · Ondo 代币化美债ETF（BNB Smart Chain）", "债券", "币安Agentic Wallet"), "core:短期美债");
+  assert.equal(sleeve("iShares 0-3 Month Treasury Bond ETF（SGOV）", "股票ETF"), "core:短期美债");
+  assert.equal(sleeve("美国20年期国债ETF（TLT）", "债券"), "unassigned:债券");
   for (const category of ["组合资产", "未分类", "基金", "债券", "其他"]) assert.equal(sleeve("账户净值", category), `unassigned:${category}`);
 
   const value = portfolio([
@@ -301,8 +304,8 @@ test("a reconciled synced breakdown classifies an account total and prediction m
     assert.deepEqual(result.lookedThrough, []);
     assert.deepEqual(result.unassigned.groups, [{ name: "组合资产", value: 900 }]);
   };
+  assert.deepEqual(build([pony, { ...voo, source: "manual" }]).sleeves.lookedThrough, [futu], "hand-checked positions count once they reconcile");
   unassigned([pony, { ...voo, amount: 330 }]);
-  unassigned([pony, { ...voo, source: "manual" }]);
   unassigned([pony, { ...voo, currency: "SGD" }]);
   unassigned([]);
   assert.equal(assetSleeve({ name: "资金账户（汇总，类型待细分）", category: "组合资产", kind: "holding" }, { platform: "OKX" }).sleeve, "unassigned");
@@ -787,4 +790,24 @@ test("full snapshot history rejects additions without deleting or overwriting hi
   await assert.rejects(createPersonalAssetsSnapshot({ stateDir, revision: 501 }), { status: 400 });
   assert.equal(await readFile(path, "utf8"), before);
   await assert.rejects(stat(join(stateDir, "personal-assets-snapshots")), { code: "ENOENT" });
+});
+
+test("closing PnL estimates retain fixed cost metadata and never alter the asset sum", () => {
+  const value = portfolio([entry()]); const row = { accountId: "account-1", amount: -20, currency: "CNY", asOf: today, source: "api", estimated: true, costBasis: 10000 };
+  value.stockPnl = [row]; assert.deepEqual(validatePortfolio(value).stockPnl, [row]);
+  assert.equal(summarize(value).total,summarize({ ...value, stockPnl: [] }).total);
+  for (const patch of [{costBasis:-1},{costBasis:NaN},{estimated:false},{source:"screenshot"}]) assert.throws(()=>validatePortfolio({...value,stockPnl:[{...row,...patch}]}),/盈亏/);
+});
+
+test("perpetual net equity is satellite exposure and scoped floating PnL remains reference-only with verified source time", () => {
+  const observedAt = new Date().toISOString();
+  const value = portfolio([entry({ name: "BTC 5x 永续净权益", category: "永续合约", amount: 100 })]);
+  const row = { accountId: "account-1", amount: -2, currency: "USD", asOf: today, source: "api", asOfBasis: "statement", scope: "perpetuals", observedAt, fetchedAt: observedAt };
+  value.stockPnl = [row];
+  assert.deepEqual(validatePortfolio(value).stockPnl, [row]);
+  assert.deepEqual(assetSleeve(value.entries[0], value.accounts[0]), { sleeve: "satellite", group: "永续合约" });
+  assert.equal(summarize(value).total, 100);
+  for (const patch of [{ scope: "all" }, { source: "manual" }, { observedAt: undefined }, { fetchedAt: undefined }, { observedAt: "2000-01-01T00:00:00.000Z" }, { currency: "USDC" }]) {
+    assert.throws(() => validatePortfolio({ ...value, stockPnl: [{ ...row, ...patch }] }), /盈亏/);
+  }
 });

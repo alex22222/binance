@@ -15,6 +15,14 @@ test("renders complete readable reports and escapes model HTML and unsafe links"
   assert.match(html, /未知，不是零/);
 });
 
+test("keeps report copy high contrast in the default light theme", () => {
+  const html = fundManagerHtml({ date: "2026-09-13", text: "## 经理结论\n\n正文\n\n## 实盘回溯\n\n更多正文" });
+  assert.match(html, /<meta name="color-scheme" content="light dark">/);
+  assert.match(html, /p,li\{color:var\(--text\)\}/);
+  assert.doesNotMatch(html, /p,li\{color:#d9dee5\}/);
+  assert.match(html, /section\{[^}]*background:var\(--surface\)[^}]*border:1px solid var\(--line\)/);
+});
+
 test("archives HTML and source and presents dated history with daily ahead of preview", async () => {
   const directory = await mkdtemp(join(tmpdir(), "manager-html-"));
   await publishManagerHtml({ directory, date: "2026-09-13", edition: "preview", text: "## 经理结论\n\n预览" });

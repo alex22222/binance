@@ -5,25 +5,31 @@
 
 // Links in display order. Consecutive links naming the same group (third field)
 // share one dropdown in the bar, labelled with that group name.
-const WALLET_GROUP = "币安Agent Wallet";
+const WALLET_GROUP = "Agentic wallet";
+const CRYPTO_GROUP = "数字货币";
 export const SITE_NAV = Object.freeze([
+  ["/market", "市场总览"],
   ["/assets", "个人资产"],
   ["/dashboard", "交易总览", WALLET_GROUP],
+  ["/agentic-wallet/okx", "OKX Agentic Wallet", WALLET_GROUP],
   ["/strategies", "策略", WALLET_GROUP],
   ["/reviews", "复盘", WALLET_GROUP],
   ["/fund-manager", "基金经理", WALLET_GROUP],
   ["/operations", "运行总览", WALLET_GROUP],
-  ["/btc-radar", "BTC 风控"],
-  ["/gmgn/", "GMGN"],
-  ["https://polyhermes.107-191-42-75.sslip.io/future-btc5m-bridge", "polymarket"]
+  ["/crypto", "BTC 与收藏", CRYPTO_GROUP],
+  ["/gmgn/", "GMGN", CRYPTO_GROUP],
+  ["https://polyhermes.107-191-42-75.sslip.io/future-btc5m-bridge", "Poly 跟单"],
+  ["https://polym.trade/perps", "Polymtrade"]
 ]);
 
 // `actions` is page-owned trusted markup shown on the right of the bar.
+const SITE_SETTINGS = `<details class="site-group site-settings"><summary>设置</summary><div class="site-submenu"><a href="/assets?settings=refresh-schedule">资产自动更新</a><a href="/assets?settings=statement-passwords">结单密码</a><a href="/assets">资产导入、同步与备份</a></div></details>`;
+
 export function siteHeader(active, actions = "") {
-  // "/" now lands on personal assets and the trading dashboard lives at
+  // "/" now lands on market overview and the trading dashboard lives at
   // /dashboard, but that page (part of the Live code identity) still says "/".
-  const current = active === "/" ? "/dashboard" : active;
-  const link = ([href, label]) => `<a href="${href}"${href === current ? ' aria-current="page"' : ""}>${label}</a>`;
+  const current = active === "/" ? "/dashboard" : active === "/btc-radar" ? "/crypto" : active;
+  const link = ([href, label]) => `<a href="${href}"${href === current ? ' aria-current="page"' : ""}${href.startsWith("https://") ? ' target="_blank" rel="noopener noreferrer"' : ""}>${label}</a>`;
   let links = "";
   for (let index = 0; index < SITE_NAV.length;) {
     const group = SITE_NAV[index][2];
@@ -37,7 +43,7 @@ export function siteHeader(active, actions = "") {
   return `<header class="site-header"><div class="site-bar">`
     + `<a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">H</span><span class="site-name">HQ Capital</span></a>`
     + `<nav class="site-nav" aria-label="主导航">${links}</nav>`
-    + (actions ? `<div class="site-actions">${actions}</div>` : "")
+    + `<div class="site-actions">${actions || SITE_SETTINGS}</div>`
     + `</div></header>`;
 }
 
@@ -98,7 +104,7 @@ ${onPage("/fund-manager")} .hero{background:linear-gradient(135deg,rgba(82,102,2
 ${onPage("/fund-manager")} section:first-of-type{border-color:rgba(82,102,235,.25)}
 ${onPage("/fund-manager")} aside a{color:var(--muted)}
 ${onPage("/fund-manager")} li{color:var(--text)}
-${onPage("/btc-radar")}{--track:#e4e4eb;--warn:#b7791f;--warn-bg:rgba(183,121,31,.12);--alert-bg:rgba(232,131,12,.12)}
+${onPage("/crypto")}{--track:#e4e4eb;--warn:#b7791f;--warn-bg:rgba(183,121,31,.12);--alert-bg:rgba(232,131,12,.12)}
 html:not([data-theme=dark]) body:has(form[action="/login"]) input{border-color:var(--line);background:var(--surface)}
 html:not([data-theme=dark]) body:has(form[action="/login"]) label{color:var(--muted)}
 html:not([data-theme=dark]) body:has(form[action="/login"]) .error{color:var(--red)}
@@ -141,12 +147,13 @@ background-size:auto,auto,32px 32px,32px 32px,auto;background-attachment:fixed}
 .site-submenu a{display:block}
 /* With a mouse the menu follows hover and focus, so a click never leaves it stuck open. */
 @media (hover:hover) and (pointer:fine){.site-group[open] .site-submenu{display:none}.site-group:hover .site-submenu,.site-group:focus-within .site-submenu{display:flex}.site-group::after{content:"";position:absolute;left:0;right:0;top:100%;height:8px}}
+.site-settings .site-submenu{left:auto;right:0}.site-settings .site-submenu a{box-sizing:border-box;display:block;padding:10px 12px;min-height:40px;border-radius:8px;color:var(--text);font-size:13px;text-decoration:none;white-space:nowrap}.site-settings .site-submenu a:hover{background:var(--surface-2)}.site-settings .site-submenu a:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
 .site-actions{margin-left:auto;display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
 @media (max-width:760px){
 .site-header{position:static;padding:calc(8px + env(safe-area-inset-top)) 12px 0}
 .site-bar{gap:8px;padding:8px 10px}
 .site-nav{order:2;width:100%}
-.site-actions{order:3;width:100%;margin-left:0}
+.site-actions{order:3;width:100%;margin-left:0}.site-actions:has(.site-settings){order:1;width:auto;margin-left:auto}.site-settings .site-submenu a{min-height:44px}
 }
 @media print{.site-header{display:none}}
 ${PAGE_LIGHT_CSS}`;

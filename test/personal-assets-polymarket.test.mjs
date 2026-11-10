@@ -230,3 +230,66 @@ test("Polymarket uses the second fixed public RPC when the first is unavailable"
   assert.equal(result.breakdownComplete, true);
   assert.ok(calls.some((row) => row.url.hostname === "polygon.publicnode.com"));
 });
+
+function perpsFixture(options = {}) {
+  let reads = 0;
+  const perps = { positions: [{ instrument_id: 6, symbol: "BTC-USD", size: "0.00064", entry_price: "77489", unrealized_pnl: "1.8", return_on_equity: "0.17" }],
+    equity: "101.75", timestamp: time.getTime(), coverage: { metadata_available: true, missing_instrument_ids: [], collateral: "configured" }, ...options.portfolio };
+  return fixture({ ...options, response: (url) => {
+    if (url.hostname !== "api.perpetuals.polymarket.com") return;
+    assert.equal(url.searchParams.get("address"), url.pathname.endsWith("instruments") ? null : address);
+    let data;
+    if (url.pathname === "/v1/info/registered") data = { registered: options.registered ?? true };
+    else if (url.pathname === "/v1/info/instruments") data = options.instruments ?? [{ instrument_id: 6, instrument_type: "perpetual", symbol: "BTC-USD", base_asset: "BTC", quote_asset: "pUSD" }];
+    else if (url.pathname === "/v1/info/portfolio") data = options.snapshots?.[reads++] ?? perps;
+    else assert.fail("Not a public perps route");
+    return new Response(JSON.stringify(data));
+  } });
+}
+
+test("opt-in perps adds official USD net equity once and reports signed PnL independently of USDC pricing or leverage", async () => {
+  const { fetchImpl, calls } = perpsFixture();
+  const result = await fetchPolymarketAssets({ address, includePerps: true, fetchImpl, now });
+  assert.equal(result.total, 22.345678 * 0.998 + 101.75);
+  const row = result.holdings.find(row => row.externalId === "perps:equity");
+  assert.equal(row.amount, 101.75); assert.equal(row.currency, "USD"); assert.equal(row.category, "永续合约");
+  assert.match(row.note, /BTC-USD.*多仓.*0.00064.*77489/);
+  assert.equal(row.quantity, undefined);
+  assert.deepEqual(result.stockPnl, { amount: 1.8, currency: "USD", scope: "perpetuals", observedAt: time.toISOString() });
+  assert.equal(result.valuation.perpsEquity, 101.75); assert.equal(result.valuation.perpsPositionCount, 1);
+  const requests = calls.filter(row => row.url.hostname === "api.perpetuals.polymarket.com");
+  assert.equal(requests.filter(row => row.url.pathname.endsWith("portfolio")).length, 2);
+  for (const { init } of requests) { assert.equal(init.method, "GET"); assert.equal(init.body, undefined); assert.equal(init.headers.Authorization, undefined); }
+});
+
+test("perps accepts negative PnL and a flat funded account without counting losses or unused collateral twice", async () => {
+  for (const portfolio of [{ equity: "97.5", positions: [{ instrument_id: 6, symbol: "BTC-USD", size: "-0.01", entry_price: "80000", unrealized_pnl: "-2.5", return_on_equity: "-0.1" }] }, { equity: "100", positions: [] }]) {
+    const { fetchImpl } = perpsFixture({ portfolio });
+    const result = await fetchPolymarketAssets({ address, includePerps: true, fetchImpl, now });
+    assert.equal(result.stockPnl.amount, portfolio.positions.length ? -2.5 : 0);
+    assert.equal(result.holdings.find(row => row.category === "永续合约").amount, Number(portfolio.equity));
+  }
+});
+
+test("perps refuses stale, missing, duplicate, negative-equity and ambiguous instrument data", async () => {
+  for (const options of [
+    { portfolio: { timestamp: time.getTime() - 120001 } }, { portfolio: { timestamp: time.getTime() + 10001 } },
+    { portfolio: { equity: "-1" } }, { portfolio: { equity: null } }, { registered: false },
+    { portfolio: { positions: [ { instrument_id: 6, symbol: "ETH-USD", size: "1", entry_price: "1", unrealized_pnl: "0", return_on_equity: "0" } ] } },
+    { instruments: [] }, { portfolio: { coverage: { metadata_available: false, missing_instrument_ids: [6], collateral: "missing" } } },
+    { portfolio: { positions: [1, 1] } },
+  ]) {
+    const { fetchImpl } = perpsFixture(options);
+    await assert.rejects(fetchPolymarketAssets({ address, includePerps: true, fetchImpl, now }), /永续|Polymarket/);
+  }
+});
+
+test("perps checks collateral continuity around prediction reads, allows mark moves and refuses transfers", async () => {
+  const base = { positions: [{ instrument_id: 6, symbol: "BTC-USD", size: "0.1", entry_price: "70000", unrealized_pnl: "1", return_on_equity: "0.1" }], equity: "101", timestamp: time.getTime() };
+  for (const [next, succeeds] of [[{ equity: "103", positions: [{ ...base.positions[0], unrealized_pnl: "3" }] }, true], [{ equity: "201" }, false], [{ positions: [{ ...base.positions[0], size: "0.2" }] }, false]]) {
+    const { fetchImpl } = perpsFixture({ snapshots: [base, { ...base, ...next }] });
+    const promise = fetchPolymarketAssets({ address, includePerps: true, fetchImpl, now });
+    if (succeeds) assert.equal((await promise).valuation.perpsEquity, 103);
+    else await assert.rejects(promise, /永续.*变化/);
+  }
+});

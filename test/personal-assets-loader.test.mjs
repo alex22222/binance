@@ -9,11 +9,24 @@ import test from "node:test";
 import { verifyPersonalAssetsRelease } from "../ops/personal-assets/dashboard-loader.mjs";
 import { initialize, resolve as resolveAssetModule } from "../ops/personal-assets/dashboard-hooks.mjs";
 
-const modules = ["personal-assets-core.mjs", "personal-assets.mjs", "personal-assets-html.mjs", "personal-assets-client.mjs", "personal-assets-routes.mjs", "site-shell.mjs", "personal-assets-sync.mjs", "personal-assets-okx.mjs", "personal-assets-futu.mjs", "personal-assets-fx.mjs", "personal-assets-polymarket.mjs", "personal-assets-wallets.mjs", "personal-assets-ai.mjs", "personal-assets-funds.mjs"];
+const modules = ["personal-assets-core.mjs", "personal-assets.mjs", "personal-assets-html.mjs", "personal-assets-client.mjs", "personal-assets-routes.mjs", "site-shell.mjs", "personal-assets-sync.mjs", "personal-assets-okx.mjs", "personal-assets-futu.mjs", "personal-assets-fx.mjs", "personal-assets-polymarket.mjs", "personal-assets-wallets.mjs", "personal-assets-ai.mjs", "personal-assets-funds.mjs", "crypto-watch.mjs", "crypto-watch-html.mjs", "crypto-news.mjs", "market-overview.mjs", "market-overview-html.mjs", "digital-currency-html.mjs", "okx-agentic-status.mjs", "okx-agentic-html.mjs", "agentic-wallet-overview.mjs", "agentic-wallet-html.mjs", "agentic-wallet-client.mjs"];
+modules.push("strategy-research.mjs", "strategy-lab-html.mjs", "strategy-daily.mjs", "fund-manager-html.mjs");
 const codeFiles = ["dashboard-loader.mjs", "dashboard-hooks.mjs", ...modules.map((name) => `src/${name}`)];
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const urlDirectory = (path) => pathToFileURL(path + sep).href;
 const rootMetadata = async (path) => Object.assign(await lstat(path), { uid: 0 });
+
+test("strategy display modules are isolated while execution and governance imports stay protected", async () => {
+  const source = "file:///original/src/", release = "file:///release/src/";
+  initialize({ source, release });
+  const next = async specifier => ({ url: specifier });
+  for (const name of ["strategy-research.mjs", "strategy-lab-html.mjs", "strategy-daily.mjs", "fund-manager-html.mjs"]) {
+    assert.equal((await resolveAssetModule(`../src/${name}`, { parentURL: "file:///original/scripts/dashboard.mjs" }, next)).url, release + name);
+  }
+  for (const name of ["strategy-lab.mjs", "strategy-governance.mjs", "etf-frequency-paper.mjs", "trade-ledger.mjs"]) {
+    assert.equal((await resolveAssetModule(`./${name}`, { parentURL: release + "strategy-research.mjs" }, next)).url, source + name);
+  }
+});
 
 async function temporary(context) {
   const directory = await mkdtemp(join(tmpdir(), "personal-assets-loader-"));
@@ -34,7 +47,7 @@ async function fixture(context) {
   return { root, manifest };
 }
 
-test("asset resolver maps only the fourteen approved modules and preserves outside imports", async () => {
+test("asset resolver maps only the approved modules and preserves outside imports", async () => {
   const source = "file:///original/src/";
   const release = "file:///release/src/";
   initialize({ source, release });
@@ -44,7 +57,7 @@ test("asset resolver maps only the fourteen approved modules and preserves outsi
     assert.equal((await resolveAssetModule(source + name, { parentURL: source + "original.mjs" }, next)).url, release + name);
     assert.equal((await resolveAssetModule(`./${name}`, { parentURL: release + "personal-assets-routes.mjs" }, next)).url, release + name);
   }
-  for (const specifier of ["./bot.mjs", "./personal-assets-extra.mjs", "node:fs", "some-package", "file:///outside/src/site-shell.mjs", source + "site-shell.mjs?version=other"]) {
+  for (const specifier of ["./bot.mjs", "./personal-assets-extra.mjs", "./crypto-watch-extra.mjs", "./crypto-news-extra.mjs", "./market-overview-extra.mjs", "./okx-agentic-extra.mjs", "node:fs", "some-package", "file:///outside/src/site-shell.mjs", source + "site-shell.mjs?version=other"]) {
     assert.equal((await resolveAssetModule(specifier, { parentURL: source + "original.mjs" }, next)).url, specifier);
   }
   assert.equal((await resolveAssetModule("./shared.mjs", { parentURL: release + "personal-assets.mjs" }, next)).url, source + "shared.mjs");
@@ -54,7 +67,7 @@ test("asset resolver maps only the fourteen approved modules and preserves outsi
   assert.equal((await resolveAssetModule("./site-shell.mjs", otherRelease, afterRadar)).url, release + "site-shell.mjs");
 });
 
-test("release verifies all sixteen code hashes and permits a root-owned current symlink", async (context) => {
+test("release verifies all required code hashes and permits a root-owned current symlink", async (context) => {
   const { root } = await fixture(context);
   const verified = await verifyPersonalAssetsRelease(root, { metadata: rootMetadata });
   assert.equal(verified.root, root);
@@ -100,6 +113,15 @@ test("unsafe ownership, write permissions, file symlinks and missing manifest ha
   await assert.rejects(verifyPersonalAssetsRelease(root, { metadata: rootMetadata }), /manifest hash/i);
 });
 
+test("the crypto and market report modules require their own manifest hashes", async (context) => {
+  for (const name of ["src/crypto-watch.mjs", "src/crypto-watch-html.mjs", "src/crypto-news.mjs", "src/market-overview.mjs", "src/market-overview-html.mjs", "src/digital-currency-html.mjs", "src/okx-agentic-status.mjs", "src/okx-agentic-html.mjs"]) {
+    const { root, manifest } = await fixture(context);
+    delete manifest.files[name];
+    await writeFile(join(root, "manifest.json"), JSON.stringify(manifest));
+    await assert.rejects(verifyPersonalAssetsRelease(root, { metadata: rootMetadata }), /manifest hash/i);
+  }
+});
+
 test("loader never activates for a Bot or another Dashboard entry despite configured code root", async (context) => {
   const directory = await temporary(context);
   const loader = new URL("../ops/personal-assets/dashboard-loader.mjs", import.meta.url).href;
@@ -129,7 +151,12 @@ test("child process resolves released assets and shell while shared code and sou
   }
   await writeFile(join(source, "shared.mjs"), 'export const marker = "original-shared";');
   await writeFile(join(release, "shared.mjs"), 'throw new Error("copied shared module must never execute");');
-  await writeFile(join(release, "personal-assets-routes.mjs"), 'import {marker as model} from "./personal-assets.mjs"; import {marker as shell} from "./site-shell.mjs"; import {marker as shared} from "./shared.mjs"; export const marker = [model,shell,shared].join("|");');
+  await writeFile(join(release, "personal-assets-routes.mjs"), 'import {marker as model} from "./personal-assets.mjs"; import {marker as shell} from "./site-shell.mjs"; import {marker as shared} from "./shared.mjs"; import {marker as radar} from "./btc-radar.mjs"; export const radarMarker = radar; export const marker = [model,shell,shared].join("|");');
+  await writeFile(join(release, "crypto-watch.mjs"), 'import {marker as news} from "./crypto-news.mjs"; export const marker = "released/crypto-watch.mjs|" + news;');
+  await writeFile(join(release, "crypto-watch-html.mjs"), 'import {marker as model} from "./crypto-watch.mjs"; import {marker as shell} from "./site-shell.mjs"; import {marker as shared} from "./shared.mjs"; export const marker = [model,shell,shared].join("|");');
+  await writeFile(join(source, "btc-radar.mjs"), 'export const marker = "original-trading-radar";');
+  await writeFile(join(radar, "btc-radar.mjs"), 'export const marker = "pinned-radar-v2";');
+  await writeFile(join(release, "btc-radar.mjs"), 'throw new Error("UI release must not override the radar model");');
   await writeFile(join(source, "btc-radar-html.mjs"), 'export const marker = "original-radar";');
   await writeFile(join(radar, "btc-radar-html.mjs"), 'import {marker} from "./site-shell.mjs"; export {marker};');
   const hook = new URL("../ops/personal-assets/dashboard-hooks.mjs", import.meta.url).href;
@@ -142,13 +169,18 @@ test("child process resolves released assets and shell while shared code and sou
     const results = [];
     for (const name of ${JSON.stringify(modules)}) results.push((await import(${JSON.stringify(urlDirectory(source))} + name)).marker);
     results.push((await import(${JSON.stringify(pathToFileURL(join(source, "btc-radar-html.mjs")).href)})).marker);
+    results.push((await import(${JSON.stringify(pathToFileURL(join(source, "personal-assets-routes.mjs")).href)})).radarMarker);
     console.log(JSON.stringify(results));`;
     const child = spawnSync(process.execPath, ["--input-type=module", "-e", program], { encoding: "utf8", timeout: 10_000 });
     assert.equal(child.status, 0, child.stderr);
     const result = JSON.parse(child.stdout);
     assert.equal(result[4], "released/personal-assets.mjs|released/site-shell.mjs|original-shared");
     assert.equal(result[5], "released/site-shell.mjs");
+    assert.equal(result[modules.indexOf("crypto-watch.mjs")], "released/crypto-watch.mjs|released/crypto-news.mjs");
+    assert.equal(result[modules.indexOf("crypto-watch-html.mjs")], "released/crypto-watch.mjs|released/crypto-news.mjs|released/site-shell.mjs|original-shared");
+    assert.equal(result[modules.indexOf("crypto-news.mjs")], "released/crypto-news.mjs");
     assert.equal(result[modules.length], "released/site-shell.mjs", "radar uses released shell in either hook registration order");
+    if (registers[0] === radarRegister) assert.equal(result[modules.length + 1], "pinned-radar-v2", "production registers radar before assets, preserving the deployed model");
   }
   for (const name of modules) assert.equal(await readFile(join(source, name), "utf8"), `export const marker = ${JSON.stringify("original/" + name)};`);
 });

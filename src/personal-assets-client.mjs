@@ -23,6 +23,7 @@ let platformFilter = "all";
 let hidden = false;
 let saving = false;
 let loading = false;
+let loggedOut = false;
 let conflict = false;
 let loadFailed = false;
 let modal = null;
@@ -110,7 +111,7 @@ const acquisitionGuides = {
   "盈立": "从 QQ 邮箱下载日结单／月结单，在设置 → 结单密码分别保存香港、新加坡 PDF 密码，核对账户、日期、现金与结算后入账；证券另按确认股数 × 腾讯行情重估。",
   "OKX": "交易所：在设置 → 只读同步保存仅 Read 权限的 API 凭据；Web3：另绑定公开地址和网络，使用 OKX OnchainOS Developer 只读接口。均需预览确认入账。",
   "币安": "每天北京时间 07:00 在本机检查已登录的币安官方网页，只有出现较新的可导出日期才生成一次 All 账户完整 PDF；核对全部现货、合约与资产日期后入账。会话失效时保留上次金额；币安Agentic Wallet 单独统计。",
-  "A股": "腾讯未复权行情 × 确认股数；从平安证券导出完整持仓及资金结单／CSV，或上传截图核对数量与现金。当前没有券商账户只读连接。",
+  "A股": "腾讯未复权收盘价 × 固定股数估值，按已确认成本估算浮动盈亏；从平安证券导出完整持仓及资金结单／CSV，或上传截图核对数量与现金。当前没有券商账户只读连接。",
   "待确认": "先核对原始截图、CSV 或手动记录的实际平台及账户范围，再选择对应获取渠道；确认前不计入总额。",
   "民生银行": "从民生银行香港个人网银或邮箱取得个人电子月结单、未到期定期单及到期／续存记录，核对后导入；当前未接入银行账户只读接口。",
   "TokenPocket": "设置 → 只读同步绑定 Polygon 公开地址，经 OKX OnchainOS 读取余额；如明确启用并核验归属，可另读 Polymarket Safe 的 pUSD 现金，不包含其预测仓位。",
@@ -122,7 +123,7 @@ const acquisitionGuides = {
 };
 const acquisitionSources = {
   okx: "OKX 交易所 Read API", futu: "富途 Open API · trade:read",
-  polymarket: "Polymarket 官方 Data API + Polygon RPC", future: "Future Polygon 交易地址 · Polymarket Data API + Polygon RPC",
+  polymarket: "Polymarket 官方 Data API + Polygon RPC（预测）；Perps 公开 Portfolio API（已开启时）", future: "Future Polygon 交易地址 · Polymarket Data API + Polygon RPC",
   okxweb3: "OKX OnchainOS · Web3 公开地址", tokenpocket: "OKX OnchainOS · TokenPocket Polygon 公开地址",
   binanceagentic: "OKX OnchainOS · 币安Agentic Wallet BSC 公开地址", okxagentic: "OKX OnchainOS · OKX Agentic Wallet X Layer 公开地址"
 };
@@ -184,7 +185,7 @@ function syncSourceNotes(details) {
   const unpriced = unpricedAssetsPanel(details.lastUnpricedAssets, details.lastValuationComplete === false);
   if (!coverage.length && !warnings.length && !valuation && !unpriced) return "";
   if (hidden) return `<p class="muted small">隐私模式已隐藏覆盖详情与核对说明。</p>${unpriced}`;
-  return `${coverage.length ? `<p class="muted small">最近入账覆盖：${coverage.map(escape).join("；")}</p>` : ""}${valuation ? `<p class="muted small">源估值 ${escape(valuation.sourceCurrency)} ${number(valuation.sourceAmount, 6)} · USD 报价 ${number(valuation.usdPrice, 6)} · 报价时点 ${escape(dateTime(valuation.quoteObservedAt))}</p>` : ""}${warnings.map((warning) => `<p class="muted small">${escape(warning)}</p>`).join("")}${unpriced}`;
+  return `${coverage.length ? `<p class="muted small">最近入账覆盖：${coverage.map(escape).join("；")}</p>` : ""}${valuation ? `<p class="muted small">${valuation.perpsEquity !== undefined ? "预测部分" : ""}源估值 ${escape(valuation.sourceCurrency)} ${number(valuation.sourceAmount, 6)} · USD 报价 ${number(valuation.usdPrice, 6)} · 报价时点 ${escape(dateTime(valuation.quoteObservedAt))}</p>` : ""}${valuation?.perpsEquity !== undefined ? `<p class="muted small">永续账户净权益 USD ${number(valuation.perpsEquity)} · 永续浮动盈亏 USD ${number(valuation.perpsUnrealizedPnl)} · ${escape(valuation.perpsPositionCount)} 个仓位 · 来源时点 ${escape(dateTime(valuation.perpsObservedAt))}（净权益已含盈亏）</p>` : ""}${warnings.map((warning) => `<p class="muted small">${escape(warning)}</p>`).join("")}${unpriced}`;
 }
 function accountSyncPanel(account) {
   const binding = accountSyncDetails(account);
@@ -259,7 +260,7 @@ function pendingAccountsPanel() {
   return `<section class="notice" aria-label="待确认账户"><div class="section-head"><div><h2>待确认账户 · 未计入资产合计</h2><span class="muted small">确认实际平台、账户归属与统计状态后，再纳入总额和分布。</span></div><span class="pill">${accounts.length} 个账户</span></div><div class="account-list">${accounts.map((account) => `<div class="panel"><div class="row"><div><h3>${escape(account.name)}</h3><span class="muted small">${escape(account.platform)} · 按${basisName(account.basis)}列示</span></div><button class="button small" data-action="edit-account" data-id="${escape(account.id)}">核对账户</button></div><p class="num" style="margin:10px 0">${currencyTotals(selectedEntries(account)).map((group) => `${escape(group.name)} ${number(group.value)}`).join(" · ") || "当前统计口径尚无记录"}</p>${visibleNote(account.note)}</div>`).join("")}</div></section>`;
 }
 function categoryDescription(category) {
-  return ({ "定期存款": "定期存款单列，与现金和货币基金分开。", "货币基金": "货币基金与现金分开，按基金产品列示。", "股票ETF": "股票ETF与个股分开，不直接归为单只股票。", "稳定币": "稳定币与银行存款分开，不归为现金。", "组合资产": "组合资产待拆分，不能据此判断底层股票或债券敞口。" })[category] || "";
+  return ({ "定期存款": "定期存款单列，与现金和货币基金分开。", "货币基金": "货币基金与现金分开，按基金产品列示。", "股票ETF": "股票ETF与个股分开，不直接归为单只股票。", "稳定币": "稳定币与银行存款分开，不归为现金。", "永续合约": "按官方账户净权益计入，已含未实现盈亏；不按杠杆名义本金计入。", "组合资产": "组合资产待拆分，不能据此判断底层股票或债券敞口。" })[category] || "";
 }
 function assetTypeGuide() {
   return '<p class="footnote">货币基金与现金分开；稳定币与银行存款分开；股票ETF与个股分开。组合资产待拆分，不能据此判断底层股票或债券敞口。稳定币仅统计已识别部分，未展开的加密资产中也可能含稳定币。分类金额各自四舍五入，显示合计可能有尾差。</p>';
@@ -277,10 +278,17 @@ function assetTypeChart(summary, compact = false) {
   const cashNote = summary.negativeCash ? `<p class="muted small">负现金冲减 ${displayCurrency} ${displayAmount(summary.negativeCash)}；总额已扣减一次。</p>` : "";
   if (hidden) return `<div class="type-pie-layout"><div class="empty small">分布及占比已隐藏</div>${legend}</div>${cashNote}`;
   if (!(chartTotal > 0)) return `<div class="empty small">暂无可绘制的资产类型金额，录入并核算资产后显示饼图。</div>${legend}${cashNote}`;
+  const point = (percent) => {
+    const angle = (percent / 100 * 2 - 0.5) * Math.PI;
+    return `${(110 + 80 * Math.cos(angle)).toFixed(6)} ${(110 + 80 * Math.sin(angle)).toFixed(6)}`;
+  };
   let offset = 0;
   const segments = summary.byCategory.filter((group) => group.value > 0).map((group) => {
     const share = Math.min(100, Math.max(0, group.value / chartTotal * 100));
-    const segment = `<circle class="type-pie-segment" data-pie-category="${escape(group.name)}" cx="110" cy="110" r="80" fill="none" style="stroke:${color(group.name)}" stroke-width="27" pathLength="100" stroke-dasharray="${share.toFixed(6)} ${(100 - share).toFixed(6)}" stroke-dashoffset="${(-offset).toFixed(6)}" transform="rotate(-90 110 110)"><title>${escape(group.name)} · ${percentage(group.value, chartTotal)} · ${displayCurrency} ${displayAmount(group.value)}</title></circle>`;
+    // Open arcs avoid tiny dash artifacts at a closed circle's seam. A full
+    // ring needs two arcs because one SVG arc cannot start and end together.
+    const arc = share === 100 ? `A 80 80 0 0 1 ${point(offset + 50)} A 80 80 0 0 1 ${point(offset + 100)}` : `A 80 80 0 ${share > 50 ? 1 : 0} 1 ${point(offset + share)}`;
+    const segment = `<path class="type-pie-segment" data-pie-category="${escape(group.name)}" d="M ${point(offset)} ${arc}" fill="none" style="stroke:${color(group.name)}" stroke-width="27" stroke-linecap="butt"><title>${escape(group.name)} · ${percentage(group.value, chartTotal)} · ${displayCurrency} ${displayAmount(group.value)}</title></path>`;
     offset += share;
     return segment;
   }).join("");
@@ -481,12 +489,14 @@ async function readResponse(response) {
   return { ...data, portfolio: validatePortfolio(data.portfolio) };
 }
 async function load() {
-  if (saving || loading) return;
+  if (saving || loading || loggedOut) return;
   loading = true;
   syncBusy();
   try {
     const response = await fetch("/api/assets", { cache: "no-store" });
-    state = await readResponse(response);
+    const next = await readResponse(response);
+    if (loggedOut) return;
+    state = next;
     conflict = false;
     loadFailed = false;
     $("asset-error").hidden = true;
@@ -499,6 +509,7 @@ async function load() {
       else { syncError ||= syncState?.providers.futu.lastError || "富途授权未完成，请查看同步状态后重试。"; renderSync(); }
     }
   } catch (error) {
+    if (loggedOut) return;
     loadFailed = true;
     if (!state) $("asset-content").innerHTML = '<section class="panel empty"><h3>资产暂时无法载入</h3><p>未能读取已保存的数据，请重试。此处不会用空资产替代读取失败。</p><button class="button" data-action="reload">重新载入</button><a class="button quiet" href="/login">重新登录</a></section>';
     showError(errorText(error));
@@ -531,13 +542,14 @@ function insights(summary) {
 }
 function stockPnlAccounts() {
   return portfolio().accounts.filter(account => !pendingAccount(account) && ((portfolio().stockPnl || []).some(row => row.accountId === account.id)
-    || portfolio().entries.some(row => row.accountId === account.id && ["股票", "股票ETF"].includes(row.category))));
+    || portfolio().entries.some(row => row.accountId === account.id && ["股票", "股票ETF", "永续合约"].includes(row.category))));
 }
 function stockPnlPanel(summary) {
   const pnl = summary.stockPnl;
   const rows = [...pnl.included, ...pnl.missing];
   const value = displayValue(pnl.total);
-  return `<div class="stock-pnl"><div class="row"><span class="metric-label">股票浮动盈亏 · 已记录部分</span><button class="button small quiet" data-action="stock-pnl">更新盈亏</button></div><div class="stock-pnl-value num${!hidden && value < 0 ? " negative" : !hidden && value > 0 ? " positive" : ""}">${displayCurrency} ${!hidden && value > 0 ? "+" : ""}${number(value)}</div><p class="metric-foot">已含在当前市值中，不重复加减 · ${pnl.included.length} / ${stockPnlAccounts().length} 个股票账户已提供${pnl.missing.length ? ` · ${pnl.missing.length} 个缺汇率` : ""}</p><details class="pnl-sources"><summary>查看盈亏来源与日期</summary>${hidden ? '<p class="muted small">盈亏明细已隐藏。</p>' : rows.length ? rows.map(row => `<div class="pnl-source"><span>${escape(portfolio().accounts.find(account => account.id === row.accountId)?.name)}<small>${sourceName(row.source)} · ${escape(row.asOf)}${row.asOfBasis === "imported" ? row.source === "api" ? "（读取日期，源盈亏时点未提供）" : "（导入日期，截图时点未核实）" : "（盈亏记录日）"}${row.fetchedAt ? ` · 成功读取 ${escape(dateTime(row.fetchedAt))}` : ""}</small></span><span class="num">${escape(row.currency)} ${number(row.amount)}</span></div>`).join("") : '<p class="muted small">尚未提供股票盈亏；缺失值不按零统计。</p>'}</details></div>`;
+  const perps = rows.some(row => row.scope === "perpetuals") || portfolio().entries.some(row => row.category === "永续合约");
+  return `<div class="stock-pnl"><div class="row"><span class="metric-label">${perps ? "持仓浮动盈亏" : "股票浮动盈亏"} · 已记录部分</span><button class="button small quiet" data-action="stock-pnl">更新盈亏</button></div><div class="stock-pnl-value num${!hidden && value < 0 ? " negative" : !hidden && value > 0 ? " positive" : ""}">${displayCurrency} ${!hidden && value > 0 ? "+" : ""}${number(value)}</div><p class="metric-foot">已含在当前市值中，不重复加减 · ${pnl.included.length} / ${stockPnlAccounts().length} 个${perps ? "持仓" : "股票"}账户已提供${pnl.missing.length ? ` · ${pnl.missing.length} 个缺汇率` : ""}</p><details class="pnl-sources"><summary>查看盈亏来源与日期</summary>${hidden ? '<p class="muted small">盈亏明细已隐藏。</p>' : rows.length ? rows.map(row => `<div class="pnl-source"><span>${escape(portfolio().accounts.find(account => account.id === row.accountId)?.name)}<small>${row.scope === "perpetuals" ? "永续合约未实现盈亏（不含预测市场收益）" : row.estimated ? "固定股数收盘估算" : sourceName(row.source)} · ${escape(row.asOf)}${row.asOfBasis === "imported" ? row.source === "api" ? "（读取日期，源盈亏时点未提供）" : "（导入日期，截图时点未核实）" : "（盈亏记录日）"}${row.observedAt ? ` · 来源时点 ${escape(dateTime(row.observedAt))}` : ""}${row.fetchedAt ? ` · 成功读取 ${escape(dateTime(row.fetchedAt))}` : ""}${row.estimated ? ` · 成本基准 ${escape(row.currency)} ${number(row.costBasis)}（未含后续分红、费用或成本调整）` : ""}</small></span><span class="num">${escape(row.currency)} ${number(row.amount)}</span></div>`).join("") : '<p class="muted small">尚未提供股票盈亏；缺失值不按零统计。</p>'}</details></div>`;
 }
 function openStockPnl() {
   stockPnlDraft ??= Object.fromEntries(stockPnlAccounts().map(account => {
@@ -545,7 +557,7 @@ function openStockPnl() {
     return [account.id, { amount: original ? String(original.amount) : "", currency: original?.currency || selectedEntries(account)[0]?.currency || "CNY", asOf: original?.asOf || currentDate(), original }];
   }));
   modal = "stock-pnl";
-  setDialog("股票浮动盈亏", "按账户录入股票及股票 ETF 的未实现盈亏，亏损填负数。该数值仅展示，不改变资产市值。", hidden ? '<p class="muted">隐私模式已隐藏盈亏草稿，显示金额后可继续编辑。</p>' : `<form id="stock-pnl-form"><p class="muted small">留空表示尚未提供；不同日期的记录会标明来源，不能视为同一时点的完整收益。</p>${Object.entries(stockPnlDraft).map(([id,row]) => `<fieldset class="pnl-edit-row"><legend>${escape(portfolio().accounts.find(account => account.id === id)?.name)}</legend><div class="form-grid"><div class="field"><label for="pnl-amount-${escape(id)}">浮动盈亏（可为负数）</label><input id="pnl-amount-${escape(id)}" type="number" step="any" value="${escape(row.amount)}" data-pnl-account="${escape(id)}" data-pnl-field="amount" placeholder="尚未提供"></div><div class="field"><label for="pnl-currency-${escape(id)}">盈亏币种</label><select id="pnl-currency-${escape(id)}" data-pnl-account="${escape(id)}" data-pnl-field="currency">${options(CURRENCIES,row.currency)}</select></div><div class="field full"><label for="pnl-date-${escape(id)}">盈亏记录日期</label><input id="pnl-date-${escape(id)}" type="date" required max="${currentDate()}" value="${escape(row.asOf)}" data-pnl-account="${escape(id)}" data-pnl-field="asOf"></div></div></fieldset>`).join("")}</form>`, `${cancelButton}${hidden ? "" : '<button class="button primary" type="submit" form="stock-pnl-form">保存盈亏记录</button>'}`);
+  setDialog("持仓浮动盈亏", "按账户录入股票、股票 ETF 及永续合约的未实现盈亏，亏损填负数。该数值仅展示，不改变资产市值。", hidden ? '<p class="muted">隐私模式已隐藏盈亏草稿，显示金额后可继续编辑。</p>' : `<form id="stock-pnl-form"><p class="muted small">留空表示尚未提供；不同日期的记录会标明来源，不能视为同一时点的完整收益。</p>${Object.entries(stockPnlDraft).map(([id,row]) => `<fieldset class="pnl-edit-row"><legend>${escape(portfolio().accounts.find(account => account.id === id)?.name)}</legend><div class="form-grid"><div class="field"><label for="pnl-amount-${escape(id)}">浮动盈亏（可为负数）</label><input id="pnl-amount-${escape(id)}" type="number" step="any" value="${escape(row.amount)}" data-pnl-account="${escape(id)}" data-pnl-field="amount" placeholder="尚未提供"></div><div class="field"><label for="pnl-currency-${escape(id)}">盈亏币种</label><select id="pnl-currency-${escape(id)}" data-pnl-account="${escape(id)}" data-pnl-field="currency">${options(CURRENCIES,row.currency)}</select></div><div class="field full"><label for="pnl-date-${escape(id)}">盈亏记录日期</label><input id="pnl-date-${escape(id)}" type="date" required max="${currentDate()}" value="${escape(row.asOf)}" data-pnl-account="${escape(id)}" data-pnl-field="asOf"></div></div></fieldset>`).join("")}</form>`, `${cancelButton}${hidden ? "" : '<button class="button primary" type="submit" form="stock-pnl-form">保存盈亏记录</button>'}`);
 }
 async function saveStockPnl() {
   if (!stockPnlDraft || hidden) return;
@@ -563,7 +575,7 @@ const CORE_TARGET = 50;
 function sleevePanel(summary) {
   const { core, satellite, unassigned } = summary.sleeves;
   const head = `<div class="section-head"><div><h2>核心 / 卫星</h2><span class="muted small">按你的配置规则统计 · 目标核心 ${CORE_TARGET}% / 卫星 ${100 - CORE_TARGET}%</span></div><span class="pill">按已核算 ${displayCurrency}</span></div>`;
-  const rules = `<p class="footnote">核心：货币基金、现金与定期、USDT、USDC、其他稳定币、BTC（含 WBTC 等），以及按名称识别的标普500、纳指100 指数产品（含链上代币化版本）。卫星：其他股票与 ETF、链上股票代币、其他代币、预测市场仓位。按账户总额计入的账户，如果只读同步的持仓合计与总额相差不超过 ${LOOK_THROUGH_TOLERANCE * 100}%，按持仓比例归类，总额本身不变。其余组合资产、未分类、基金、债券和其他记录不归入任何一侧，拆分持仓后自动归类。</p>`;
+  const rules = `<p class="footnote">核心：货币基金、现金与定期、短期美债（如 SGOV，含链上代币化版本）、USDT、USDC、其他稳定币、BTC（含 WBTC 等），以及按名称识别的标普500、纳指100 指数产品（含链上代币化版本）。卫星：其他股票与 ETF、链上股票代币、其他代币、预测市场仓位及永续合约净权益。按账户总额计入的账户，如果已记录的持仓合计（同步或人工核对）与总额相差不超过 ${LOOK_THROUGH_TOLERANCE * 100}%，按持仓比例归类，总额本身不变。其余组合资产、未分类、基金、其他债券和其他记录不归入任何一侧，拆分持仓后自动归类。</p>`;
   if (!(summary.grossTotal > 0)) return `<section class="panel sleeve-panel" aria-label="核心与卫星">${head}<div class="empty small">录入并核算资产后显示核心与卫星占比。</div>${rules}</section>`;
   const sides = [["核心", "core", core], ["卫星", "satellite", satellite], ["待拆分", "unassigned", unassigned]];
   const share = (value) => value / summary.grossTotal * 100;
@@ -573,7 +585,7 @@ function sleevePanel(summary) {
   const legend = `<div class="sleeve-legend">${sides.filter(([, key, side]) => key !== "unassigned" || side.value > 0).map(([label, key, side]) => `<div><span class="sleeve-key sleeve-${key}" aria-hidden="true"></span><span>${label}</span><strong class="num">${percentage(side.value, summary.grossTotal)}</strong><small class="num">${displayCurrency} ${displayAmount(side.value)}</small></div>`).join("")}</div>`;
   const gap = coreShare - CORE_TARGET;
   const lookedThrough = summary.sleeves.lookedThrough.map((id) => escape(portfolio().accounts.find((account) => account.id === id)?.name)).join("、");
-  const status = hidden ? "" : `<p class="muted small">核心${Math.abs(gap) < 0.05 ? `与目标一致` : `比目标${gap > 0 ? "高" : "低"} ${Math.abs(gap).toFixed(1)} 个百分点`}${unassigned.value > 0 ? ` · 另有 ${percentage(unassigned.value, summary.grossTotal)} 为组合资产或未分类，拆分后比例会变化` : ""}${summary.missing.length ? ` · ${summary.missing.length} 条缺汇率记录未计入` : ""}${lookedThrough ? ` · ${lookedThrough}按同步持仓比例归类` : ""}。</p>`;
+  const status = hidden ? "" : `<p class="muted small">核心${Math.abs(gap) < 0.05 ? `与目标一致` : `比目标${gap > 0 ? "高" : "低"} ${Math.abs(gap).toFixed(1)} 个百分点`}${unassigned.value > 0 ? ` · 另有 ${percentage(unassigned.value, summary.grossTotal)} 为组合资产或未分类，拆分后比例会变化` : ""}${summary.missing.length ? ` · ${summary.missing.length} 条缺汇率记录未计入` : ""}${lookedThrough ? ` · ${lookedThrough}按持仓比例归类` : ""}。</p>`;
   const column = (title, side, foot = "") => `<div><h3>${title}</h3>${side.groups.length ? distribution(side.groups, side.value) : '<div class="empty small">暂无记录</div>'}${foot}</div>`;
   const mix = core.value > 0 && !hidden ? `<p class="muted small">现金类 ${percentage(cash, core.value)} · BTC 与指数 ${percentage(core.value - cash, core.value)}（占核心）</p>` : "";
   return `<section class="panel sleeve-panel" aria-label="核心与卫星">${head}${meter}${legend}${status}<div class="sleeve-columns">${column("核心内部构成 · 占核心", core, mix)}${column("卫星构成 · 占卫星", satellite)}${unassigned.groups.length ? column("待拆分 · 占待拆分", unassigned) : ""}</div>${rules}</section>`;
@@ -717,8 +729,27 @@ function setSettingsOpen(open) {
   $("settings-panel").hidden = !open;
   $("settings-toggle").setAttribute("aria-expanded", String(open));
 }
+async function logOff(button) {
+  button.disabled = true;
+  try {
+    const response = await fetch("/logout", { method: "POST", mode: "same-origin", credentials: "same-origin", cache: "no-store", redirect: "error" });
+    if (!response.ok) throw new Error("Logout failed");
+    loggedOut = true;
+    closeDialog();
+    state = null;
+    draft = null;
+    syncState = null;
+    $("asset-content").innerHTML = "";
+    $("dialog-body").innerHTML = "";
+    $("dialog-footer").innerHTML = "";
+    location.replace("/login");
+  } catch {
+    button.disabled = false;
+    showError("退出登录未完成，请重试。");
+  }
+}
 function render() {
-  if (!state) return;
+  if (!state || loggedOut) return;
   const summary = summarize(portfolio());
   document.querySelectorAll("[data-page]").forEach((button) => { if (button.dataset.page === page) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current"); });
   $("asset-content").innerHTML = `${loadFailed ? '<div class="notice error">最近一次重新载入失败，以下仍为上次读取的资产记录。</div>' : ""}${page === "overview" ? renderOverview(summary) : page === "holdings" ? renderHoldings(summary) : page === "analysis" ? renderAnalysis(summary) : renderHistory()}`;
@@ -808,7 +839,7 @@ function syncPreview(provider, details) {
   const stale = preview.revision !== state?.revision;
   const partial = preview.valuationComplete === false;
   const total = partial && !holdings.length ? null : Number.isFinite(preview.total) ? preview.total : null;
-  return `<div class="sync-preview"><div class="section-head"><h3>入账前核对${partial ? " · 已定价部分合计" : ""}</h3><span class="pill gold">${escape(preview.currency)} ${number(total)}</span></div><p class="muted small">更新到：${escape(account?.name || preview.targetAccountId)} · ${preview.observedAt ? `源资产时点 ${escape(dateTime(preview.observedAt))}` : `读取日期 ${escape(preview.asOf)} · 源未提供资产时点`}<br>成功读取：${escape(dateTime(preview.fetchedAt))}<br>当前所选口径：${current.map((group) => `${escape(group.name)} ${number(group.value)}`).join(" · ") || "尚未录入"}<br>新统计口径：${basisName(preview.countedBasis)}。账户总额和持仓明细不重复计入。</p>${preview.stockPnl ? `<p class="muted small">账户未实现盈亏：${escape(preview.stockPnl.currency)} ${number(preview.stockPnl.amount)} · 已含在净资产中，不重复加减。</p>` : ""}${hidden ? '<p class="muted small">隐私模式已隐藏覆盖详情与核对说明。</p>' : `<p class="muted small">覆盖范围：${escape(coverage)}</p>${warningText.map((warning) => `<div class="notice">${escape(warning)}</div>`).join("")}`}${unpricedAssetsPanel(preview.unpricedAssets, partial)}${holdings.length ? `<div class="table-scroll"><table><thead><tr><th>资产</th><th>类型</th><th>估值</th></tr></thead><tbody>${holdings.map((holding) => `<tr><td>${escape(holding.name)}</td><td>${escape(holding.category)}</td><td class="num">${escape(holding.currency)} ${number(Number.isFinite(holding.amount) ? holding.amount : null)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted small">此预览暂无可列示的已定价持仓明细。</p>'}${stale ? '<div class="notice">资产记录已变化，请重新获取预览后再入账。</div>' : ""}<div class="actions" style="margin-top:14px"><button class="button primary small" data-action="sync-apply" data-provider="${provider}"${stale ? " disabled" : ""}>核对并入账，开启自动同步</button></div><p class="muted small">首次入账后每天北京时间 ${escape(refreshTime())} 更新此账户。手动修改此账户后，自动同步会暂停，需重新核对预览。断开后保留已入账数据。</p></div>`;
+  return `<div class="sync-preview"><div class="section-head"><h3>入账前核对${partial ? " · 已定价部分合计" : ""}</h3><span class="pill gold">${escape(preview.currency)} ${number(total)}</span></div><p class="muted small">更新到：${escape(account?.name || preview.targetAccountId)} · ${preview.observedAt ? `源资产时点 ${escape(dateTime(preview.observedAt))}` : `读取日期 ${escape(preview.asOf)} · 源未提供资产时点`}<br>成功读取：${escape(dateTime(preview.fetchedAt))}<br>当前所选口径：${current.map((group) => `${escape(group.name)} ${number(group.value)}`).join(" · ") || "尚未录入"}<br>新统计口径：${basisName(preview.countedBasis)}。账户总额和持仓明细不重复计入。</p>${preview.stockPnl ? `<p class="muted small">${preview.stockPnl.scope === "perpetuals" ? "永续合约未实现盈亏（不含预测市场收益）" : "账户未实现盈亏"}：${escape(preview.stockPnl.currency)} ${number(preview.stockPnl.amount)} · 已含在净资产中，不重复加减。</p>` : ""}${hidden ? '<p class="muted small">隐私模式已隐藏覆盖详情与核对说明。</p>' : `<p class="muted small">覆盖范围：${escape(coverage)}</p>${warningText.map((warning) => `<div class="notice">${escape(warning)}</div>`).join("")}`}${unpricedAssetsPanel(preview.unpricedAssets, partial)}${holdings.length ? `<div class="table-scroll"><table><thead><tr><th>资产</th><th>类型</th><th>估值</th></tr></thead><tbody>${holdings.map((holding) => `<tr><td>${escape(holding.name)}</td><td>${escape(holding.category)}</td><td class="num">${escape(holding.currency)} ${number(Number.isFinite(holding.amount) ? holding.amount : null)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted small">此预览暂无可列示的已定价持仓明细。</p>'}${stale ? '<div class="notice">资产记录已变化，请重新获取预览后再入账。</div>' : ""}<div class="actions" style="margin-top:14px"><button class="button primary small" data-action="sync-apply" data-provider="${provider}"${stale ? " disabled" : ""}>核对并入账，开启自动同步</button></div><p class="muted small">首次入账后每天北京时间 ${escape(refreshTime())} 更新此账户。手动修改此账户后，自动同步会暂停，需重新核对预览。断开后保留已入账数据。</p></div>`;
 }
 function syncTargetControl(provider, details) {
   const accounts = portfolio().accounts.filter((account) => account.platform === syncPlatforms[provider] && (provider !== "okx" || !/web3|wallet|钱包/i.test(`${account.id} ${account.name}`)) && (provider !== "okxweb3" || /web3|wallet|钱包/i.test(`${account.id} ${account.name}`)));
@@ -832,6 +863,7 @@ function syncProviderCard(provider) {
   const accounts = Array.isArray(details.accounts) ? details.accounts : [];
   if (provider === "futu" && !accounts.some((account) => account.id === syncAccountId)) syncAccountId = [details.preview?.externalAccountId, details.selectedAccountId].find((id) => accounts.some((account) => account.id === id)) || accounts[0]?.id || "";
   const introduction = syncWalletProviders.includes(provider) ? "按明确绑定的网络与公开地址同步原生币及代币，单独列出缺价数量；钱包与交易所资产分别入账。" : provider === "okx" ? "同步到 OKX · 交易所账户，不包含 OKX Web3 钱包。" : provider === "futu" ? "选择本人真实证券账户；净资产总额为统计依据。" : provider === "future" ? "Solana 充值地址需对应至 Future 的 Polygon 交易账户；此处使用账户页面的 0x 持仓地址。不需要私钥、助记词或签名。不含未到账的充值。" : "用 Polygon 公开持仓地址读取预测仓位与 pUSD 现金。不需要私钥、助记词或签名。";
+  const predictionForm = ["polymarket", "future"].includes(provider) && !hidden ? `<form id="sync-${provider}-form" autocomplete="off"><div class="field"><label for="sync-${provider}-address">Polygon 公开持仓地址</label><input id="sync-${provider}-address" required pattern="0x[0-9a-fA-F]{40}" maxlength="42" spellcheck="false" autocomplete="off" placeholder="0x…" value="${escape(details.address || "")}"><span class="muted small">填写实际持有预测仓位的账户地址；充值地址可能与持仓地址不同。</span></div>${provider === "polymarket" ? `<label><input id="sync-polymarket-perps" type="checkbox"${details.includePerps ? " checked" : ""}> 包含永续合约净权益与浮动盈亏</label><p class="muted small">使用官方公开只读接口；净权益已含浮动盈亏，不另加转入本金或杠杆敞口。</p>` : ""}<div class="actions" style="margin-top:14px"><button class="button primary small" type="submit">验证地址并读取预览</button></div></form>` : '<p class="muted small">显示金额后可调整公开账户读取范围。</p>';
   let content;
   if (connected) {
     content = `<div class="muted small">${["polymarket", "future", ...syncWalletProviders].includes(provider) ? "公开账户" : "授权账户"}：${hidden ? "已隐藏" : escape(details.accountLabel || "已连接，等待读取账户")}</div>${syncTimes(details)}${syncSourceNotes(details)}${provider === "futu" && accounts.length ? `<div class="field" style="margin-bottom:12px"><label for="sync-futu-account">授权的真实证券账户</label><select id="sync-futu-account">${accounts.map((account) => `<option value="${escape(account.id)}"${account.id === syncAccountId ? " selected" : ""}>${escape(account.label)}</option>`).join("")}</select></div>` : ""}<div class="actions">${provider === "futu" ? '<button class="button small" data-action="sync-futu-accounts">重新读取账户</button><button class="button quiet small" data-action="sync-futu-authorize">重新授权</button>' : ""}<button class="button small" data-action="sync-preview" data-provider="${provider}"${provider === "futu" && !accounts.length ? " disabled" : ""}>读取最新预览</button><button class="button quiet small danger" data-action="sync-disconnect" data-provider="${provider}">断开本站同步</button></div><p class="muted small">${details.usesExistingCredentials ? "断开只停止此钱包的本站同步，不会移除其他账户复用的 Developer 凭据；已入账数据保留。" : ["polymarket", "future"].includes(provider) ? "断开会停止本站同步，保留已入账数据及防止重复计入所需的来源记录。" : "断开会移除本站保存的凭证并停止同步。平台上的 API / OAuth 授权请到对应平台撤销。"}</p>${syncPreview(provider, details)}`;
@@ -842,10 +874,10 @@ function syncProviderCard(provider) {
   } else if (provider === "futu") {
     content = '<p class="muted small">前往富途官方页面登录并授权，只申请读取账户资产与持仓。授权时请确认权限不包含交易或资金操作。</p><button class="button primary small" data-action="sync-futu-authorize">前往富途授权</button><p class="muted small">不需要在本站填写富途密码，也不需要安装 OpenD。</p>';
   } else {
-    content = `<form id="sync-${provider}-form" autocomplete="off"><div class="field"><label for="sync-${provider}-address">Polygon 公开持仓地址</label><input id="sync-${provider}-address" required pattern="0x[0-9a-fA-F]{40}" maxlength="42" spellcheck="false" autocomplete="off" placeholder="0x…"><span class="muted small">填写实际持有预测仓位的账户地址；充值地址可能与持仓地址不同。</span></div><div class="actions" style="margin-top:14px"><button class="button primary small" type="submit">验证地址并读取预览</button></div></form>`;
+    content = predictionForm;
   }
   if (!connected && details.lastAppliedAt && syncWalletProviders.includes(provider)) content = `<div class="notice"><strong>已断开本站同步</strong><p class="small">以下为上次入账记录，自动刷新已停止。重新验证凭据后需核对新的资产预览。</p>${syncTimes(details)}${syncSourceNotes(details)}</div>${content}`;
-  return `<section class="panel sync-card" aria-label="${name}只读同步"><div class="section-head"><h3>${name}</h3><span class="pill${connected ? " gold" : ""}">${syncStatusLabel(details)}</span></div><p class="muted small">${introduction}</p>${details.lastError ? `<div class="notice error">${hidden ? "最近同步失败，显示金额后可查看详情。" : escape(details.lastError)}</div>` : ""}${syncTargetControl(provider, details)}${content}${connected && syncWalletProviders.includes(provider) ? syncWalletForm(provider, details) : ""}</section>`;
+  return `<section class="panel sync-card" aria-label="${name}只读同步"><div class="section-head"><h3>${name}</h3><span class="pill${connected ? " gold" : ""}">${syncStatusLabel(details)}</span></div><p class="muted small">${introduction}</p>${details.lastError ? `<div class="notice error">${hidden ? "最近同步失败，显示金额后可查看详情。" : escape(details.lastError)}</div>` : ""}${syncTargetControl(provider, details)}${content}${connected && provider === "polymarket" ? `<details><summary>调整永续账户读取范围</summary>${predictionForm}</details>` : ""}${connected && syncWalletProviders.includes(provider) ? syncWalletForm(provider, details) : ""}</section>`;
 }
 function renderSync() {
   setDialog("只读资产同步", "授权后先核对预览。每个平台只更新对应账户，其他已录入资产与历史快照保留。", `${syncError ? `<div class="notice error" role="alert">${escape(syncError)}</div>` : ""}${syncLoading ? '<div class="loading" role="status">正在读取授权与同步状态…</div>' : syncState ? `<div class="notice">仅申请读取资产与持仓；不申请交易、转账或提币权限。凭证仅保存在受保护的服务器，不写入资产导出文件。</div><div class="sync-list">${syncProviders.map(syncProviderCard).join("")}</div>` : '<div class="empty"><p>当前同步状态未核实；已保存资产仍可查看。</p></div>'}`, '<button class="button quiet" data-action="sync-reload">刷新同步状态</button><button class="button" data-action="close-dialog">关闭</button>', true);
@@ -875,7 +907,7 @@ function syncTargetBody(provider) { return syncTargets[provider] ? { targetAccou
 async function connectPolymarket() {
   const address = $("sync-polymarket-address").value.trim();
   if (!/^0x[0-9a-fA-F]{40}$/.test(address)) { showError("请填写有效的 Polygon 公开持仓地址（0x 开头的 42 位地址）。"); return; }
-  await syncMutation("/polymarket/connect", { address, ...syncTargetBody("polymarket") }, "公开地址已读取，请核对资产预览");
+  await syncMutation("/polymarket/connect", { address, includePerps: $("sync-polymarket-perps").checked, ...syncTargetBody("polymarket") }, "公开地址已读取，请核对资产预览");
 }
 async function connectFuture() {
   const address = $("sync-future-address").value.trim();
@@ -1222,7 +1254,8 @@ document.addEventListener("click", async (event) => {
   const action = button.dataset.action;
   if (action === "display-currency") { await changeDisplayCurrency(button.dataset.currency); return; }
   if (!action || saving) return;
-  if (action === "close-dialog") closeDialog();
+  if (action === "logout") await logOff(button);
+  else if (action === "close-dialog") closeDialog();
   else if (action === "history-range" && ["7", "30", "all"].includes(button.dataset.range)) { historyRange = button.dataset.range; render(); $(`history-range-${historyRange}`)?.focus(); }
   else if (action === "history-comparison") await toggleHistoryComparison();
   else if (action === "reload") await load();

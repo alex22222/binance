@@ -1,7 +1,12 @@
 const MODULES = [
   "personal-assets-core.mjs", "personal-assets.mjs", "personal-assets-html.mjs",
   "personal-assets-client.mjs", "personal-assets-routes.mjs", "site-shell.mjs",
-  "personal-assets-sync.mjs", "personal-assets-okx.mjs", "personal-assets-futu.mjs", "personal-assets-fx.mjs", "personal-assets-polymarket.mjs", "personal-assets-wallets.mjs", "personal-assets-ai.mjs", "personal-assets-funds.mjs"
+  "personal-assets-sync.mjs", "personal-assets-okx.mjs", "personal-assets-futu.mjs", "personal-assets-fx.mjs", "personal-assets-polymarket.mjs", "personal-assets-wallets.mjs", "personal-assets-ai.mjs", "personal-assets-funds.mjs",
+  "crypto-watch.mjs", "crypto-watch-html.mjs", "crypto-news.mjs",
+  "market-overview.mjs", "market-overview-html.mjs",
+  "digital-currency-html.mjs", "okx-agentic-status.mjs", "okx-agentic-html.mjs",
+  "agentic-wallet-overview.mjs", "agentic-wallet-html.mjs", "agentic-wallet-client.mjs",
+  "strategy-research.mjs", "strategy-lab-html.mjs", "strategy-daily.mjs", "fund-manager-html.mjs"
 ];
 
 let source;

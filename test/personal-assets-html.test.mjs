@@ -39,6 +39,7 @@ async function view(initial = stateWith(), handleRequest = null, { search = "", 
   const requests = [];
   const aiRequests = [];
   const navigations = [];
+  const replacements = [];
   const intervals = [];
   const get = (id) => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
   const context = createContext({
@@ -46,7 +47,7 @@ async function view(initial = stateWith(), handleRequest = null, { search = "", 
     crypto: { randomUUID: () => "new-generated-id" },
     URL: class extends URL { static createObjectURL() { return "blob:local-image"; } static revokeObjectURL() {} },
     Blob,
-    location: { origin: "http://localhost:3000", search, assign: (url) => navigations.push(url) },
+    location: { origin: "http://localhost:3000", search, assign: (url) => navigations.push(url), replace: (url) => replacements.push(url) },
     window: { localStorage: storage, addEventListener() {} },
     document: { documentElement: { dataset: {} }, getElementById: get, querySelectorAll: () => [], addEventListener: (name, handler) => { listeners[name] = handler; }, createElement: () => ({ click() {}, remove() {} }) },
     setTimeout: () => 0, clearTimeout() {}, setInterval: (handler, delay) => { intervals.push({ handler, delay }); return intervals.length; },
@@ -63,7 +64,7 @@ async function view(initial = stateWith(), handleRequest = null, { search = "", 
   });
   runInContext(source.replace(/^import \{([^}]+)\} from[^\n]+\n/, "const {$1} = core;\n"), context);
   for (let tick = 0; tick < 5; tick++) await new Promise((resolve) => setImmediate(resolve));
-  return { get, listeners, requests, aiRequests, navigations, intervals, run: (code) => runInContext(code, context) };
+  return { get, listeners, requests, aiRequests, navigations, replacements, intervals, run: (code) => runInContext(code, context) };
 }
 
 test("mounts a native assets page in the shared shell and safely quotes the CSP nonce", () => {
@@ -209,7 +210,7 @@ test("currency buttons convert every current view without changing ratios, origi
   assert.match(html, /USD 100\.00/);
   assert.match(html, /已核算资产 · USD/);
   assert.match(html, /折合 USD 100\.00/);
-  assert.match(html, /stroke-dasharray="66\.666667 33\.333333"/);
+  assert.match(html, /d="M 110\.000000 30\.000000 A 80 80 0 1 1 40\.717968 150\.000000"/);
   assert.match(html, /CNY 700\.00/);
   assert.match(html, /气泡面积按已核算 USD/);
   assert.doesNotMatch(html, /内部按 CNY 核算/);
@@ -612,10 +613,10 @@ test("core/satellite panel names accounts classified from their synced positions
   const ui = await view(initial);
   const html = ui.get("asset-content").innerHTML;
   assert.match(html, /核心<\/span><strong class="num">40\.0%[\s\S]*卫星<\/span><strong class="num">60\.0%/);
-  assert.match(html, /富途按同步持仓比例归类/);
+  assert.match(html, /富途按持仓比例归类/);
   assert.doesNotMatch(html, /待拆分<\/span>/);
   ui.run("hidden=true;render()");
-  assert.doesNotMatch(ui.get("asset-content").innerHTML, /按同步持仓比例归类/);
+  assert.doesNotMatch(ui.get("asset-content").innerHTML, /富途按持仓比例归类/);
 });
 
 test("API PnL shows read time and unknown source time in overview and preview without leaking hidden amounts", async () => {
@@ -870,8 +871,8 @@ test("overview and analysis render an accessible category pie using only account
   assert.match(pie, /<svg[^>]*role="img"[^>]*aria-labelledby="asset-type-pie-title asset-type-pie-description"/);
   assert.match(pie, /<title id="asset-type-pie-title">资产类型占比<\/title>/);
   assert.match(pie, /<desc id="asset-type-pie-description">/);
-  assert.match(pie, /stroke-dasharray="66\.666667 33\.333333"/);
-  assert.match(pie, /stroke-dasharray="33\.333333 66\.666667"/);
+  assert.match(pie, /d="M 110\.000000 30\.000000 A 80 80 0 1 1 40\.717968 150\.000000"/);
+  assert.match(pie, /d="M 40\.717968 150\.000000 A 80 80 0 0 1 110\.000000 30\.000000"/);
   const colors = [...pie.matchAll(/data-pie-category="([^"]+)"[^>]*style="stroke:(var\(--cat-\d+\))"/g)];
   assert.equal(colors.length, 2);
   for (const [, category, color] of colors) assert.ok(pie.includes(`data-category="${category}"`) && pie.includes(`background:${color}`));
@@ -879,6 +880,29 @@ test("overview and analysis render an accessible category pie using only account
   assert.ok(ui.get("asset-content").innerHTML.includes(pie.match(/<svg[\s\S]*?<\/svg>/)[0]));
   ui.run('page="analysis"; render()');
   assert.ok(ui.get("asset-content").innerHTML.includes(pie));
+});
+
+test("tiny final pie sectors use their true arc angle and stay within the ring at the closing seam", async () => {
+  const ui = await view();
+  for (const share of [0.2, 0.02, 0.00001]) {
+    const pie = ui.run(`assetTypeChart({ total:100, byCategory:[{name:"组合资产",value:${100 - share}},{name:"永续合约",value:${share}}] })`);
+    const segment = pie.match(/<path[^>]*data-pie-category="永续合约"[^>]*>/)?.[0];
+    assert.ok(segment, "small sectors must not use a dashed closed circle");
+    assert.match(segment, /stroke-linecap="butt"/);
+    assert.doesNotMatch(segment, /pathLength|stroke-dash|transform=/);
+    const path = segment.match(/\bd="([^"]+)"/)[1];
+    const parts = path.match(/[MA]|-?\d+(?:\.\d+)?/g);
+    assert.equal(parts.length, 11);
+    assert.equal(parts[0], "M"); assert.equal(parts[3], "A");
+    assert.deepEqual(parts.slice(4, 10), ["80", "80", "0", "0", "1", "110.000000"]);
+    assert.equal(Number(parts[10]), 30);
+    const [x, y] = parts.slice(1, 3).map(Number);
+    assert.ok(Math.abs(Math.hypot(x - 110, y - 110) - 80) < 0.000001);
+    const angle = Math.atan2((x - 110) * -80, (y - 110) * -80);
+    assert.ok(Math.abs(angle - share / 100 * 2 * Math.PI) < 0.00000002);
+    assert.doesNotMatch(pie, /NaN|Infinity/);
+  }
+  assert.equal(ui.requests.filter(request => request.options.method === "PUT").length, 0);
 });
 
 test("both themes define a color for every asset category and the toggle persists the choice", async () => {
@@ -925,6 +949,74 @@ test("page tools sit in a gear menu in the top bar and the eye beside the total 
   assert.doesNotMatch(total(), /1,234\.56/);
 });
 
+test("settings logout stays available without asset data and replaces the page only after success", async () => {
+  const html = personalAssetsHtml({ nonce: "n" });
+  assert.match(html, /<button type="button" class="settings-item" role="menuitem" data-action="logout">[\s\S]*?退出登录<\/button>/);
+  const initial = stateWith([entry()]);
+  const ui = await view(initial, async (url) => syncResponse(url === "/logout" ? { success: true } : initial));
+  ui.run("draft = { amount: 123 }; openRates()");
+  const button = { dataset: { action: "logout" }, disabled: false };
+  await ui.listeners.click({ target: { closest: () => button } });
+  assert.deepEqual(ui.requests.map((request) => request.url), ["/api/assets", "/logout"]);
+  const { options } = ui.requests[1];
+  assert.equal(options.method, "POST");
+  assert.equal(options.credentials, "same-origin");
+  assert.equal(options.mode, "same-origin");
+  assert.equal(options.cache, "no-store");
+  assert.equal(options.redirect, "error");
+  assert.deepEqual(ui.replacements, ["/login"]);
+  assert.deepEqual(ui.navigations, []);
+  assert.equal(ui.run("state"), null);
+  assert.equal(ui.run("draft"), null);
+  assert.equal(ui.get("asset-content").innerHTML, "");
+  assert.equal(ui.get("dialog-body").innerHTML, "");
+  assert.equal(ui.get("asset-dialog").open, false);
+});
+
+test("logout failure preserves the page and allows a retry; unavailable assets do not block logout", async () => {
+  for (const failure of ["http", "network"]) {
+    const initial = stateWith([entry()]);
+    const ui = await view(initial, async (url) => {
+      if (url !== "/logout") return syncResponse(initial);
+      if (failure === "network") throw new Error("network unavailable");
+      return syncResponse({ error: "rejected" }, 403);
+    });
+    const before = ui.get("asset-content").innerHTML;
+    const button = { dataset: { action: "logout" }, disabled: false };
+    await ui.listeners.click({ target: { closest: () => button } });
+    assert.deepEqual(ui.replacements, []);
+    assert.equal(button.disabled, false);
+    assert.equal(ui.get("asset-content").innerHTML, before);
+    assert.match(ui.get("asset-error").innerHTML, /退出登录未完成/);
+  }
+  const ui = await view(null, async (url) => syncResponse(url === "/logout" ? { success: true } : {}, url === "/logout" ? 200 : 503));
+  await ui.listeners.click({ target: { closest: () => ({ dataset: { action: "logout" } }) } });
+  assert.deepEqual(ui.replacements, ["/login"]);
+});
+
+test("logout ignores duplicate clicks and a pending asset response cannot restore logged-out data", async () => {
+  let finishLogout;
+  let finishLoad;
+  const initial = stateWith([entry()]);
+  const ui = await view(initial, async (url, options, count) => {
+    if (url === "/logout") return new Promise((resolve) => { finishLogout = resolve; });
+    if (count > 1) return new Promise((resolve) => { finishLoad = resolve; });
+    return syncResponse(initial);
+  });
+  const pendingLoad = ui.run("load()");
+  const button = { dataset: { action: "logout" }, disabled: false };
+  const pendingLogout = ui.listeners.click({ target: { closest: () => button } });
+  await ui.listeners.click({ target: { closest: () => button } });
+  assert.equal(ui.requests.filter((request) => request.url === "/logout").length, 1);
+  finishLogout(syncResponse({ success: true }));
+  await pendingLogout;
+  finishLoad(syncResponse(initial));
+  await pendingLoad;
+  assert.equal(ui.run("state"), null);
+  assert.equal(ui.get("asset-content").innerHTML, "");
+  assert.deepEqual(ui.replacements, ["/login"]);
+});
+
 test("category pie handles empty, zero and single-category portfolios and removes geometry in privacy mode", async () => {
   const empty = await view();
   assert.match(empty.run("assetTypeChart(summarize(portfolio()))"), /暂无可绘制的资产类型金额/);
@@ -932,7 +1024,7 @@ test("category pie handles empty, zero and single-category portfolios and remove
   assert.doesNotMatch(zero.run("assetTypeChart(summarize(portfolio()))"), /<svg|NaN|Infinity/);
   const single = await view(stateWith([entry({ amount: 37.25, category: "现金" })]));
   const pie = single.run("assetTypeChart(summarize(portfolio()))");
-  assert.match(pie, /stroke-dasharray="100\.000000 0\.000000"/);
+  assert.match(pie, /d="M 110\.000000 30\.000000 A 80 80 0 0 1 110\.000000 190\.000000 A 80 80 0 0 1 110\.000000 30\.000000"/);
   assert.match(pie, /现金[\s\S]*?100\.0%/);
   single.run("hidden=true; render()");
   const privatePie = single.run("assetTypeChart(summarize(portfolio()))");
@@ -1135,7 +1227,7 @@ test("Polymarket connects a public address to an explicit local target without w
   ui.get("sync-polymarket-address").value = address;
   await ui.run("connectPolymarket()");
   const request = ui.requests.find((item) => item.url.endsWith("/polymarket/connect"));
-  assert.deepEqual(JSON.parse(request.options.body), { address, targetAccountId: "polymarket-main" });
+  assert.deepEqual(JSON.parse(request.options.body), { address, includePerps: false, targetAccountId: "polymarket-main" });
   assert.equal(ui.requests.filter((item) => item.options.method === "PUT").length, 0);
 });
 
@@ -1998,6 +2090,41 @@ test("snapshot trend handles empty, single, flat and out-of-range histories with
   ui.run('historyRange="7"');
   assert.match(ui.run("renderHistoryChart()"), /此时间范围暂无快照/);
   assert.doesNotMatch(ui.run("renderHistoryChart()"), /<svg/);
+});
+
+test("fixed-share close PnL is labelled as an estimate with the cost basis and privacy protection", async () => {
+  const initial = stateWith([entry({category:"股票"})]);
+  initial.portfolio.stockPnl = [{accountId:"account-1",amount:-20,currency:"CNY",asOf:"2026-10-23",source:"api",asOfBasis:"statement",estimated:true,costBasis:10000}];
+  const ui=await view(initial);const html=ui.get("asset-content").innerHTML;
+  assert.match(html,/固定股数收盘估算/);assert.match(html,/成本基准 CNY 10,000.00/);assert.match(html,/未含后续分红、费用或成本调整/);
+  ui.run("hidden=true;render()");assert.doesNotMatch(ui.get("asset-content").innerHTML,/成本基准 CNY 10,000.00/);
+});
+
+test("Polymarket perpetuals opt-in is explicit in settings and never enables Future perpetuals", async () => {
+  const initial = stateWith();
+  const address = `0x${"4".repeat(40)}`;
+  const ui = await view(initial, async url => syncResponse(url === "/api/assets" ? initial : syncStatus({ polymarket: { connected: true, enabled: true, address, includePerps: true } })));
+  await ui.run("openSync()");
+  assert.match(ui.get("dialog-body").innerHTML, /调整永续账户读取范围/);
+  assert.match(ui.get("dialog-body").innerHTML, /id="sync-polymarket-perps" type="checkbox" checked/);
+  assert.doesNotMatch(ui.get("dialog-body").innerHTML, /sync-future-perps/);
+  ui.get("sync-polymarket-address").value = address; ui.get("sync-polymarket-perps").checked = true;
+  await ui.run("connectPolymarket()");
+  const request = ui.requests.find(row => row.url.endsWith("/polymarket/connect"));
+  assert.equal(JSON.parse(request.options.body).includePerps, true);
+  ui.run("hidden = true; renderSync()");
+  assert.doesNotMatch(ui.get("dialog-body").innerHTML, new RegExp(address));
+});
+
+test("overview identifies perps floating PnL separately from prediction returns and keeps it out of total assets", async () => {
+  const initial = stateWith([entry({ category: "永续合约", amount: 100 })]);
+  initial.portfolio.stockPnl = [{ accountId: "account-1", amount: -2.5, currency: "USD", asOf: entry().asOf, source: "api", scope: "perpetuals", observedAt: new Date().toISOString(), fetchedAt: new Date().toISOString() }];
+  const ui = await view(initial);
+  const html = ui.get("asset-content").innerHTML;
+  assert.match(html, /持仓浮动盈亏/); assert.match(html, /永续合约未实现盈亏（不含预测市场收益）/);
+  assert.match(html, /USD -2\.50/); assert.doesNotMatch(html, /个股票账户已提供/);
+  assert.equal(ui.run("summarize(portfolio()).total"), 100);
+  ui.run("hidden = true;render()"); assert.doesNotMatch(ui.get("asset-content").innerHTML, /USD -2\.50/);
 });
 
 

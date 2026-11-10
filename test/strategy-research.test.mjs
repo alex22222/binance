@@ -83,3 +83,21 @@ test("approval mode is runtime state, while ACTIVE without reviewed evidence is 
   await input.save("state/approval-control.json", "{");
   assert.equal((await loadStrategyResearch(input)).approval.mode, "UNKNOWN");
 });
+
+test("Turtle series identity survives open/close and does not use floating cost arithmetic", async t => {
+  const input = await fixture(t);
+  const path = "state/turtle-paper/latest.json";
+  const paper = { mode: "paper", strategyId: "daily-turtle-55-20", schemaVersion: 1,
+    startedAt: "2026-10-01", trades: [], realizedPnlUsdt: 0, totalCostUsdt: 0, position: null };
+  await input.save(path, paper);
+  const flat = (await loadStrategyResearch(input)).paper[paper.strategyId];
+  paper.position = { quantity: 1, markPrice: 51, notionalUsdt: 50, grossReturnPct: 2, netReturnPct: 1 };
+  await input.save(path, paper);
+  const open = (await loadStrategyResearch(input)).paper[paper.strategyId];
+  assert.equal(flat.accountingSeriesHash, open.accountingSeriesHash);
+  assert.equal(flat.roundTripCostPct, null);
+  assert.equal(open.roundTripCostPct, 1);
+  paper.position.grossReturnPct = 2.00000000001;
+  await input.save(path, paper);
+  assert.equal((await loadStrategyResearch(input)).paper[paper.strategyId].accountingSeriesHash, flat.accountingSeriesHash);
+});

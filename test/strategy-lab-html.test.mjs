@@ -34,7 +34,7 @@ function page() {
   const context = createContext({ fixture, location: { hash: "" }, document: { createElement: (tag) => new Node(tag), getElementById: get }, AbortSignal, fetch: async () => ({ ok: true, json: async () => fixture }) });
   new Script(script);
   runInContext(script.slice(0, script.indexOf('    document.getElementById("strategySearch").addEventListener')), context);
-  runInContext("data = fixture; selectedId = fixture.activeStrategyId;", context);
+  runInContext('data = fixture; selectedId = fixture.activeStrategyId; section = "performance";', context);
   return { fixture, context, get, run: (code) => runInContext(code, context) };
 }
 
@@ -167,4 +167,37 @@ test("Paper comparison labels immediate-exit net values and never appears in Liv
   assert.match(view.get("dossierContent").textContent, /不签发实盘资格/);
   view.run('evidence = "live"; renderDossier()');
   assert.doesNotMatch(view.get("dossierContent").textContent, /M-252-base/);
+});
+
+test("daily journal lists every strategy, keeps missing scores unknown and separates evidence", () => {
+  const view = page();
+  view.fixture.dailyJournal = { status: "AVAILABLE", errors: [], records: [{ date: "2026-11-11", capturedAt: "2026-11-10T23:35:00Z", strategies: [{
+    strategyId: DEFAULT_STRATEGY_ID, primarySource: "paper", sources: { paper: {
+      kind: "PAPER", status: "AVAILABLE", asOf: "2026-11-10T20:59:00Z", sourceHash: "a".repeat(64),
+      score: { total: 75, components: { freshness: { label: "数据时效", points: 30, maximum: 30 } } },
+      metrics: { samples: 0, cumulativeNetPnlUsdt: 1, realizedPnlUsdt: 0, equityUsdt: 51 },
+      daily: { netPnlUsdt: null, returnPct: null, reason: "NO_CONSECUTIVE_BASELINE" }, warnings: ["模型价格，不是实盘"]
+    } }
+  }] }] };
+  view.run('section = "daily"; evidence = "paper"; renderDossier(); renderDailyOverview()');
+  assert.match(view.get("dailyOverview").textContent, /每日跟踪总览/);
+  for (const strategy of view.fixture.strategies) assert.ok(view.get("dailyOverview").textContent.includes(strategy.name));
+  const text = view.get("dossierContent").textContent;
+  assert.match(text, /75 \/ 100/);
+  assert.match(text, /数据时效/);
+  assert.match(text, /没有连续基线/);
+  assert.match(text, /不是盈利概率/);
+  view.run('evidence = "live"; renderDossier()');
+  assert.doesNotMatch(view.get("dossierContent").textContent, /75 \/ 100|51\.00/);
+});
+
+test("missing or corrupt daily archives show a gap, not a synthetic day or score", () => {
+  const view = page();
+  view.fixture.dailyJournal = { status: "ERROR", errors: ["2026-11-10"], records: [] };
+  view.run('section = "daily"; renderDossier(); renderDailyOverview()');
+  assert.match(view.get("dossierContent").textContent, /归档校验失败/);
+  assert.match(view.get("dailyOverview").textContent, /尚无每日归档/);
+  assert.match(view.get("dailyOverview").textContent, /计划归档时间.*07:35.*不代表调度已启用/);
+  assert.doesNotMatch(view.get("dailyOverview").textContent, /每天 07:35 留档/);
+  assert.doesNotMatch(view.get("dossierContent").textContent, /0 \/ 100/);
 });

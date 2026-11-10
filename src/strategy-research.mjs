@@ -5,6 +5,7 @@ import { contentHash, loadApprovalMode, loadStrategyGate, readEvidence, runtimeC
 import { refreshTradeLedger } from "./trade-ledger.mjs";
 import { paperExitValuation } from "./paper-valuation.mjs";
 import { FREQUENCY_PAPER_HASH } from "./etf-frequency-paper.mjs";
+import { readStrategyDaily } from "./strategy-daily.mjs";
 
 // The ledger lives beside the trace (state/trade-ledger.json in production);
 // TRADE_LEDGER_FILE overrides it, e.g. for a local preview.
@@ -47,7 +48,11 @@ function paperReport(value, strategyId) {
     throw new Error("Paper identity mismatch");
   }
   return {
-    ...pick(value, ["strategyId", "evidenceLevel", "startedAt", "updatedAt", "initialCapitalUsdt", "equityUsdt", "totalReturnPct", "realizedPnlUsdt", "totalCostUsdt"]),
+    ...pick(value, ["strategyId", "evidenceLevel", "startedAt", "updatedAt", "initialCapitalUsdt", "equityUsdt", "totalReturnPct", "realizedPnlUsdt", "totalCostUsdt", "roundTripCostPct", "lastObservation", "collectionStatus"]),
+    producerIdentityHash: value.provenance?.identity?.identityHash || null,
+    accountingSeriesHash: contentHash(JSON.stringify([strategyId, value.schemaVersion, value.startedAt,
+      value.initialCapitalUsdt, value.roundTripCostPct, value.costModel, value.provenance?.identity,
+      value.universe?.id, value.universe?.symbols])),
     closedTrades: value.trades.length,
     ...paperExitValuation(value),
     position: value.position ? pick(value.position, ["symbol", "markedAt", "unrealizedPnlUsdt"]) : null
@@ -55,7 +60,7 @@ function paperReport(value, strategyId) {
 }
 
 // Saved evidence only: no wallet, quote, trading, or report-generation calls.
-export async function loadStrategyResearch({ projectRoot, configPath, nowMs = Date.now() }) {
+export async function loadStrategyResearch({ projectRoot, configPath, nowMs = Date.now(), ledgerPath }) {
   const config = JSON.parse(await readFile(configPath, "utf8"));
   const [control, trace, validation, shadow, paperEntries] = await Promise.all([
     readReport(resolve(projectRoot, config.strategyControlFile), (value) => {
@@ -66,10 +71,10 @@ export async function loadStrategyResearch({ projectRoot, configPath, nowMs = Da
       try {
         const ledger = await refreshTradeLedger({
           tracePath: resolve(projectRoot, config.traceFile),
-          ledgerPath: tradeLedgerPath(projectRoot, config),
+          ledgerPath: ledgerPath || tradeLedgerPath(projectRoot, config),
           nowMs
         });
-        return { status: "AVAILABLE", records: ledger.records, period: { from: ledger.firstAt, to: ledger.lastAt } };
+        return { status: "AVAILABLE", sourceHash: contentHash(JSON.stringify(ledger.records)), records: ledger.records, period: { from: ledger.firstAt, to: ledger.lastAt } };
       } catch (error) {
         return { status: error.code === "ENOENT" ? "MISSING" : "ERROR", records: [], period: null };
       }
@@ -81,7 +86,9 @@ export async function loadStrategyResearch({ projectRoot, configPath, nowMs = Da
     readReport(resolve(projectRoot, "state/shadow-outcomes/latest.json"), (value) => {
       if (!Array.isArray(value.horizons)) throw new Error("Invalid shadow horizons");
       return {
-        ...pick(value, ["generatedAt", "method"]),
+        ...pick(value, ["generatedAt", "dataCutoff", "method"]),
+        strategyDataCutoffs: Object.fromEntries([...new Set((value.outcomes || []).flatMap(o => o.strategyIds || []))].map(id => [id,
+          (value.outcomes || []).filter(o => o.strategyIds?.includes(id) && Number.isFinite(Date.parse(o.labeledAt))).map(o => o.labeledAt).sort().at(-1) || null])),
         horizons: value.horizons.map((horizon) => pick(horizon, ["horizonMinutes", "strategyCohorts"]))
       };
     }),
@@ -98,10 +105,14 @@ export async function loadStrategyResearch({ projectRoot, configPath, nowMs = Da
     archive = { status: "AVAILABLE", records: (await readEvidence(resolve(projectRoot, "state/strategy-evidence")))
       .map(({ id, record }) => ({ id, ...pick(record, ["strategyId", "kind", "evidenceLevel", "generatedAt", "dataCutoff", "identity", "sourceHash", "costModel", "bindingStatus"]) })) };
   } catch { archive = { status: "ERROR", records: [] }; }
-  const positions = await (async () => {
-    try { return JSON.parse(await readFile(resolve(projectRoot, config.stateFile), "utf8")).positions || []; } catch { return []; }
+  const positionState = await (async () => {
+    try {
+      const value = JSON.parse(await readFile(resolve(projectRoot, config.stateFile), "utf8"));
+      if (!Array.isArray(value.positions)) throw new Error("Invalid positions");
+      return { status: "AVAILABLE", positions: value.positions };
+    } catch (error) { return { status: error.code === "ENOENT" ? "MISSING" : "ERROR", positions: [] }; }
   })();
-  const strategies = await Promise.all(buildStrategyComparison(activeStrategyId, records, { scope: "FULL_TRADE_LEDGER", positions }).map(async (strategy) => {
+  const strategies = await Promise.all(buildStrategyComparison(activeStrategyId, records, { scope: "FULL_TRADE_LEDGER", positions: positionState.positions }).map(async (strategy) => {
     const governance = await loadStrategyGate({ projectRoot, config, strategyId: strategy.id, nowMs, codeHash });
     return { ...strategy, runtimeSupported: strategy.switchable,
       switchable: strategy.switchable && (config.mode !== "live" || governance.allowed),
@@ -110,14 +121,15 @@ export async function loadStrategyResearch({ projectRoot, configPath, nowMs = Da
   return {
     generatedAt: new Date(nowMs).toISOString(), mode: config.mode,
     activeStrategyId, control,
-    strategies, approval, archive,
+    strategies, approval, archive, positionsStatus: positionState.status,
+    dailyJournal: await readStrategyDaily(resolve(projectRoot, "state/strategy-daily")).catch(() => ({ status: "ERROR", records: [], errors: ["READ_FAILED"] })),
     trace: { ...traceStatus, scope: "FULL_TRADE_LEDGER" },
     validation, shadow, paper: Object.fromEntries(paperEntries),
     frequencyPaper: await readReport(resolve(projectRoot, "state/etf-frequency-paper/latest.json"), (value) => {
       if (value.mode !== "paper" || value.specificationHash !== FREQUENCY_PAPER_HASH || value.automaticTradingEligible !== false || !Array.isArray(value.experiments)) throw new Error("Frequency Paper identity mismatch");
       return { ...pick(value, ["startedAt", "updatedAt", "evidenceLevel", "specificationHash", "specification", "collectionStatus", "lastObservation", "automaticTradingEligible"]),
         experiments: value.experiments.map(ledger => ({ ...pick(ledger, ["id", "frequency", "momentumDays", "cost", "eligibleFrom", "liquidationEquityUsdt", "liquidationReturnPct", "realizedPnlUsdt", "totalCostUsdt", "maxDrawdownPct", "closedTrades", "observations"]),
-          position: ledger.position ? pick(ledger.position, ["symbol", "markedAt", "hypotheticalExitNetPnlUsdt"]) : null })) };
+          position: ledger.position ? pick(ledger.position, ["symbol", "markedAt", "hypotheticalExitNetPnlUsdt", "estimatedExitCostUsdt"]) : null })) };
     })
   };
 }

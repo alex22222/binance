@@ -46,6 +46,7 @@ const configPath = resolve(projectRoot, process.env.BOT_CONFIG || "config.json")
 const host = "127.0.0.1";
 const port = Number(process.env.DASHBOARD_PORT || 4173);
 const authConfig = dashboardAuthConfig();
+const signedOutCookie = "dashboard_session=signed-out";
 const allowedOrigins = dashboardAllowedOrigins({ host, port });
 const execFileAsync = promisify(execFile);
 const tradeReviewDirectory = resolve(
@@ -148,7 +149,10 @@ function requireAllowedOrigin(request) {
 }
 
 function requireAuthentication(request, response) {
-  if (dashboardRequestAuthorized(request, authConfig)) return true;
+  // Remember explicit logout so cached browser Basic credentials cannot sign
+  // the user straight back in. The login form replaces this invalid cookie.
+  const signedOut = authConfig.enabled && String(request.headers.cookie || "").split(";").some((part) => part.trim() === signedOutCookie);
+  if (!signedOut && dashboardRequestAuthorized(request, authConfig)) return true;
   if (request.method === "GET" && (["/", "/strategies", "/btc-radar"].includes(request.url) || ["/reviews", "/fund-manager", "/weekly-strategy", "/assets", "/assets/", "/dashboard", "/dashboard/"].includes(new URL(request.url, "http://localhost").pathname))) {
     response.writeHead(303, {
       "Location": "/login",
@@ -165,7 +169,7 @@ function requireAuthentication(request, response) {
   response.writeHead(401, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
-    ...(pageFetch ? {} : { "WWW-Authenticate": 'Basic realm="Agentic Wallet Dashboard", charset="UTF-8"' }),
+    ...(pageFetch || signedOut ? {} : { "WWW-Authenticate": 'Basic realm="Agentic Wallet Dashboard", charset="UTF-8"' }),
     "X-Content-Type-Options": "nosniff"
   });
   response.end(JSON.stringify({ error: "Authentication required" }));
@@ -222,6 +226,27 @@ const server = createServer(async (request, response) => {
         "X-Content-Type-Options": "nosniff"
       });
       response.end();
+      return;
+    }
+    if (request.url === "/logout") {
+      if (request.method !== "POST") {
+        response.writeHead(405, { "Allow": "POST", "Cache-Control": "no-store" });
+        response.end();
+        return;
+      }
+      if (!request.headers.origin) {
+        const error = new Error("Origin required");
+        error.statusCode = 403;
+        throw error;
+      }
+      requireAllowedOrigin(request);
+      response.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Set-Cookie": `${signedOutCookie}; Path=/; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax`,
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.end(JSON.stringify({ success: true }));
       return;
     }
     if (!requireAuthentication(request, response)) return;

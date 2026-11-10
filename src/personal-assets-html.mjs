@@ -2,8 +2,8 @@ import { SITE_CSS, siteHeader } from "./site-shell.mjs";
 
 // Asset-type colors, indexed like CATEGORIES in personal-assets-core.mjs. The
 // client paints charts with var(--cat-N) so each theme supplies its own set.
-const DARK_CATEGORY_COLORS = ["#f5c14f", "#6ba4ed", "#64c7ab", "#b5a2f4", "#e89a67", "#d77ea7", "#74beca", "#c2ca70", "#ae9679", "#8d9edf", "#75b988", "#a4a9b3"];
-const LIGHT_CATEGORY_COLORS = ["#8e8e93", "#32ade6", "#34c759", "#007aff", "#5856d6", "#af52de", "#a2845e", "#00c7be", "#ff9500", "#ffcc00", "#ff6482", "#c7c7cc"];
+const DARK_CATEGORY_COLORS = ["#f5c14f", "#6ba4ed", "#64c7ab", "#b5a2f4", "#e89a67", "#d77ea7", "#74beca", "#c2ca70", "#ae9679", "#8d9edf", "#75b988", "#a4a9b3", "#ef8f80"];
+const LIGHT_CATEGORY_COLORS = ["#8e8e93", "#32ade6", "#34c759", "#007aff", "#5856d6", "#af52de", "#a2845e", "#00c7be", "#ff9500", "#ffcc00", "#ff6482", "#c7c7cc", "#ff3b30"];
 const categoryVars = (colors) => colors.map((color, index) => `--cat-${index}:${color}`).join(";");
 
 // Extra light-theme polish for this page; the shared shell supplies the light
@@ -34,6 +34,7 @@ const SETTINGS_MENU = `<div class="settings-menu"><button type="button" class="s
   + `<a class="settings-item" role="menuitem" href="/assets?settings=statement-passwords">${icon('<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>')}结单密码</a>`
   + `<button type="button" class="settings-item" role="menuitem" data-action="export" data-needs-data disabled>${icon('<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>')}导出备份</button>`
   + `<button type="button" class="settings-item" role="menuitem" id="theme-toggle" aria-pressed="false">${icon('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>')}<span id="theme-toggle-label">明亮模式</span></button>`
+  + `<button type="button" class="settings-item" role="menuitem" data-action="logout">${icon('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>')}退出登录</button>`
   + `</div></div>`;
 
 export function personalAssetsHtml({ nonce }) {
@@ -109,7 +110,7 @@ export function statementPasswordsHtml({ nonce }) {
 <style>${SITE_CSS}
 .passwords-wrap{max-width:760px;margin:36px auto;padding:0 20px 40px}.passwords-wrap h1{font-size:26px;margin:20px 0 10px}.passwords-wrap p{color:var(--muted);line-height:1.7}.password-card{margin:20px 0;padding:24px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}.password-card h2{font-size:18px;margin:0 0 8px}.password-card label{display:block;margin-top:18px;font-size:13px}.password-card input{box-sizing:border-box;width:100%;padding:12px;margin:8px 0 14px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}.password-actions{display:flex;gap:10px;flex-wrap:wrap}.password-actions button,.back-link{font:inherit;padding:10px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--text);text-decoration:none}.password-actions button[type=submit]{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}button:disabled{opacity:.5;cursor:wait}.password-status{font-size:13px;color:var(--muted)}#password-message{white-space:pre-wrap}#password-message[data-error=true]{color:var(--red)}
 </style></head><body>${siteHeader("/assets")}<main class="passwords-wrap"><a class="back-link" href="/assets">← 返回个人资产</a><h1>结单密码</h1><p>保存用于打开电子结单的密码。已保存的密码不会回显；更新某个账户不会改动另一个账户。保存后仍需解密、核对结单，才会更新资产。</p><p id="password-message" role="status" aria-live="polite">正在读取配置状态…</p>
-${[["usmart-hk", "盈立香港", "用于香港盈立发送的日结单和月结单。"], ["usmart-sg", "盈立新加坡", "用于盈立新加坡发送的结单，与香港账户分开配置。"]].map(([provider, label, description]) => `<form class="password-card" data-provider="${provider}" autocomplete="off"><h2>${label}</h2><p>${description}</p><div class="password-status" id="status-${provider}">状态待读取</div><label for="password-${provider}">结单打开密码</label><input type="password" id="password-${provider}" autocomplete="new-password" spellcheck="false" maxlength="256" required placeholder="输入新密码；已保存的密码不会显示"><div class="password-actions"><button type="submit" disabled>保存密码</button><button type="button" data-clear disabled>清除已保存密码</button></div></form>`).join("")}
+${[["usmart-hk", "盈立香港", "用于香港盈立发送的日结单和月结单。"], ["usmart-sg", "盈立新加坡", "用于盈立新加坡发送的结单，与香港账户分开配置。"], ["futu", "富途", "用于富途证券发送的电子结单，与只读 API 授权分开配置。"]].map(([provider, label, description]) => `<form class="password-card" data-provider="${provider}" autocomplete="off"><h2>${label}</h2><p>${description}</p><div class="password-status" id="status-${provider}">状态待读取</div><label for="password-${provider}">结单打开密码</label><input type="password" id="password-${provider}" autocomplete="new-password" spellcheck="false" maxlength="256" required placeholder="输入新密码；已保存的密码不会显示"><div class="password-actions"><button type="submit" disabled>保存密码</button><button type="button" data-clear disabled>清除已保存密码</button></div></form>`).join("")}
 <p>密码通过本站 HTTPS 提交，仅保存在受限的服务器配置文件中，不进入资产导出、快照、AI 点评或浏览器存储。这里不需要邮箱登录密码、银行登录密码或交易密码。</p></main>
 <script nonce="${safeNonce}">
 const message = document.getElementById("password-message");

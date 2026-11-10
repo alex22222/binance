@@ -101,6 +101,21 @@ export function strategyLabHtml() {
     .read-status { margin-top: 26px; padding-top: 15px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }
     .read-status button { padding: 5px 10px; border: 1px solid var(--line); border-radius: 5px; background: transparent; }
     .error { color: var(--red); }
+    .journal-overview { max-width: 1680px; margin: auto; padding: 24px 30px; border-bottom: 1px solid var(--line); }
+    .journal-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+    .journal-heading h1 { font-size: 23px; margin: 0; }
+    .journal-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 15px; }
+    .journal-card { text-align: left; padding: 13px 15px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); min-width: 0; }
+    .journal-card:hover { border-color: var(--brand); }
+    .journal-card[aria-pressed="true"] { border-color: var(--brand); background: var(--brand-soft); }
+    .journal-card strong { display: block; overflow-wrap: anywhere; }
+    .journal-score { display: flex; justify-content: space-between; gap: 12px; margin-top: 5px; font-variant-numeric: tabular-nums; }
+    .journal-table table { min-width: 680px; }
+    .journal-table th:first-child, .journal-table td:first-child { white-space: nowrap; }
+    .section-tabs { flex-wrap: wrap; }
+    @media (max-width: 1200px) { .journal-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+    @media (max-width: 760px) { .journal-overview { padding: 20px 16px; } .journal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .journal-heading h1 { font-size: 20px; } }
+    @media (max-width: 420px) { .journal-grid { grid-template-columns: 1fr; } }
     @media (max-width: 1200px) { .workspace { grid-template-columns: 300px minmax(0, 1fr); } .directory { padding: 24px 18px; } .dossier { padding: 24px; } .metric strong { font-size: 23px; } }
     @media (max-width: 760px) {
       .top-meta { display: none; }
@@ -120,6 +135,7 @@ export function strategyLabHtml() {
 <body>
   <a class="skip" href="#dossier">跳到研究档案</a>
   ${siteHeader("/strategies", '<span class="top-meta">只读研究 · 交易管理请前往仪表盘</span>')}
+  <section class="journal-overview" id="dailyOverview" aria-label="策略每日跟踪总览"><p class="muted">正在读取每日归档…</p></section>
   <div class="workspace">
     <aside class="directory" aria-label="策略目录">
       <h1>策略研究档案</h1><p>从研究假设，到可验证的表现。</p>
@@ -143,11 +159,53 @@ export function strategyLabHtml() {
     const date = (value) => !value || !Number.isFinite(Date.parse(value)) ? "未提供" : new Date(value).toISOString().slice(0, 10);
     const period = (value) => value?.from && value?.to ? date(value.from) + " — " + date(value.to) : "覆盖期间未提供";
     const age = (value) => !value ? "报告日期未提供" : date(value) + (Date.now() - Date.parse(value) > 7 * 86400000 ? " · 超过 7 天未更新" : "");
-    let data = null, selectedId = location.hash.slice(1), section = "performance", evidence = "live", busy = false, lastPayload = "";
+    let data = null, selectedId = location.hash.slice(1), section = "daily", evidence = "live", busy = false, lastPayload = "";
     const selected = () => data?.strategies.find((strategy) => strategy.id === selectedId);
     const stage = (strategy) => strategy.active ? "当前策略" : strategy.status === "SHADOW" ? "Shadow" : strategy.status === "ACTIVE" ? "可运行" : "研究中";
     const badge = (strategy) => el("span", "badge " + (strategy.active ? "green" : strategy.status === "SHADOW" ? "gold" : ""), stage(strategy));
     const reportFailure = (source) => source?.status === "ERROR" ? "报告读取失败" : "尚无该来源的研究记录";
+    const sourceLabels = { live: "实盘", paper: "Paper", history: "历史模拟", shadow: "Shadow" };
+    const dailyStatus = value => ({ AVAILABLE: "已评分", MISSING: "缺少数据", ERROR: "读取失败", STALE: "证据过期", FUTURE_DATA: "未来时间异常", UNDATED: "缺少数据日期", NO_SAMPLES: "尚无样本", NOT_STARTED: "尚未开始", INCOMPLETE: "证据不完整" })[value] || "尚未归档";
+    const dailyReason = value => ({ NO_CONSECUTIVE_BASELINE: "没有连续基线：首日或日期断档", SERIES_CHANGED: "账本或口径已变化，不跨版本比较", LEDGER_REGRESSED: "累计平仓数回退，暂停日变化计算", INCOMPLETE_OR_STALE: "数据不完整或过期，暂停日变化计算", CONSECUTIVE_SNAPSHOTS: "相邻两次晨间快照之差，非自然日或美股单日收益" })[value] || "不可计算";
+    const dailyScore = value => value?.score?.total == null ? "未评分" : value.score.total + " / 100";
+    const latestDaily = () => data.dailyJournal?.records?.[0];
+    function renderDailyOverview() {
+      const parent = document.getElementById("dailyOverview"), latest = latestDaily(); parent.replaceChildren();
+      const head = el("div", "journal-heading"); head.append(el("h1", "", "每日跟踪总览"), el("span", "source-meta", latest ? "采集日 " + latest.date + " · 北京时间" : "尚无每日归档")); parent.append(head);
+      parent.append(el("p", "note", "计划归档时间：北京时间 07:35；页面可用不代表调度已启用。每个策略独立记录，分数衡量证据质量，不是盈利概率、投资评级或实盘资格。"));
+      if (data.dailyJournal?.status === "ERROR") parent.append(el("p", "error", "部分归档校验失败：" + (data.dailyJournal.errors || []).join(" / ") + "；无效记录已排除。"));
+      if (latest && latest.date !== new Date(Date.parse(data.generatedAt) + 8 * 3600000).toISOString().slice(0, 10)) parent.append(el("p", "error", "最新归档不是今天；以下为历史快照，不是当前状态。"));
+      const grid = el("div", "journal-grid");
+      for (const strategy of data.strategies) {
+        const row = latest?.strategies.find(s => s.strategyId === strategy.id), value = row?.sources[row.primarySource];
+        const card = button("", "journal-card", () => { section = "daily"; selectStrategy(strategy.id); renderDailyOverview(); }); card.setAttribute("aria-pressed", String(strategy.id === selectedId));
+        card.append(el("strong", "", strategy.name));
+        const line = el("div", "journal-score"); line.append(el("span", "", dailyScore(value)), el("span", "note", row ? sourceLabels[row.primarySource] : "尚未归档")); card.append(line);
+        card.append(el("span", "note", dailyStatus(value?.status))); grid.append(card);
+      }
+      parent.append(grid);
+    }
+    function renderDaily(parent, strategy) {
+      parent.append(el("h3", "", "每日记录与打分"));
+      const tabs = el("div", "evidence-tabs"); tabs.setAttribute("aria-label", "每日记录证据来源");
+      for (const [id, label] of Object.entries(sourceLabels)) { const item = button(label, "", () => { evidence = id; renderDossier(); }); item.setAttribute("aria-pressed", String(evidence === id)); tabs.append(item); } parent.append(tabs);
+      parent.append(el("p", "note", "固定评分 evidence-tracking-v1：时效 30、样本 25、成本 20、内容可追溯 25。不是盈利概率；不同证据类型不混合排名，20 个样本仅是本评分刻度，不是统计充分或晋级门槛。"));
+      const archive = data.dailyJournal, records = (archive?.records || []).map(day => ({ day, row: day.strategies.find(s => s.strategyId === strategy.id) })).filter(item => item.row);
+      if (archive?.status === "ERROR") parent.append(el("p", "error", "归档校验失败：" + (archive.errors || []).join(" / ") + "；仅显示通过校验的记录。"));
+      const current = records[0]?.row.sources[evidence];
+      if (!current) { empty(parent, "尚无此来源的每日记录", "独立归档任务启用后，每个策略每日留档；不从旧回测补造历史日记，也不自动启动 Paper。"); return; }
+      parent.append(el("p", "source-meta", "采集日 " + records[0].day.date + "（北京） · 数据截至 " + (current.asOf || "未提供") + " · " + dailyStatus(current.status)));
+      metrics(parent, [["证据跟踪评分", dailyScore(current), "不代表收益优劣"], ["快照间净变化", current.daily.netPnlUsdt == null ? "—" : number(current.daily.netPnlUsdt, 4) + " U", dailyReason(current.daily.reason)], [evidence === "live" ? "累计已实现" : "模型累计净损益", current.metrics.cumulativeNetPnlUsdt == null ? "—" : number(current.metrics.cumulativeNetPnlUsdt, 4) + " U", evidence === "live" ? "浮盈另列；非完整净值" : "历史与 Shadow 不转换为交易损益"], ["累计样本", number(current.metrics.samples, 0), evidence === "shadow" ? "各窗口最大值，不求和" : "已平仓数，不等于当日交易"]]);
+      table(parent, ["评分维度", "得分", "上限"], Object.values(current.score.components).map(c => [c.label, number(c.points, 0), number(c.maximum, 0)]));
+      for (const warning of current.warnings || []) parent.append(el("p", "note", warning));
+      parent.append(el("h3", "", "逐日归档 · 最近 90 个采集日"));
+      table(parent, ["采集日（北京）", "状态", "证据评分", "快照间净变化", "快照间收益率", "证据截至"], records.filter(r => r.row.sources[evidence]).map(({ day, row }) => { const s = row.sources[evidence]; return [day.date, dailyStatus(s.status), dailyScore(s), s.daily.netPnlUsdt == null ? "—" : number(s.daily.netPnlUsdt, 4) + " U", pct(s.daily.returnPct), s.asOf || "未提供"]; }), "journal-table");
+      parent.append(el("p", "note", "历史 / Shadow 不计算每日交易损益。无数据、日期断档、版本变化和陈旧估值均不填零；晨间快照不等同自然日或美股交易日。"));
+      if (evidence === "paper") {
+        const experiments = latestDaily()?.strategies.filter(s => s.parentStrategyId === strategy.id) || [];
+        if (experiments.length) { parent.append(el("h3", "", "独立 Paper 子实验 · 每日留档")); table(parent, ["实验", "状态", "评分", "快照间净变化"], experiments.map(s => [s.name, dailyStatus(s.sources.paper.status), dailyScore(s.sources.paper), s.sources.paper.daily.netPnlUsdt == null ? "—" : number(s.sources.paper.daily.netPnlUsdt, 4) + " U"])); }
+      }
+    }
     function button(text, className, action) { const node = el("button", className, text); node.addEventListener("click", action); return node; }
     function defaultEvidence(strategy) {
       if (strategy.active || strategy.performance.trades) return "live";
@@ -158,7 +216,7 @@ export function strategyLabHtml() {
     function selectStrategy(id) {
       selectedId = id; evidence = defaultEvidence(selected()); history.replaceState(null, "", "#" + id);
       document.getElementById("directoryBody").classList.remove("open"); document.getElementById("directoryToggle").setAttribute("aria-expanded", "false");
-      renderDirectory(); renderDossier();
+      renderDirectory(); renderDossier(); renderDailyOverview();
       if (matchMedia("(max-width: 760px)").matches) document.getElementById("dossier").focus();
     }
     function renderDirectory() {
@@ -185,8 +243,8 @@ export function strategyLabHtml() {
     function metrics(parent, entries) {
       const grid = el("div", "metrics"); for (const [label, value, hint, tone] of entries) { const item = el("div", "metric"); item.append(el("span", "", label), el("strong", tone || "", value), el("small", "", hint)); grid.append(item); } parent.append(grid);
     }
-    function table(parent, headers, rows) {
-      const wrap = el("div", "table-wrap"), node = el("table"), head = el("thead"), tr = el("tr"), body = el("tbody");
+    function table(parent, headers, rows, className = "") {
+      const wrap = el("div", "table-wrap" + (className ? " " + className : "")), node = el("table"), head = el("thead"), tr = el("tr"), body = el("tbody");
       wrap.tabIndex = 0; wrap.setAttribute("role", "region"); wrap.setAttribute("aria-label", "表现数据表，可横向滚动");
       for (const label of headers) { const cell = el("th", "", label); cell.scope = "col"; tr.append(cell); } head.append(tr);
       for (const row of rows) { const line = el("tr"); for (const value of row) line.append(el("td", String(value).startsWith("-") ? "negative" : "", value)); body.append(line); }
@@ -299,8 +357,8 @@ export function strategyLabHtml() {
       if (experimental) verdict.append(el("p", "note", "仅豁免研究晋级条件，不豁免执行风控；不自动续期。单笔 ≤ " + number(gate.limits?.maxTradeUsdt) + " USDT · 最多 " + number(gate.limits?.maxOpenPositions, 0) + " 仓 · 已实现日净亏损达 " + number(gate.limits?.dailyLossLimitUsdt) + " USDT 后停止新增买入（不保证总亏损封顶）。"));
       parent.append(verdict);
       const tabs = el("nav", "section-tabs"); tabs.setAttribute("aria-label", "研究档案章节");
-      for (const [id, label] of [["overview", "研究概览"], ["performance", "表现与风险"], ["rules", "规则与来源"]]) { const item = button(label, "", () => { section = id; renderDossier(); }); item.setAttribute("aria-pressed", String(id === section)); tabs.append(item); } parent.append(tabs);
-      ({ overview: renderOverview, performance: renderPerformance, rules: renderRules })[section](parent, strategy);
+      for (const [id, label] of [["daily", "每日记录"], ["overview", "研究概览"], ["performance", "表现与风险"], ["rules", "规则与来源"]]) { const item = button(label, "", () => { section = id; renderDossier(); }); item.setAttribute("aria-pressed", String(id === section)); tabs.append(item); } parent.append(tabs);
+      ({ daily: renderDaily, overview: renderOverview, performance: renderPerformance, rules: renderRules })[section](parent, strategy);
       for (const detail of parent.querySelectorAll("details")) detail.open = openDetails.has(detail.querySelector("summary").textContent);
       if (wasButton) [...parent.querySelectorAll("button")].find((item) => item.textContent === focus)?.focus({ preventScroll: true });
     }
@@ -316,7 +374,7 @@ export function strategyLabHtml() {
           if (!selected()) selectedId = data.activeStrategyId || data.strategies[0].id;
           if (first) evidence = defaultEvidence(selected());
           const scroll = document.getElementById("strategyComparison").scrollTop;
-          renderDirectory(); renderDossier(); document.getElementById("strategyComparison").scrollTop = scroll; lastPayload = payload;
+          renderDirectory(); renderDossier(); renderDailyOverview(); document.getElementById("strategyComparison").scrollTop = scroll; lastPayload = payload;
         }
         status.className = ""; status.textContent = "已读取 " + new Date(next.generatedAt).toLocaleTimeString("zh-CN", { hour12: false }) + " · 报告日期以各来源为准";
         if (data.control.status === "ERROR") status.textContent += " · 当前策略配置读取失败";

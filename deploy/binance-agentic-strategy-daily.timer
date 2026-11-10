@@ -1,0 +1,11 @@
+[Unit]
+Description=Record every strategy daily at 07:35 Beijing time
+
+[Timer]
+OnCalendar=*-*-* 23:35:00 UTC
+Persistent=true
+RandomizedDelaySec=30
+Unit=binance-agentic-strategy-daily.service
+
+[Install]
+WantedBy=timers.target

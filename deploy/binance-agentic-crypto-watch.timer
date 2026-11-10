@@ -1,0 +1,11 @@
+[Unit]
+Description=Summarize OKX favorites daily at 08:00 Asia/Shanghai
+
+[Timer]
+OnCalendar=*-*-* 00:00:00 UTC
+RandomizedDelaySec=60
+Persistent=true
+Unit=binance-agentic-crypto-watch.service
+
+[Install]
+WantedBy=timers.target

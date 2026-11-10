@@ -10,6 +10,7 @@
     "dashboard:open": "npm run dashboard && open artifacts/strategy-mock-dashboard.html",
     "dashboard:live": "node scripts/serve-live-dashboard.mjs",
     "strategy:validate": "node scripts/run-strategy-validation.mjs",
+    "strategy:daily": "node scripts/record-strategy-daily.mjs",
     "strategy:shadow-outcomes": "node scripts/run-shadow-outcomes.mjs",
     "strategy:turtle-paper": "node scripts/run-turtle-paper.mjs",
     "strategy:weekly-etf-paper": "node scripts/run-weekly-etf-rotation-paper.mjs",

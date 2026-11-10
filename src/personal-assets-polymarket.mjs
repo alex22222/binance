@@ -1,4 +1,5 @@
 const DATA_HOST = "https://data-api.polymarket.com";
+const PERPS_HOST = "https://api.perpetuals.polymarket.com";
 const RPC_HOSTS = ["https://polygon.drpc.org", "https://polygon.publicnode.com"];
 const PUSD = "0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb";
 const MAX_BYTES = 1_000_000;
@@ -66,7 +67,7 @@ function status(payload, at) {
   return row;
 }
 
-export async function fetchPolymarketAssets({ address, fetchImpl = fetch, now = () => new Date() }) {
+export async function fetchPolymarketAssets({ address, includePerps = false, fetchImpl = fetch, now = () => new Date() }) {
   if (typeof address !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(address)
     || /^0x0{40}$/i.test(address) || address.toLowerCase() === PUSD) {
     throw new PolymarketAssetsError("请填写 Polymarket 的 Polygon 资金或代理钱包地址", 400);
@@ -76,7 +77,7 @@ export async function fetchPolymarketAssets({ address, fetchImpl = fetch, now = 
   const deadline = AbortSignal.timeout(45_000);
   async function request(url, body) {
     const target = new URL(url);
-    if (![DATA_HOST, ...RPC_HOSTS, "https://api.kraken.com"].includes(target.origin)) throw invalid();
+    if (![DATA_HOST, PERPS_HOST, ...RPC_HOSTS, "https://api.kraken.com"].includes(target.origin)) throw invalid();
     try {
       const response = await fetchImpl(url, {
         method: body ? "POST" : "GET", redirect: "error", signal: AbortSignal.any([deadline, AbortSignal.timeout(8000)]),
@@ -168,6 +169,40 @@ export async function fetchPolymarketAssets({ address, fetchImpl = fetch, now = 
     return { value: Number(trade[0]), observedAt: new Date(timestamp).toISOString() };
   }
 
+  function perpsPortfolio(payload, instruments) {
+    const fail = () => new PolymarketAssetsError("Polymarket 永续账户净权益、持仓身份或时点无法核验，保留上次资产及盈亏");
+    const decimal = value => typeof value === "string" && value.length <= 100 && /^-?\d+(?:\.\d+)?$/.test(value) && Number.isFinite(Number(value)) && Math.abs(Number(value)) <= MAX_VALUE;
+    if (!payload || !decimal(payload.equity) || Number(payload.equity) < 0 || !Array.isArray(payload.positions) || payload.positions.length > MAX_HOLDINGS
+      || !Number.isSafeInteger(payload.timestamp) || payload.timestamp > atTime(now).getTime() + 10_000 || atTime(now).getTime() - payload.timestamp > MAX_AGE
+      || !Array.isArray(instruments) || instruments.length > 1000) throw fail();
+    if (payload.coverage !== undefined && (payload.coverage?.metadata_available !== true || payload.coverage.collateral !== "configured"
+      || !Array.isArray(payload.coverage.missing_instrument_ids) || payload.coverage.missing_instrument_ids.length)) throw fail();
+    const seen = new Set();
+    let pnl = 0;
+    const positions = payload.positions.map(row => {
+      const matches = instruments.filter(item => item?.instrument_id === row?.instrument_id);
+      if (!row || !Number.isSafeInteger(row.instrument_id) || row.instrument_id <= 0 || seen.has(row.instrument_id) || matches.length !== 1) throw fail();
+      const instrument = matches[0];
+      if (instrument.instrument_type !== "perpetual" || instrument.quote_asset !== "pUSD" || typeof instrument.base_asset !== "string"
+        || text(row.symbol, 100) !== instrument.symbol || !decimal(row.size) || Number(row.size) === 0
+        || !decimal(row.entry_price) || Number(row.entry_price) <= 0 || !decimal(row.unrealized_pnl) || !decimal(row.return_on_equity)) throw fail();
+      seen.add(row.instrument_id); pnl += Number(row.unrealized_pnl);
+      return { id: row.instrument_id, symbol: row.symbol, size: row.size, entry: row.entry_price, pnl: Number(row.unrealized_pnl) };
+    }).sort((a, b) => a.id - b.id);
+    if (!Number.isFinite(pnl) || Math.abs(pnl) > MAX_VALUE) throw fail();
+    return { equity: Number(payload.equity), pnl, positions, observedAt: new Date(payload.timestamp).toISOString() };
+  }
+  const perpsUrl = `${PERPS_HOST}/v1/info/portfolio?${new URLSearchParams({ address })}`;
+  let firstPerps, instruments;
+  if (includePerps) {
+    const [registration, metadata, portfolio] = await Promise.all([
+      request(`${PERPS_HOST}/v1/info/registered?${new URLSearchParams({ address })}`), request(`${PERPS_HOST}/v1/info/instruments`), request(perpsUrl),
+    ]);
+    if (registration?.registered !== true) throw new PolymarketAssetsError("Polymarket 永续账户尚未核实为已注册账户，未更新资产");
+    instruments = metadata;
+    firstPerps = perpsPortfolio(portfolio, instruments);
+  }
+
   const [firstCash, positions, combos, initialStatus, price] = await Promise.all([
     initialCash(), pages("positions"), pages("positions/combos"), request(`${DATA_HOST}/v2/status`), usdcPrice(),
   ]);
@@ -202,8 +237,9 @@ export async function fetchPolymarketAssets({ address, fetchImpl = fetch, now = 
     holdings.push({ externalId: `position:${row.token_id}`, name: `${title} · ${outcome}`, category: "组合资产", currency: "USD",
       amount: row.current_value * price.value, quantity: row.current_size, symbol: row.token_id, sourceCurrency: "USDC", sourceAmount: row.current_value });
   }
-  const [lastCash, officialValue, finalStatus] = await Promise.all([
+  const [lastCash, officialValue, finalStatus, finalPerps] = await Promise.all([
     cash(firstCash.host), request(`${DATA_HOST}/v2/value?${new URLSearchParams({ user: address })}`), request(`${DATA_HOST}/v2/status`),
+    includePerps ? request(perpsUrl) : null,
   ]);
   const fetched = atTime(now);
   const index = status(finalStatus, fetched);
@@ -222,21 +258,36 @@ export async function fetchPolymarketAssets({ address, fetchImpl = fetch, now = 
   }
   if (lastCash.quantity > 0) holdings.unshift({ externalId: "cash:137:pusd", name: "Polymarket 资金（pUSD）", category: "稳定币", currency: "USD",
     amount: lastCash.quantity * price.value, quantity: lastCash.quantity, symbol: "pUSD", sourceCurrency: "USDC", sourceAmount: lastCash.quantity });
+  const perps = includePerps ? perpsPortfolio(finalPerps, instruments) : null;
+  if (perps) {
+    // Mark moves change equity and PnL together. Transfers, trades or funding
+    // during the cross-account read must not create a duplicated cash balance.
+    const identity = value => JSON.stringify(value.positions.map(({ id, symbol, size, entry }) => ({ id, symbol, size, entry })));
+    if (Math.abs((firstPerps.equity - firstPerps.pnl) - (perps.equity - perps.pnl)) > 0.000001
+      || identity(firstPerps) !== identity(perps) || Date.parse(perps.observedAt) < Date.parse(firstPerps.observedAt)) {
+      throw new PolymarketAssetsError("Polymarket 永续账户在读取期间发生资金或持仓变化，保留上次资产及盈亏");
+    }
+    holdings.push({ externalId: "perps:equity", name: `Polymarket 永续账户净权益${perps.positions.length === 1 ? ` · ${perps.positions[0].symbol} ${Number(perps.positions[0].size) > 0 ? "多仓" : "空仓"}` : ""}`, category: "永续合约", currency: "USD", amount: perps.equity,
+      note: `官方 USD 净权益，已含未实现盈亏及应计费用/资金费，不另加转入本金或杠杆敞口。来源时点 ${perps.observedAt}；${perps.positions.length} 个合约仓位；${perps.positions.slice(0, 4).map(row => `${row.symbol} ${Number(row.size) > 0 ? "多仓" : "空仓"} ${row.size} 合约；均价 ${row.entry}；浮动盈亏 USD ${row.pnl}`).join("；")}；公开接口不提供当前杠杆倍数。`.slice(0, 800) });
+  }
   const total = holdings.reduce((sum, row) => sum + row.amount, 0);
   if (!number(total) || holdings.some((row) => !number(row.amount))) throw invalid();
   return {
     provider: "polymarket", currency: "USD", total, externalAccountId: address, accountLabel: "Polymarket · Polygon 资金钱包",
     asOf: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(fetched), observedAt: null, timeBasis: "retrieved", fetchedAt: fetched.toISOString(),
     holdings, breakdownComplete: true,
-    coverage: ["Polygon pUSD 自有余额", "所有已返回分页中的预测市场持仓，含不足 1 份碎仓和待赎回仓位", "已核实当前没有仍持有的组合仓位", "现金和持仓均按 USDC / USD 市场报价折算"],
-    warnings: ["账户总额为自有 pUSD 余额加预测仓位现值；持仓已包含待赎回价值，不再次加总。",
+    ...(perps ? { stockPnl: { amount: perps.pnl, currency: "USD", scope: "perpetuals", observedAt: perps.observedAt } } : {}),
+    coverage: ["Polygon pUSD 自有余额", "所有已返回分页中的预测市场持仓，含不足 1 份碎仓和待赎回仓位", "已核实当前没有仍持有的组合仓位", "预测现金和持仓按 USDC / USD 市场报价折算", ...(perps ? ["官方永续账户 USD 净权益及全部公开合约未实现盈亏"] : [])],
+    warnings: [`账户总额为自有 pUSD 余额加预测仓位现值${perps ? "及永续账户净权益" : ""}；各部分只计一次。`,
       "pUSD 为 USDC 抵押凭证；现金和持仓使用同一 USDC / USD 报价，不默认固定 1 美元。",
       `Polygon 现金区块时间：${lastCash.observedAt}；Kraken USDC / USD 最近成交：${price.observedAt}。`,
       "平台持仓未提供本次估值时点，页面日期为获取日期；不含其他链、其他钱包、NFT、DeFi 或该地址其他代币。",
       "如 Future 或 TokenPocket 使用同一资金地址，其相同现金和持仓只能计入一次。",
+      ...(perps ? ["永续净权益已含浮动盈亏，不另加本金、保证金、5×等杠杆敞口或盈亏。浮动盈亏栏仅含永续合约，不含预测市场收益；公开接口不提供当前杠杆。"] : ["本来源未开启永续账户读取，不包含永续净权益。"]),
       ...(!fullValueMatches && fractionalValueMatches ? [`官方持仓汇总未含 ${fractionalCount} 条不足 1 份的碎仓；本页保留这些真实持仓，总额使用全部明细合计。`] : [])],
     valuation: { sourceCurrency: "USDC", sourceAmount: lastCash.quantity + positionValue, usdPrice: price.value, quoteObservedAt: price.observedAt,
       cashRawBalance: lastCash.raw.toString(), cashBlockNumber: lastCash.block, cashObservedAt: lastCash.observedAt,
-      indexComputedAt: index.computed_at, indexLagSeconds: index.serving.lag_seconds },
+      indexComputedAt: index.computed_at, indexLagSeconds: index.serving.lag_seconds,
+      ...(perps ? { perpsEquity: perps.equity, perpsUnrealizedPnl: perps.pnl, perpsPositionCount: perps.positions.length, perpsObservedAt: perps.observedAt } : {}) },
   };
 }

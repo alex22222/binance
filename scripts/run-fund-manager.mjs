@@ -16,6 +16,7 @@ async function remote(script, input = "") {
   return new Promise((resolveResult, reject) => {
     const child = spawn("ssh", [
       "-i", "/Users/henry/.ssh/polymtrade_vultr_ed25519", "-o", "IdentitiesOnly=yes",
+      "-o", "IdentityAgent=none",
       "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15",
       "-o", "ServerAliveCountMax=2", "root@173.199.122.23", script
     ], { stdio: ["pipe", "pipe", "pipe"] });
@@ -41,8 +42,9 @@ async function remote(script, input = "") {
 const remoteRoot = "/opt/binance-agentic-stock-bot";
 if (command === "collect") {
   if (date !== beijingDate()) throw new Error("Collect produces a current snapshot; historical dates are not supported");
-  const source = await readFile(resolve(root, "src/fund-manager-evidence.mjs"), "utf8");
-  const evidence = await remote(`cd ${quote(remoteRoot)} && FUND_MANAGER_COLLECT=1 node --input-type=module`, source);
+  // Import from the deployed module path so its relative dependencies resolve
+  // beside the module, rather than beside the stdin evaluation entry point.
+  const evidence = await remote(`cd ${quote(remoteRoot)} && FUND_MANAGER_COLLECT=1 node --input-type=module -e ${quote('await import("./src/fund-manager-evidence.mjs");')}`);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   await writeFile(resolve(directory, "evidence.json"), `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
   console.log(JSON.stringify({ event: "fund_manager_evidence_ready", reportDate: evidence.reportDate, tradingDate: evidence.tradingDate, liveStatus: evidence.live.status, archiveStale: evidence.archive.stale, path: resolve(directory, "evidence.json"), errors: evidence.errors }));

@@ -27,6 +27,7 @@ function fakeFiles(extra = {}) {
   const files = {
     [renewalPath]: { schemaVersion: 1, strategyId: "weekly-etf-dual-momentum-defense", checkedAt: "2026-10-25T13:29:02.000Z", authorizationAllowed: true, entryControlsOpen: true, leaseExpiresAt: "2026-10-29T02:36:49.374Z", hardDeadline: "2026-11-21T04:00:49.002Z", autoRenewalState: "ACTIVE", reason: "VALID", generation: 0 },
     [join(stateDir, "btc-radar/state.json")]: { lastRunAt: "2026-10-25T12:43:01.158Z" },
+    [join(stateDir, "crypto/state.json")]: { lastRunAt: "2026-10-25T00:00:02.000Z" },
     [join(stateDir, "trade-reviews/premarket/2026-10-22.json")]: { tradingDate: "2026-10-22" },
     [join(stateDir, "trade-reviews/premarket/2026-10-23.json")]: { tradingDate: "2026-10-23" },
     [join(stateDir, "trade-reviews/latest.json")]: { tradingDate: "2026-10-23", generatedAt: "2026-10-24T12:01:00.614Z" },
@@ -56,9 +57,12 @@ const row = (result, unit) => result.tasks.find((task) => task.unit === unit);
 test("the run overview reports every timer's last run, next run, data date and a healthy renewal", async () => {
   const result = await overview({ services: { "binance-agentic-spy-open-check": { LoadState: "not-found", ExecMainStartTimestamp: "", ExecMainExitTimestamp: "" } }, timers: { "binance-agentic-spy-open-check": { NextElapseUSecRealtime: "" } } });
   assert.equal(result.systemdError, null);
-  assert.equal(result.tasks.length, 16);
+  assert.equal(result.tasks.length, 18);
   const radar = row(result, "binance-agentic-btc-radar");
   assert.deepEqual([radar.status, radar.startedAt, radar.finishedAt, radar.nextRunAt, radar.dataAsOf], ["ok", "2026-10-25T12:00:00.000Z", "2026-10-25T12:00:30.000Z", "2026-10-26T13:00:00.000Z", "2026-10-25T12:43:01.158Z"]);
+  assert.equal(radar.group, "数字货币");
+  const crypto = row(result, "binance-agentic-crypto-watch");
+  assert.deepEqual([crypto.group, crypto.status, crypto.dataAsOf], ["数字货币", "ok", "2026-10-25T00:00:02.000Z"]);
   assert.equal(row(result, "binance-agentic-premarket-brief").dataAsOf, "2026-10-23");
   assert.equal(row(result, "binance-agentic-strategy-evidence").dataAsOf, "2026-10-24T23:30:00.000Z");
   assert.equal(row(result, "binance-personal-assets-sync").dataAsOf, "2026-10-25T01:00:12.000Z");
@@ -114,7 +118,7 @@ test("renewal that is halted, stale or malformed is never shown as healthy", asy
 test("an unreadable systemd is reported instead of inventing run results", async () => {
   const result = await overview({ fail: true });
   assert.match(result.systemdError, /systemd/);
-  assert.equal(result.tasks.length, 16);
+  assert.equal(result.tasks.length, 18);
   assert.ok(result.tasks.every((task) => task.startedAt === null && task.nextRunAt === null));
   assert.ok(result.tasks.every((task) => task.status === "missing"));
 });
@@ -128,8 +132,8 @@ test("the page is server-rendered without script, escapes values and refreshes i
   assert.match(html, /&lt;b&gt;续签&lt;\/b&gt;/);
   assert.match(html, /<meta http-equiv="refresh" content="60">/);
   assert.match(html, /<a href="\/operations" aria-current="page">运行总览<\/a>/);
-  assert.match(html, /服务器 17 个定时任务/);
-  for (const group of ["交易与风控", "策略研究", "纸面模拟", "个人资产", "研究", "其他"]) assert.match(html, new RegExp(`<tr class="op-group"><th colspan="5">${group}</th>`));
+  assert.match(html, /服务器 19 个定时任务/);
+  for (const group of ["市场总览", "交易与风控", "数字货币", "策略研究", "纸面模拟", "个人资产", "研究", "其他"]) assert.match(html, new RegExp(`<tr class="op-group"><th colspan="5">${group}</th>`));
   assert.match(html, /交易授权续签<\/h2><span class="op-pill ok">ACTIVE<\/span>/);
   assert.match(html, /2026-10-23 交易日/);
   assert.match(html, /24 小时后/);
