@@ -19,7 +19,7 @@ export const SITE_NAV = Object.freeze([
   ["/crypto", "BTC 与收藏", CRYPTO_GROUP],
   ["/crypto/desk", "交易过程", CRYPTO_GROUP],
   ["/gmgn/", "GMGN", CRYPTO_GROUP],
-  ["https://polyhermes.107-191-42-75.sslip.io/future-btc5m-bridge", "Poly 跟单"],
+  ["https://poly.spaceflag.site/future-btc5m-bridge", "Poly 跟单"],
   ["https://polym.trade/perps", "Polymtrade"]
 ]);
 
