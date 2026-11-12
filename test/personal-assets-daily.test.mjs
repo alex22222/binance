@@ -7,6 +7,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runDailyPersonalAssetsSnapshot } from "../scripts/snapshot-personal-assets.mjs";
 import { emptyPortfolio, readPersonalAssets, savePersonalAssets } from "../src/personal-assets.mjs";
+import { DatabaseSync } from "node:sqlite";
+
+test("morning and closing snapshots both persist, including unchanged days, with queryable history", async t => {
+ const stateDir=await mkdtemp(join(tmpdir(),"assets-daily-history-"));t.after(()=>rm(stateDir,{recursive:true,force:true}));
+ const portfolio=emptyPortfolio();portfolio.entries=[{id:"one",accountId:"account-1",kind:"total",name:"synthetic",category:"现金",currency:"CNY",amount:10,asOf:"2026-10-24",source:"manual"}];
+ await savePersonalAssets({stateDir,portfolio,revision:0});
+ const valueState=async state=>({...state,fx:{status:"fresh",rates:{}}});
+ await runDailyPersonalAssetsSnapshot({stateDir,now:new Date("2026-10-24T23:01:00Z"),phase:"refresh",valueState});
+ await runDailyPersonalAssetsSnapshot({stateDir,now:new Date("2026-10-25T15:55:00Z"),valueState});
+ assert.equal((await readPersonalAssets({stateDir})).snapshots.length,2);
+ assert.equal((await runDailyPersonalAssetsSnapshot({stateDir,now:new Date("2026-10-25T15:56:00Z"),valueState})).saved,false);
+ await runDailyPersonalAssetsSnapshot({stateDir,now:new Date("2026-10-25T23:00:30Z"),phase:"refresh",valueState});
+ const db=new DatabaseSync(join(stateDir,"personal-assets-history.sqlite"));t.after(()=>db.close());
+ assert.equal(db.prepare("SELECT count(*) n FROM snapshots").get().n,3);
+ const daily=db.prepare("SELECT * FROM daily_changes ORDER BY beijing_day").all();
+ assert.equal(daily.length,2);assert.equal(daily[0].at,"2026-10-25T15:55:00.000Z");assert.equal(daily[1].change_cny,0);
+ assert.equal(db.prepare("SELECT count(*) n FROM asset_values").get().n,3);
+});
 test("daily worker freezes valued amounts and safe source coverage and is idempotent",async t=>{
  const stateDir=await mkdtemp(join(tmpdir(),"assets-daily-"));t.after(()=>rm(stateDir,{recursive:true,force:true}));
  const portfolio=emptyPortfolio();portfolio.entries=[{id:"one",accountId:"account-1",kind:"total",name:"synthetic",category:"现金",currency:"USD",amount:2,asOf:"2026-10-24",source:"manual"}];

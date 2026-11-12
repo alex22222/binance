@@ -4,6 +4,7 @@ import { mkdir, open, rename, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { emptyPortfolio, summarize, validatePortfolio, nextAssetRefreshAt } from "./personal-assets-core.mjs";
+import { archivePersonalAssetsSnapshot } from "./personal-assets-history.mjs";
 
 export * from "./personal-assets-core.mjs";
 
@@ -43,13 +44,15 @@ function validateStoredState(value) {
       || !validRevision(snapshot.revision) || snapshot.revision > value.revision
       || (snapshot.valuationId !== undefined && (typeof snapshot.valuationId !== "string" || !/^[a-f0-9]{64}$/.test(snapshot.valuationId)))
       || (snapshot.dailyDate !== undefined && (typeof snapshot.dailyDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(snapshot.dailyDate) || !Number.isFinite(Date.parse(snapshot.dailyDate + "T00:00:00Z"))))
+      || (snapshot.dailyPhase !== undefined && !["refresh", "close"].includes(snapshot.dailyPhase))
       || (snapshot.total !== null && (typeof snapshot.total !== "number" || !Number.isFinite(snapshot.total) || snapshot.total < 0))
       || !Number.isInteger(snapshot.missing) || snapshot.missing < 0 || snapshot.missing > 5000
       || !Number.isInteger(snapshot.entries) || snapshot.entries < 0 || snapshot.entries > 5000) throw new Error("Invalid asset snapshot");
     ids.add(snapshot.id);
     return { id: snapshot.id, at: snapshot.at, total: snapshot.total, missing: snapshot.missing, entries: snapshot.entries, revision: snapshot.revision,
       ...(snapshot.valuationId !== undefined ? { valuationId: snapshot.valuationId } : {}),
-      ...(snapshot.dailyDate !== undefined ? { dailyDate: snapshot.dailyDate } : {}) };
+      ...(snapshot.dailyDate !== undefined ? { dailyDate: snapshot.dailyDate } : {}),
+      ...(snapshot.dailyPhase !== undefined ? { dailyPhase: snapshot.dailyPhase } : {}) };
   });
   return { schemaVersion: 1, revision: value.revision, updatedAt: value.updatedAt, portfolio: validatePortfolio(value.portfolio), snapshots };
 }
@@ -237,8 +240,9 @@ export async function savePersonalAssets({ stateDir, portfolio, revision }) {
   });
 }
 
-export async function createPersonalAssetsSnapshot({ stateDir, revision, valuation, daily = false, now = new Date(), sourceCoverage }) {
+export async function createPersonalAssetsSnapshot({ stateDir, revision, valuation, daily = false, dailyPhase = "close", now = new Date(), sourceCoverage }) {
   if (!(now instanceof Date) || !Number.isFinite(now.getTime())) throw new PersonalAssetsError("快照时间无效");
+  if (!["refresh", "close"].includes(dailyPhase)) throw new PersonalAssetsError("快照阶段无效");
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now).map(part => [part.type, part.value]));
   const dailyDate = `${parts.year}-${parts.month}-${parts.day}`;
   return withWriteLock(stateDir, async (path) => {
@@ -255,16 +259,18 @@ export async function createPersonalAssetsSnapshot({ stateDir, revision, valuati
       }]));
       valuationId = createHash("sha256").update(JSON.stringify({ rates, fxRates })).digest("hex");
     }
-    if (current.snapshots.some((snapshot) => daily ? snapshot.dailyDate === dailyDate : snapshot.revision === revision && (valuationId === undefined || snapshot.valuationId === valuationId))) return current;
+    if (current.snapshots.some((snapshot) => daily ? snapshot.dailyDate === dailyDate && (snapshot.dailyPhase || "close") === dailyPhase : snapshot.revision === revision && (valuationId === undefined || snapshot.valuationId === valuationId))) return current;
     if (!current.portfolio.entries.length) throw new PersonalAssetsError("请先录入资产再保存快照");
-    if (current.snapshots.length >= MAX_SNAPSHOTS) throw new PersonalAssetsError(`资产快照最多保存 ${MAX_SNAPSHOTS} 份，请先备份历史数据`);
     const summary = summarize(portfolio);
     const snapshot = { id: randomUUID(), at: now.toISOString(), total: summary.total, missing: summary.missing.length, entries: current.portfolio.entries.length, revision,
-      ...(valuationId !== undefined ? { valuationId } : {}), ...(daily ? { dailyDate } : {}) };
+      ...(valuationId !== undefined ? { valuationId } : {}), ...(daily ? { dailyDate, dailyPhase } : {}) };
     const directory = join(resolve(stateDir), "personal-assets-snapshots");
     await mkdir(directory, { recursive: true, mode: 0o700 });
-    await atomicWrite(join(directory, `${snapshot.id}.json`), { ...snapshot, portfolio, ...(valuation?.fx !== undefined ? { fx: valuation.fx } : {}), ...(sourceCoverage !== undefined ? { sync: sourceCoverage } : {}) });
-    const next = { ...current, snapshots: [snapshot, ...current.snapshots] };
+    const full = { ...snapshot, portfolio, ...(valuation?.fx !== undefined ? { fx: valuation.fx } : {}), ...(sourceCoverage !== undefined ? { sync: sourceCoverage } : {}) };
+    await atomicWrite(join(directory, `${snapshot.id}.json`), full);
+    await archivePersonalAssetsSnapshot({ stateDir, snapshot: full });
+    // Bound only the page index. Immutable detail files and the database retain all history.
+    const next = { ...current, snapshots: [snapshot, ...current.snapshots].slice(0, MAX_SNAPSHOTS) };
     await atomicWrite(path, next);
     return next;
   });

@@ -777,7 +777,7 @@ test("empty snapshots are rejected without creating asset state", async (context
   assert.deepEqual(await readdir(stateDir), []);
 });
 
-test("full snapshot history rejects additions without deleting or overwriting history", async (context) => {
+test("a full page index continues recording without deleting older immutable history", async (context) => {
   const stateDir = await fixture(context);
   const current = await savePersonalAssets({ stateDir, portfolio: portfolio([entry()]), revision: 0 });
   current.revision = 501;
@@ -785,11 +785,12 @@ test("full snapshot history rejects additions without deleting or overwriting hi
     id: randomUUID(), at: new Date().toISOString(), revision: index + 1, total: 100, missing: 0, entries: 1,
   }));
   const path = join(stateDir, "personal-assets.json");
-  const before = JSON.stringify(current);
-  await writeFile(path, before);
-  await assert.rejects(createPersonalAssetsSnapshot({ stateDir, revision: 501 }), { status: 400 });
-  assert.equal(await readFile(path, "utf8"), before);
-  await assert.rejects(stat(join(stateDir, "personal-assets-snapshots")), { code: "ENOENT" });
+  await writeFile(path, JSON.stringify(current));
+  const next = await createPersonalAssetsSnapshot({ stateDir, revision: 501 });
+  assert.equal(next.snapshots.length,500);
+  assert.deepEqual(next.snapshots.slice(1),current.snapshots.slice(0,499));
+  assert.equal(next.revision,501);assert.deepEqual(next.portfolio,current.portfolio);
+  assert.equal(JSON.parse(await readFile(join(stateDir,"personal-assets-snapshots",next.snapshots[0].id+".json"),"utf8")).total,next.snapshots[0].total);
 });
 
 test("closing PnL estimates retain fixed cost metadata and never alter the asset sum", () => {

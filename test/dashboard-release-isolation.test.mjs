@@ -12,7 +12,7 @@ import { verifyPersonalAssetsRelease } from "../ops/personal-assets/dashboard-lo
 const hash = value => createHash("sha256").update(value).digest("hex");
 const code = ["dashboard-loader.mjs", "dashboard-hooks.mjs", "src/personal-assets-client.mjs",
   "src/personal-assets-core.mjs", "src/personal-assets-html.mjs", "src/personal-assets-routes.mjs",
-  "src/personal-assets.mjs", "src/site-shell.mjs", "src/personal-assets-sync.mjs",
+  "src/personal-assets.mjs", "src/personal-assets-history.mjs", "src/site-shell.mjs", "src/personal-assets-sync.mjs",
   "src/personal-assets-okx.mjs", "src/personal-assets-futu.mjs", "src/personal-assets-fx.mjs",
   "src/personal-assets-polymarket.mjs", "src/personal-assets-wallets.mjs",
   "src/personal-assets-ai.mjs", "src/personal-assets-funds.mjs",

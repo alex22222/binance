@@ -77,3 +77,20 @@ test("the collector skips all source and FX work after today's run has already b
   assert.equal(JSON.parse(stdout).skipped, true); assert.equal(await readFile(path, "utf8"), bytes);
   assert.deepEqual(await readdir(stateDir), ["personal-assets-refresh.json"]);
 });
+
+test("a naturally due collector persists a final morning snapshot without a second source run", async t => {
+  const { stateDir } = await fixture(t);
+  const portfolio=model.emptyPortfolio();portfolio.entries=[{id:"cash",accountId:"account-1",kind:"total",name:"cash",category:"现金",currency:"CNY",amount:10,asOf:"2026-10-24",source:"manual"}];
+  await model.savePersonalAssets({stateDir,portfolio,revision:0});
+  await model.configureAssetRefreshSchedule({stateDir,time:"00:00"});
+  const {stdout}=await promisify(execFile)(process.execPath,["scripts/sync-personal-assets.mjs"],{cwd:resolve("."),env:{...process.env,PERSONAL_ASSETS_DIR:stateDir,PERSONAL_ASSETS_FX_DISABLED:"1"}}).catch(error=>{
+    // Deliberately unavailable FX reports partial failure, but must still save history.
+    assert.equal(error.code,1);return {stdout:error.stdout};
+  });
+  const result=JSON.parse(stdout);assert.equal(result.history.saved,true);
+  const state=await model.readPersonalAssets({stateDir});assert.equal(state.snapshots[0].dailyPhase,"refresh");
+  assert.equal(state.portfolio.entries[0].amount,10);assert.equal(state.revision,1);
+  const saved=JSON.parse(await readFile(join(stateDir,"personal-assets-snapshots",state.snapshots[0].id+".json"),"utf8"));
+  assert.ok(saved.sync.refresh.lastCompletedAt);
+  assert.equal((await stat(join(stateDir,"personal-assets-history.sqlite"))).mode & 0o777,0o600);
+});
