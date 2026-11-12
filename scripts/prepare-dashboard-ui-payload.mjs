@@ -11,6 +11,7 @@ if (!payload) throw new Error("Usage: node scripts/prepare-dashboard-ui-payload.
 const root = fileURLToPath(new URL("..", import.meta.url));
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
+await mkdir(join(payload, "src"), { recursive: true });
 for (const name of hookModules) {
   await cp(join(root, "src", name), join(payload, "src", name));
 }

@@ -4,7 +4,7 @@ import { btcRadarHtml } from "../src/btc-radar-html.mjs";
 import { dashboardLoginHtml } from "../src/dashboard-login-html.mjs";
 import { fundManagerHtml } from "../src/fund-manager-html.mjs";
 import { liveDashboardHtml } from "../src/live-dashboard-html.mjs";
-import { SITE_CSS, SITE_NAV, siteHeader, themeFromCookie, themeToggleHref } from "../src/site-shell.mjs";
+import { SITE_CSS, SITE_NAV, safeReturnPath, siteHeader, themeFromCookie, themeToggleHref } from "../src/site-shell.mjs";
 import { strategyLabHtml } from "../src/strategy-lab-html.mjs";
 import { tradeReviewHtml } from "../src/trade-review-html.mjs";
 import { weeklyResearchHtml } from "../src/weekly-research-html.mjs";
@@ -38,7 +38,12 @@ test("theme helpers read the cookie and build a safe toggle link", () => {
   assert.equal(themeFromCookie("hq-theme=dark"), "dark");
   assert.equal(themeFromCookie("a=1; hq-theme=light; b=2"), "light");
   assert.equal(themeToggleHref("dark", "/crypto"), "/api/theme?set=dark&next=%2Fcrypto");
+  assert.equal(themeToggleHref("dark", "/market?period=5d"), "/api/theme?set=dark&next=%2Fmarket%3Fperiod%3D5d");
   assert.equal(themeToggleHref("light", "//evil"), "/api/theme?set=light&next=%2F");
+  assert.equal(safeReturnPath("/crypto/desk?shift=2026-11-12T09:00"), "/crypto/desk?shift=2026-11-12T09:00");
+  assert.equal(safeReturnPath("https://evil.example/"), "/");
+  assert.doesNotMatch(siteHeader("/strategies", "", { themeControl: false }), /class="site-theme"/);
+  assert.match(siteHeader("/market", "", { returnTo: "/market?period=1d" }), /next=%2Fmarket%3Fperiod%3D1d/);
 });
 
 test("navigation leads with market overview and groups the wallet pages in one Chinese dropdown", () => {

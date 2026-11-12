@@ -221,7 +221,7 @@ body{background:#f4f5f9}main{max-width:1480px;padding:24px 28px 64px}.market-mas
 .market-reading{padding:18px 0 22px;border-top:1px solid #3a455f;overflow-wrap:anywhere}.market-reading h2{font-size:12px;color:#b6c6ff;margin-bottom:8px}.market-reading p{font-size:16px;line-height:1.8;color:#f4f6ff;max-width:100ch}.market-reading small{display:block;font-size:10px;color:#aebbd6;margin-top:8px}
 @media(max-width:640px){.market-reading p{font-size:14px}}
 @media(prefers-reduced-motion:reduce){.heat-tile{transition:none}}
-</style></head><body>${siteHeader("/market", "", { theme })}<main>
+</style></head><body>${siteHeader("/market", "", { theme, returnTo: `/market?period=${encodeURIComponent(selected)}` })}<main>
 <div class="market-masthead"><header class="hero"><div><p class="eyebrow">MARKET PULSE</p><h1>资本市场<span>温度</span></h1><p class="lead">从跨资产到美股与 AI，用价格与趋势观察市场强弱。</p></div><div class="updated">最近采集 · 北京时间<strong>${time(market.generatedAt)}</strong><span>公开行情可能延迟 · 每 15 分钟采集<br>页面每 5 分钟刷新</span></div></header>
 ${market.status === "ERROR" ? `<aside class="notice"><strong>行情读取暂不可用</strong><p>${escape(market.error || "等待下一次有效更新。")}</p></aside>` : ""}
 ${failed ? '<aside class="notice"><strong>最近采集失败</strong><p>保留的报价与走势沿用原始时间，请核对各标的状态。</p></aside>' : market.status === "PARTIAL" ? '<aside class="notice"><strong>部分数据未更新</strong><p>可用标的照常展示，失败或缓存状态逐项标注。</p></aside>' : ""}

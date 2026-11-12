@@ -120,7 +120,7 @@ export function okxDeskHtml(ledger, { shiftId = "", unknown = false, theme = "li
 .desk-card details,.desk-fold{margin-top:10px}.desk-card summary,.desk-fold>summary{cursor:pointer;color:var(--muted);font-size:13px}.desk-fold{margin-top:22px}.desk-back{margin-bottom:12px}.desk-empty,.desk-missing{padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
 @media(max-width:760px){.desk{padding:22px 12px 40px}.desk h1{font-size:26px}.desk-head,.desk-top{display:block}.desk-status,.desk-counts,.desk-card dl{grid-template-columns:1fr}.desk-head .desk-pill{margin-top:12px}}
 @media print{.desk-back{display:none}.desk-card,.desk-summary{break-inside:avoid}}
-</style></head><body>${siteHeader("/crypto/desk", "", { theme })}<main class="desk">
+</style></head><body>${siteHeader("/crypto/desk", "", { theme, returnTo: shiftId ? `/crypto/desk?shift=${encodeURIComponent(shiftId)}` : "/crypto/desk" })}<main class="desk">
 ${shift ? "" : `<header class="desk-top"><div><p class="desk-kicker">数字货币 · 阶段1影子</p><h1>交易过程</h1><p class="desk-lead">侦察 → 图表 → 策略 → 风控。只读班次记录，不连接下单。</p></div></header>`}
 <p class="desk-lead">来源：${escapeHtml(source.label)}${source.readAt ? ` · 读取 ${shanghai(source.readAt)}` : ""}</p>
 ${missing ? `<p class="desk-missing">没有这一班。下面仍是日志里的班次。</p>${index(ledger)}` : shift ? detail(ledger, shift) : index(ledger)}

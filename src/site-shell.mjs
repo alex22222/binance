@@ -30,25 +30,32 @@ export function themeFromCookie(cookieHeader = "") {
   return match?.[1] === "dark" ? "dark" : "light";
 }
 
+// Keep period/shift/date query strings when returning from /api/theme.
+export function safeReturnPath(value, fallback = "/") {
+  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//") || value.includes("\\")) return fallback;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return fallback;
+  return value;
+}
+
 export function themeToggleHref(nextTheme, nextPath = "/") {
-  const path = typeof nextPath === "string" && nextPath.startsWith("/") && !nextPath.startsWith("//")
-    ? nextPath
-    : "/";
+  const path = safeReturnPath(nextPath);
   return `/api/theme?set=${nextTheme === "dark" ? "dark" : "light"}&next=${encodeURIComponent(path)}`;
 }
 
-function themeToggleControl(theme, activePath) {
+function themeToggleControl(theme, returnTo) {
   const dark = theme === "dark";
-  const href = themeToggleHref(dark ? "light" : "dark", activePath || "/");
+  const href = themeToggleHref(dark ? "light" : "dark", returnTo || "/");
   const label = dark ? "明亮模式" : "深色模式";
   return `<a class="site-theme" href="${href}" aria-label="${label}">${label}</a>`;
 }
 
 // `actions` is page-owned trusted markup shown on the right of the bar.
 // Pass `theme` so the toggle can offer the opposite mode; default light.
-const SITE_SETTINGS = (theme, activePath) => `<details class="site-group site-settings"><summary>设置</summary><div class="site-submenu">${themeToggleControl(theme, activePath)}<a href="/assets?settings=refresh-schedule">资产自动更新</a><a href="/assets?settings=statement-passwords">结单密码</a><a href="/assets">资产导入、同步与备份</a></div></details>`;
+// `themeControl: false` hides the toggle on pages that cannot apply the cookie yet
+// (Live dashboard still renders strategy/fund-manager without reading hq-theme).
+const SITE_SETTINGS = (theme, returnTo, themeControl) => `<details class="site-group site-settings"><summary>设置</summary><div class="site-submenu">${themeControl ? themeToggleControl(theme, returnTo) : ""}<a href="/assets?settings=refresh-schedule">资产自动更新</a><a href="/assets?settings=statement-passwords">结单密码</a><a href="/assets">资产导入、同步与备份</a></div></details>`;
 
-export function siteHeader(active, actions = "", { theme = "light" } = {}) {
+export function siteHeader(active, actions = "", { theme = "light", returnTo, themeControl = true } = {}) {
   // "/" now lands on market overview and the trading dashboard lives at
   // /dashboard, but that page (part of the Live code identity) still says "/".
   const current = active === "/" ? "/dashboard" : active === "/btc-radar" ? "/crypto" : active;
@@ -67,7 +74,8 @@ export function siteHeader(active, actions = "", { theme = "light" } = {}) {
     const here = members.some(([href]) => href === current);
     links += `<details class="site-group${here ? " is-current" : ""}"><summary>${group}</summary><div class="site-submenu">${members.map(link).join("")}</div></details>`;
   }
-  const right = actions || SITE_SETTINGS(theme, current);
+  const themeReturn = safeReturnPath(returnTo || current);
+  const right = actions || SITE_SETTINGS(theme, themeReturn, themeControl);
   return `<header class="site-header"><div class="site-bar">`
     + `<a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">H</span><span class="site-name">HQ Capital</span></a>`
     + `<nav class="site-nav" aria-label="主导航">${links}</nav>`

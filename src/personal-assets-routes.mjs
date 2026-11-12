@@ -19,13 +19,9 @@ import { loadOkxAgenticStatus, projectOkxAgenticAssets } from "./okx-agentic-sta
 import { okxAgenticHtml } from "./okx-agentic-html.mjs";
 import { projectAgenticWallets, readWalletPreferences, saveWalletPreference } from "./agentic-wallet-overview.mjs";
 import { agenticWalletHtml } from "./agentic-wallet-html.mjs";
-import { THEME_COOKIE, themeFromCookie } from "./site-shell.mjs";
+import { THEME_COOKIE, safeReturnPath, themeFromCookie } from "./site-shell.mjs";
 
 const sourceFile = (name) => fileURLToPath(new URL(name, import.meta.url));
-const safeNextPath = (value) => {
-  const path = typeof value === "string" ? value : "/";
-  return path.startsWith("/") && !path.startsWith("//") && !path.includes("\\") ? path : "/";
-};
 const files = new Map([
   ["/assets/app.mjs", { path: sourceFile("personal-assets-client.mjs"), type: "text/javascript; charset=utf-8" }],
   ["/assets/core.mjs", { path: sourceFile("personal-assets-core.mjs"), type: "text/javascript; charset=utf-8" }]
@@ -234,7 +230,7 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
   const theme = themeFromCookie(request.headers.cookie);
   if (request.method === "GET" && path === "/api/theme") {
     const set = url.searchParams.get("set") === "dark" ? "dark" : "light";
-    const next = safeNextPath(url.searchParams.get("next") || "/");
+    const next = safeReturnPath(url.searchParams.get("next") || "/");
     response.writeHead(302, {
       Location: next,
       "Cache-Control": "no-store",

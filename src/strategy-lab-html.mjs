@@ -135,7 +135,7 @@ export function strategyLabHtml({ theme = "light" } = {}) {
 </head>
 <body>
   <a class="skip" href="#dossier">跳到研究档案</a>
-  ${siteHeader("/strategies", '<span class="top-meta">只读研究 · 交易管理请前往仪表盘</span>', { theme })}
+  ${siteHeader("/strategies", '<span class="top-meta">只读研究 · 交易管理请前往仪表盘</span>', { theme, themeControl: false })}
   <section class="journal-overview" id="dailyOverview" aria-label="策略每日跟踪总览"><p class="muted">正在读取每日归档…</p></section>
   <div class="workspace">
     <aside class="directory" aria-label="策略目录">
