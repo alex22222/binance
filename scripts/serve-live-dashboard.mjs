@@ -153,7 +153,7 @@ function requireAuthentication(request, response) {
   // the user straight back in. The login form replaces this invalid cookie.
   const signedOut = authConfig.enabled && String(request.headers.cookie || "").split(";").some((part) => part.trim() === signedOutCookie);
   if (!signedOut && dashboardRequestAuthorized(request, authConfig)) return true;
-  if (request.method === "GET" && (["/", "/strategies", "/btc-radar"].includes(request.url) || ["/reviews", "/fund-manager", "/weekly-strategy", "/assets", "/assets/", "/dashboard", "/dashboard/"].includes(new URL(request.url, "http://localhost").pathname))) {
+  if (request.method === "GET" && (["/", "/strategies", "/btc-radar"].includes(request.url) || ["/reviews", "/fund-manager", "/weekly-strategy", "/assets", "/assets/", "/dashboard", "/dashboard/", "/crypto/desk", "/crypto/desk/"].includes(new URL(request.url, "http://localhost").pathname))) {
     response.writeHead(303, {
       "Location": "/login",
       "Cache-Control": "no-store",

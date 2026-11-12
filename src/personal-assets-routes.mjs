@@ -13,6 +13,8 @@ import { loadMarketOverview } from "./market-overview.mjs";
 import { loadLandingReports, marketOverviewHtml } from "./market-overview-html.mjs";
 import { loadBtcRadarView } from "./btc-radar.mjs";
 import { digitalCurrencyHtml } from "./digital-currency-html.mjs";
+import { loadOkxDeskLedger } from "./okx-desk-ledger.mjs";
+import { okxDeskHtml } from "./okx-desk-html.mjs";
 import { loadOkxAgenticStatus, projectOkxAgenticAssets } from "./okx-agentic-status.mjs";
 import { okxAgenticHtml } from "./okx-agentic-html.mjs";
 import { projectAgenticWallets, readWalletPreferences, saveWalletPreference } from "./agentic-wallet-overview.mjs";
@@ -286,6 +288,21 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
     // Keep the deployed radar's advanced scenario UI and model pinned together.
     request.url = "/btc-radar";
     return false;
+  }
+  if (["/crypto/desk", "/crypto/desk/", "/api/crypto/desk"].includes(path)) {
+    if (request.method !== "GET") { json(response, { error: "交易过程只支持读取。" }, 405); return true; }
+    const ledger = await loadOkxDeskLedger();
+    if (path === "/api/crypto/desk") { json(response, ledger); return true; }
+    const requested = new URL(request.url, "http://localhost").searchParams.get("shift") || "";
+    const shiftId = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(requested) ? requested : "";
+    response.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      "X-Content-Type-Options": "nosniff"
+    });
+    response.end(okxDeskHtml(ledger, { shiftId, unknown: Boolean(requested) && !shiftId }));
+    return true;
   }
   if (["/crypto", "/crypto/", "/btc-radar", "/api/crypto", "/api/digital-currency"].includes(path)) {
     if (request.method !== "GET") { json(response, { error: "数字货币概览仅支持读取。" }, 405); return true; }

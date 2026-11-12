@@ -13,7 +13,8 @@ const modules = ["dashboard-loader.mjs", "dashboard-hooks.mjs", "src/personal-as
   "src/market-overview.mjs", "src/market-overview-html.mjs",
   "src/digital-currency-html.mjs", "src/okx-agentic-status.mjs", "src/okx-agentic-html.mjs",
   "src/agentic-wallet-overview.mjs", "src/agentic-wallet-html.mjs", "src/agentic-wallet-client.mjs",
-  "src/strategy-research.mjs", "src/strategy-lab-html.mjs", "src/strategy-daily.mjs", "src/fund-manager-html.mjs"];
+  "src/strategy-research.mjs", "src/strategy-lab-html.mjs", "src/strategy-daily.mjs", "src/fund-manager-html.mjs",
+  "src/okx-desk-ledger.mjs", "src/okx-desk-html.mjs"];
 // Templates and collector entries are archived in the isolated release only;
 // this tool never installs systemd units or runs these scripts.
 const supportingFiles = ["README.md", "docs/personal-assets-page.md",
@@ -26,7 +27,8 @@ const supportingFiles = ["README.md", "docs/personal-assets-page.md",
   "scripts/sync-okx-agentic-status.mjs", "scripts/receive-okx-agentic-status.mjs", "docs/2026-11-09-navigation-crypto-wallet.md",
   "docs/2026-11-11-agentic-wallet-overview.md", "test/agentic-wallet-overview.test.mjs", "test/agentic-wallet-client.test.mjs", "test/agentic-wallet-server.test.mjs",
   "scripts/record-strategy-daily.mjs", "deploy/binance-agentic-strategy-daily.service", "deploy/binance-agentic-strategy-daily.timer",
-  "docs/2026-11-11-strategy-daily-journal.md", "test/strategy-daily.test.mjs", "test/strategy-research.test.mjs", "test/strategy-lab-html.test.mjs", "test/fund-manager-html.test.mjs"];
+  "docs/2026-11-11-strategy-daily-journal.md", "test/strategy-daily.test.mjs", "test/strategy-research.test.mjs", "test/strategy-lab-html.test.mjs", "test/fund-manager-html.test.mjs",
+  "fixtures/okx-desk/shadow-log.sample.md"];
 const hash = value => createHash("sha256").update(value).digest("hex");
 const inside = (root, path) => path === root || path.startsWith(root + sep);
 

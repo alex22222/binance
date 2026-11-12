@@ -11,6 +11,7 @@ import { initialize, resolve as resolveAssetModule } from "../ops/personal-asset
 
 const modules = ["personal-assets-core.mjs", "personal-assets.mjs", "personal-assets-html.mjs", "personal-assets-client.mjs", "personal-assets-routes.mjs", "site-shell.mjs", "personal-assets-sync.mjs", "personal-assets-okx.mjs", "personal-assets-futu.mjs", "personal-assets-fx.mjs", "personal-assets-polymarket.mjs", "personal-assets-wallets.mjs", "personal-assets-ai.mjs", "personal-assets-funds.mjs", "crypto-watch.mjs", "crypto-watch-html.mjs", "crypto-news.mjs", "market-overview.mjs", "market-overview-html.mjs", "digital-currency-html.mjs", "okx-agentic-status.mjs", "okx-agentic-html.mjs", "agentic-wallet-overview.mjs", "agentic-wallet-html.mjs", "agentic-wallet-client.mjs"];
 modules.push("strategy-research.mjs", "strategy-lab-html.mjs", "strategy-daily.mjs", "fund-manager-html.mjs");
+modules.push("okx-desk-ledger.mjs", "okx-desk-html.mjs");
 modules.push("personal-assets-history.mjs");
 const codeFiles = ["dashboard-loader.mjs", "dashboard-hooks.mjs", ...modules.map((name) => `src/${name}`)];
 const hash = (value) => createHash("sha256").update(value).digest("hex");
@@ -115,7 +116,7 @@ test("unsafe ownership, write permissions, file symlinks and missing manifest ha
 });
 
 test("the crypto and market report modules require their own manifest hashes", async (context) => {
-  for (const name of ["src/crypto-watch.mjs", "src/crypto-watch-html.mjs", "src/crypto-news.mjs", "src/market-overview.mjs", "src/market-overview-html.mjs", "src/digital-currency-html.mjs", "src/okx-agentic-status.mjs", "src/okx-agentic-html.mjs"]) {
+  for (const name of ["src/crypto-watch.mjs", "src/crypto-watch-html.mjs", "src/crypto-news.mjs", "src/market-overview.mjs", "src/market-overview-html.mjs", "src/digital-currency-html.mjs", "src/okx-agentic-status.mjs", "src/okx-agentic-html.mjs", "src/okx-desk-ledger.mjs", "src/okx-desk-html.mjs"]) {
     const { root, manifest } = await fixture(context);
     delete manifest.files[name];
     await writeFile(join(root, "manifest.json"), JSON.stringify(manifest));
