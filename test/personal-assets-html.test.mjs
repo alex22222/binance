@@ -562,15 +562,14 @@ test("daily page refresh reads only visible pages without pending drafts, writes
   assert.equal(ui.requests.at(-1).options.method, undefined);
 });
 
-test("overview leads with the asset-type panel holding total, currency, privacy and stock PnL before AI and collapsed source details", async () => {
+test("overview keeps asset totals and classification without repeating the PnL panel", async () => {
   const initial = stateWith([entry({ amount: 500 })]);
   initial.portfolio.stockPnl = [{ accountId: "account-1", amount: -123.45, currency: "CNY", asOf: entry().asOf, source: "screenshot", asOfBasis: "imported" }];
   const ui = await view(initial);
   const html = ui.get("asset-content").innerHTML;
-  assert.match(html, /股票浮动盈亏[\s\S]*-123\.45/);
-  assert.match(html, /已含在当前市值中，不重复加减/);
-  assert.match(html, /截图核对[\s\S]*截图时点未核实/);
-  const order = ['aria-label="资产类型"', 'class="currency-toggle"', 'id="privacy-toggle"', 'class="type-pie-total">500.00<', 'class="stock-pnl"', 'aria-label="平台分布"'].map((marker) => html.indexOf(marker));
+  assert.doesNotMatch(html, /class="stock-pnl"|更新盈亏|查看盈亏来源与日期|-123\.45/);
+  assert.match(html, /资产分类说明/);
+  const order = ['aria-label="资产类型"', 'class="currency-toggle"', 'id="privacy-toggle"', 'class="type-pie-total">500.00<', 'aria-label="平台分布"'].map((marker) => html.indexOf(marker));
   assert.ok(order.every((index, position) => index > (position ? order[position - 1] : -1)), JSON.stringify(order));
   assert.doesNotMatch(html, /class="metrics"|已录入账户 \/ 全部账户|自动更新计划|管理只读同步 →/);
   assert.match(html, /<details class="source-details">/);
@@ -578,6 +577,41 @@ test("overview leads with the asset-type panel holding total, currency, privacy 
   assert.equal(ui.run("summarize(portfolio()).total"), 500);
   ui.run("hidden=true;render()");
   assert.doesNotMatch(ui.get("asset-content").innerHTML, /123\.45|500\.00/);
+});
+
+test("PnL tab follows overview and preserves sources, editing, privacy and currency without writing on navigation", async () => {
+  assert.match(personalAssetsHtml({ nonce: "safe" }), /data-page="overview"[^>]*>资产总览<\/button><button data-page="pnl">盈亏<\/button><button data-page="holdings"/);
+  const initial = stateWith([entry({ category: "股票", amount: 500 })]);
+  initial.portfolio.stockPnl = [{ accountId: "account-1", amount: -123.45, currency: "CNY", asOf: entry().asOf, source: "screenshot", asOfBasis: "imported" }];
+  const ui = await view(initial);
+  const requests = ui.requests.length;
+  await ui.listeners.click({ target: { closest: () => ({ dataset: { page: "pnl" } }) } });
+  const html = ui.get("asset-content").innerHTML;
+  assert.match(html, /股票浮动盈亏[\s\S]*-123\.45/);
+  assert.match(html, /已含在当前市值中，不重复加减/);
+  assert.match(html, /截图核对[\s\S]*截图时点未核实/);
+  assert.match(html, /class="currency-toggle"/);
+  assert.match(html, /id="privacy-toggle"/);
+  assert.doesNotMatch(html, /aria-label="资产类型"|资产分类说明/);
+  await ui.listeners.click({ target: { closest: () => ({ dataset: { action: "stock-pnl" } }) } });
+  assert.equal(ui.run("modal"), "stock-pnl");
+  assert.match(ui.get("dialog-body").innerHTML, /-123\.45/);
+  ui.run('closeDialog(); hidden=true; render()');
+  assert.doesNotMatch(ui.get("asset-content").innerHTML, /123\.45/);
+  ui.run('hidden=false; displayCurrency="USD"; state.portfolio.rates.USD={value:5,date:currentDate()}; render()');
+  assert.match(ui.get("asset-content").innerHTML, /USD -24\.69/);
+  await ui.listeners.click({ target: { closest: () => ({ dataset: { page: "overview" } }) } });
+  assert.doesNotMatch(ui.get("asset-content").innerHTML, /class="stock-pnl"|更新盈亏/);
+  assert.equal(ui.requests.length, requests);
+  assert.equal(ui.run("summarize(portfolio()).total"), 500);
+});
+
+test("PnL tab keeps missing amounts unknown rather than inventing zero", async () => {
+  const ui = await view();
+  ui.run('page="pnl"; render()');
+  assert.match(ui.get("asset-content").innerHTML, /尚未提供股票盈亏；缺失值不按零统计/);
+  assert.match(ui.get("asset-content").innerHTML, /CNY —/);
+  assert.doesNotMatch(ui.get("asset-content").innerHTML, /CNY 0\.00/);
 });
 
 test("overview measures core and satellite against the 50/50 rule and keeps mixed records apart", async () => {
@@ -619,10 +653,12 @@ test("core/satellite panel names accounts classified from their synced positions
   assert.doesNotMatch(ui.get("asset-content").innerHTML, /富途按持仓比例归类/);
 });
 
-test("API PnL shows read time and unknown source time in overview and preview without leaking hidden amounts", async () => {
+test("API PnL shows read time and unknown source time in its tab and preview without leaking hidden amounts", async () => {
   const initial = stateWith([entry({ amount: 500 })]);
   initial.portfolio.stockPnl = [{ accountId: "account-1", amount: -10.25, currency: "CNY", asOf: entry().asOf, source: "api", asOfBasis: "imported", fetchedAt: "2026-10-24T12:00:00.000Z" }];
-  const ui = await view(initial), html = ui.get("asset-content").innerHTML;
+  const ui = await view(initial);
+  ui.run('page="pnl"; render()');
+  const html = ui.get("asset-content").innerHTML;
   assert.match(html, /读取日期，源盈亏时点未提供/); assert.match(html, /成功读取/); assert.doesNotMatch(html, /截图时点未核实/);
   const preview = { ...syncPreviewState().providers.okx.preview, stockPnl: { amount: -10.25, currency: "CNY" } };
   const expression = 'syncPreview("futu", ' + JSON.stringify({ preview }) + ')';
@@ -646,7 +682,7 @@ test("stock PnL edits retain drafts under privacy and save signed amounts withou
   assert.equal(saved.portfolio.stockPnl[0].amount, -80.25);
   assert.deepEqual(saved.portfolio.entries, initial.portfolio.entries);
   assert.equal(ui.run("summarize(portfolio()).total"), 500);
-  ui.run('page="overview";displayCurrency="USD";state.portfolio.rates.USD={value:5,date:currentDate()};render()');
+  ui.run('page="pnl";displayCurrency="USD";state.portfolio.rates.USD={value:5,date:currentDate()};render()');
   assert.match(ui.get("asset-content").innerHTML, /USD -16\.05/);
 });
 
@@ -2095,7 +2131,7 @@ test("snapshot trend handles empty, single, flat and out-of-range histories with
 test("fixed-share close PnL is labelled as an estimate with the cost basis and privacy protection", async () => {
   const initial = stateWith([entry({category:"股票"})]);
   initial.portfolio.stockPnl = [{accountId:"account-1",amount:-20,currency:"CNY",asOf:"2026-10-23",source:"api",asOfBasis:"statement",estimated:true,costBasis:10000}];
-  const ui=await view(initial);const html=ui.get("asset-content").innerHTML;
+  const ui=await view(initial);ui.run('page="pnl"; render()');const html=ui.get("asset-content").innerHTML;
   assert.match(html,/固定股数收盘估算/);assert.match(html,/成本基准 CNY 10,000.00/);assert.match(html,/未含后续分红、费用或成本调整/);
   ui.run("hidden=true;render()");assert.doesNotMatch(ui.get("asset-content").innerHTML,/成本基准 CNY 10,000.00/);
 });
@@ -2116,10 +2152,11 @@ test("Polymarket perpetuals opt-in is explicit in settings and never enables Fut
   assert.doesNotMatch(ui.get("dialog-body").innerHTML, new RegExp(address));
 });
 
-test("overview identifies perps floating PnL separately from prediction returns and keeps it out of total assets", async () => {
+test("PnL tab identifies perps floating PnL separately from prediction returns and keeps it out of total assets", async () => {
   const initial = stateWith([entry({ category: "永续合约", amount: 100 })]);
   initial.portfolio.stockPnl = [{ accountId: "account-1", amount: -2.5, currency: "USD", asOf: entry().asOf, source: "api", scope: "perpetuals", observedAt: new Date().toISOString(), fetchedAt: new Date().toISOString() }];
   const ui = await view(initial);
+  ui.run('page="pnl"; render()');
   const html = ui.get("asset-content").innerHTML;
   assert.match(html, /持仓浮动盈亏/); assert.match(html, /永续合约未实现盈亏（不含预测市场收益）/);
   assert.match(html, /USD -2\.50/); assert.doesNotMatch(html, /个股票账户已提供/);

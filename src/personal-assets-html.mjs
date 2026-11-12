@@ -92,7 +92,7 @@ dialog{color:var(--text);background:var(--surface);border:1px solid var(--line);
 <body>
 ${siteHeader("/assets", SETTINGS_MENU)}
 <main class="assets-wrap" id="assets-app" aria-label="个人资产管理">
-  <header class="asset-head"><nav class="asset-tabs" aria-label="资产页面导航"><button data-page="overview" aria-current="page">资产总览</button><button data-page="holdings">账户与持仓</button><button data-page="analysis">资产分析</button><button data-page="history">历史快照</button></nav></header>
+  <header class="asset-head"><nav class="asset-tabs" aria-label="资产页面导航"><button data-page="overview" aria-current="page">资产总览</button><button data-page="pnl">盈亏</button><button data-page="holdings">账户与持仓</button><button data-page="analysis">资产分析</button><button data-page="history">历史快照</button></nav></header>
   <div id="asset-message" role="status" aria-live="polite" hidden></div>
   <div id="asset-error" role="alert" hidden></div>
   <div id="asset-content"><div class="loading" role="status">正在读取你的资产记录…</div></div>

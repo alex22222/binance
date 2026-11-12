@@ -265,11 +265,10 @@ function categoryDescription(category) {
 function assetTypeGuide() {
   return '<p class="footnote">货币基金与现金分开；稳定币与银行存款分开；股票ETF与个股分开。组合资产待拆分，不能据此判断底层股票或债券敞口。稳定币仅统计已识别部分，未展开的加密资产中也可能含稳定币。分类金额各自四舍五入，显示合计可能有尾差。</p>';
 }
-// The overview's lead panel: total (pie centre), display currency, privacy
-// toggle and recorded stock PnL sit together with the asset-type split.
+// The overview's lead panel keeps total, currency and privacy with the asset split.
 function assetTypesPanel(summary) {
   const partial = partialValuationSources().length > 0 || summary.missing.length || summary.pending.length;
-  return `<section class="panel" aria-label="资产类型" style="margin:0"><div class="section-head"><div><h2>资产类型${partial ? ' <span class="pill">部分估值</span>' : ""}</h2><span class="muted small">仅统计已确认、已换算且符合账户口径的记录 · 点击图例查看明细</span></div><div class="type-controls">${displayCurrencyControl()}${privacyToggle()}</div></div>${assetTypeChart(summary, true)}<button class="button small quiet type-all" data-action="clear-category">查看全部资产 →</button>${stockPnlPanel(summary)}<details class="pnl-sources"><summary>资产分类说明</summary>${assetTypeGuide()}</details></section>`;
+  return `<section class="panel" aria-label="资产类型" style="margin:0"><div class="section-head"><div><h2>资产类型${partial ? ' <span class="pill">部分估值</span>' : ""}</h2><span class="muted small">仅统计已确认、已换算且符合账户口径的记录 · 点击图例查看明细</span></div><div class="type-controls">${displayCurrencyControl()}${privacyToggle()}</div></div>${assetTypeChart(summary, true)}<button class="button small quiet type-all" data-action="clear-category">查看全部资产 →</button><details class="pnl-sources"><summary>资产分类说明</summary>${assetTypeGuide()}</details></section>`;
 }
 function assetTypeChart(summary, compact = false) {
   const color = (name) => `var(--cat-${Math.max(0, CATEGORIES.indexOf(name))})`;
@@ -597,6 +596,9 @@ function renderOverview(summary) {
   ${platformAtlas(summary)}
   <details class="source-details"><summary>数据更新与来源 <span>每天 ${escape(refreshTime())} · 汇率、连接状态与基金估值明细</span></summary><div class="source-details-body">${originalCurrencyPanel()}${syncCoveragePanel()}${fundValuationPanel()}</div></details>${initial ? '<div class="notice">从一个真实数字开始：可先录入账户总额，也可导入截图或 CSV。</div>' : ""}`;
 }
+function renderPnl(summary) {
+  return `<section class="panel" aria-label="盈亏"><div class="section-head"><div><h2>盈亏</h2><span class="muted small">已记录的持仓浮动盈亏 · 非完整投资收益</span></div><div class="type-controls">${displayCurrencyControl()}${privacyToggle()}</div></div>${stockPnlPanel(summary)}</section>`;
+}
 function renderHoldings(summary) {
   const included = new Set(summary.included.map((entry) => entry.id));
   const missing = new Set(summary.missing.map((entry) => entry.id));
@@ -752,7 +754,7 @@ function render() {
   if (!state || loggedOut) return;
   const summary = summarize(portfolio());
   document.querySelectorAll("[data-page]").forEach((button) => { if (button.dataset.page === page) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current"); });
-  $("asset-content").innerHTML = `${loadFailed ? '<div class="notice error">最近一次重新载入失败，以下仍为上次读取的资产记录。</div>' : ""}${page === "overview" ? renderOverview(summary) : page === "holdings" ? renderHoldings(summary) : page === "analysis" ? renderAnalysis(summary) : renderHistory()}`;
+  $("asset-content").innerHTML = `${loadFailed ? '<div class="notice error">最近一次重新载入失败，以下仍为上次读取的资产记录。</div>' : ""}${page === "overview" ? renderOverview(summary) : page === "pnl" ? renderPnl(summary) : page === "holdings" ? renderHoldings(summary) : page === "analysis" ? renderAnalysis(summary) : renderHistory()}`;
   syncBusy();
   startBubbleMotion();
 }
