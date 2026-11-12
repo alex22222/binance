@@ -946,7 +946,7 @@ test("both themes define a color for every asset category and the toggle persist
   for (let index = 0; index < core.CATEGORIES.length; index++) {
     assert.equal(html.match(new RegExp(`--cat-${index}:#[0-9a-f]{6}`, "g"))?.length, 2);
   }
-  assert.match(html, /<script nonce="n">[^<]*localStorage\.getItem\("assets-theme"\)/);
+  assert.match(html, /<script nonce="n">[^<]*localStorage\.getItem\("hq-theme"\)/);
   const saved = new Map();
   const ui = await view(stateWith(), null, { storage: { getItem: (key) => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) } });
   ui.run('localStorage = window.localStorage; document.documentElement.dataset.theme = "dark"; syncThemeToggle()');
@@ -955,6 +955,7 @@ test("both themes define a color for every asset category and the toggle persist
   toggle.id = "theme-toggle";
   await ui.listeners.click({ target: { closest: () => toggle } });
   assert.equal(ui.run("document.documentElement.dataset.theme"), "light");
+  assert.equal(saved.get("hq-theme"), "light");
   assert.equal(saved.get("assets-theme"), "light");
   assert.equal(ui.get("theme-toggle-label").textContent, "深色模式");
 });

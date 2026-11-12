@@ -40,7 +40,7 @@ function page() {
 
 test("research shell is read-only, accessible, and uses a single saved-evidence endpoint", () => {
   const html = strategyLabHtml();
-  assert.match(html, /<title>策略研究 · Agentic Wallet/);
+  assert.match(html, /<title>策略研究 · HQ Capital/);
   assert.match(html, /id="strategyComparison"/);
   assert.match(html, /aria-label="搜索策略"/);
   assert.match(html, /aria-controls="directoryBody"/);

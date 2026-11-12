@@ -1,17 +1,18 @@
 import { SITE_CSS, siteHeader } from "./site-shell.mjs";
 
-export function strategyLabHtml() {
+export function strategyLabHtml({ theme = "light" } = {}) {
+  const themeAttr = theme === "dark" ? ' data-theme="dark"' : "";
   return `<!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN"${themeAttr}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <title>策略研究 · Agentic Wallet</title>
+  <title>策略研究 · HQ Capital</title>
   <style>
     ${SITE_CSS}
-    :root { --site-width: 1680px; }
+    :root { --content-width: 1680px; --site-width: var(--nav-width); }
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     body { font-size: 14px; line-height: 1.6; }
@@ -24,7 +25,7 @@ export function strategyLabHtml() {
     .skip { position: absolute; top: -80px; left: 20px; z-index: 10; background: var(--panel); padding: 12px; }
     .skip:focus { top: 8px; }
     .top-meta { color: var(--muted); font-size: 12px; }
-    .workspace { display: grid; grid-template-columns: 370px minmax(0, 1fr); max-width: 1680px; margin: auto; }
+    .workspace { display: grid; grid-template-columns: 370px minmax(0, 1fr); max-width: var(--content-width); margin: auto; }
     .directory { padding: 28px 26px; border-right: 1px solid var(--line); height: calc(100vh - 80px); position: sticky; top: 80px; display: flex; flex-direction: column; }
     .directory h1 { font-size: 23px; margin: 0 0 2px; letter-spacing: -.03em; }
     .muted, .directory p { color: var(--muted); }
@@ -36,7 +37,7 @@ export function strategyLabHtml() {
     .strategy-list { overflow-y: auto; min-height: 0; scrollbar-width: thin; }
     .strategy-item { width: 100%; background: transparent; border: 0; border-bottom: 1px solid var(--line); border-left: 3px solid transparent; padding: 17px 14px; text-align: left; }
     .strategy-item:first-child { border-top: 1px solid var(--line); }
-    .strategy-item:hover { background: #131b27; }
+    .strategy-item:hover { background: var(--surface-2); }
     .strategy-item[aria-pressed="true"] { border-left-color: var(--brand); background: var(--brand-soft); }
     .item-top { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
     .item-top strong { font-size: 15px; line-height: 1.5; }
@@ -47,13 +48,13 @@ export function strategyLabHtml() {
     .breadcrumb { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
     .title-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
     h2 { font-size: 30px; line-height: 1.35; letter-spacing: -.035em; margin: 0; }
-    .badge { display: inline-flex; padding: 3px 9px; border: 1px solid #42516a; background: #19212d; border-radius: 6px; color: #b7cbed; font-size: 12px; white-space: nowrap; }
-    .badge.green { color: var(--green); border-color: #2e6653; background: #11241f; }
-    .badge.gold { color: var(--gold); border-color: #655532; background: #262216; }
-    .thesis { font-size: 17px; color: #b5c0d0; margin: 10px 0 20px; }
-    .verdict { border: 1px solid #4a402a; border-left: 3px solid var(--gold); background: #1b1913; padding: 15px 20px; border-radius: 7px; margin-bottom: 18px; }
+    .badge { display: inline-flex; padding: 3px 9px; border: 1px solid var(--line); background: var(--surface-2); border-radius: var(--radius-pill); color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .badge.green { color: var(--green); border-color: transparent; background: var(--green-soft); }
+    .badge.gold { color: var(--gold); border-color: transparent; background: var(--gold-soft); }
+    .thesis { font-size: 17px; color: var(--muted); margin: 10px 0 20px; }
+    .verdict { border: 1px solid var(--line); border-left: 3px solid var(--gold); background: var(--gold-soft); padding: 15px 20px; border-radius: var(--radius-sm); margin-bottom: 18px; }
     .verdict strong { font-size: 18px; }
-    .verdict p { margin: 4px 0 0; color: #c5c2b6; }
+    .verdict p { margin: 4px 0 0; color: var(--muted); }
     .section-tabs { display: flex; gap: 16px; border-bottom: 1px solid var(--line); margin-bottom: 24px; }
     .section-tabs button { color: var(--muted); background: transparent; border: 0; border-bottom: 3px solid transparent; padding: 12px 19px; font-weight: 600; }
     .section-tabs button[aria-pressed="true"] { color: var(--brand); border-bottom-color: var(--brand); }
@@ -61,8 +62,8 @@ export function strategyLabHtml() {
     h4 { font-size: 15px; margin: 0 0 7px; }
     p { margin: 0 0 12px; }
     .analysis-head { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
-    .evidence-tabs { display: flex; gap: 3px; background: #161d27; border: 1px solid var(--line); border-radius: 9px; padding: 3px; }
-    .evidence-tabs button { background: none; border: 0; border-radius: 7px; color: #b7c1d0; padding: 5px 18px; }
+    .evidence-tabs { display: flex; gap: 3px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px; padding: 3px; }
+    .evidence-tabs button { background: none; border: 0; border-radius: 7px; color: var(--muted); padding: 5px 18px; }
     .evidence-tabs button[aria-pressed="true"] { background: var(--brand); color: var(--brand-ink); font-weight: 700; }
     .source-meta { color: var(--muted); font-size: 12px; }
     .analysis-head .source-meta { margin: 0; }
@@ -76,24 +77,24 @@ export function strategyLabHtml() {
     .table-wrap { border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; margin-bottom: 22px; }
     .table-hint { display: none; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
-    th { background: #171e28; color: var(--muted); font-weight: 500; }
+    th { background: var(--surface-2); color: var(--muted); font-weight: 500; }
     th, td { padding: 12px 15px; border-bottom: 1px solid var(--line); }
     th:not(:first-child), td:not(:first-child) { white-space: nowrap; }
     tr:last-child td { border: 0; }
     .insights { display: grid; grid-template-columns: 1fr 1.15fr; gap: 28px; margin: 26px 0; }
-    .insight { border-left: 1px solid #425064; padding-left: 20px; }
-    .insight p { color: #b5c0d0; margin: 0; }
+    .insight { border-left: 1px solid var(--line); padding-left: 20px; }
+    .insight p { color: var(--muted); margin: 0; }
     .actions { display: flex; align-items: center; gap: 18px; margin-top: 28px; flex-wrap: wrap; }
     .primary, .secondary { border-radius: var(--radius-sm); padding: 10px 18px; font-weight: 650; }
     .primary { background: var(--brand); color: var(--brand-ink); border: 1px solid var(--brand); }
     .primary:hover { background: var(--brand-strong); }
     .secondary { color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
-    .secondary:hover { border-color: #465365; }
+    .secondary:hover { border-color: var(--faint); }
     .empty { padding: 23px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin: 18px 0; color: var(--muted); }
     .empty strong { color: var(--text); display: block; margin-bottom: 5px; }
     .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; margin: 22px 0; }
     .fact { border-top: 1px solid var(--line); padding-top: 17px; }
-    .fact p { color: #b5c0d0; }
+    .fact p { color: var(--muted); }
     details { border-top: 1px solid var(--line); padding: 14px 0; }
     summary { cursor: pointer; color: var(--blue); }
     details p, details ul { color: var(--muted); margin-top: 12px; }
@@ -101,7 +102,7 @@ export function strategyLabHtml() {
     .read-status { margin-top: 26px; padding-top: 15px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }
     .read-status button { padding: 5px 10px; border: 1px solid var(--line); border-radius: 5px; background: transparent; }
     .error { color: var(--red); }
-    .journal-overview { max-width: 1680px; margin: auto; padding: 24px 30px; border-bottom: 1px solid var(--line); }
+    .journal-overview { max-width: var(--content-width); margin: auto; padding: 24px 30px; border-bottom: 1px solid var(--line); }
     .journal-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; flex-wrap: wrap; }
     .journal-heading h1 { font-size: 23px; margin: 0; }
     .journal-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 15px; }
@@ -134,7 +135,7 @@ export function strategyLabHtml() {
 </head>
 <body>
   <a class="skip" href="#dossier">跳到研究档案</a>
-  ${siteHeader("/strategies", '<span class="top-meta">只读研究 · 交易管理请前往仪表盘</span>')}
+  ${siteHeader("/strategies", '<span class="top-meta">只读研究 · 交易管理请前往仪表盘</span>', { theme })}
   <section class="journal-overview" id="dailyOverview" aria-label="策略每日跟踪总览"><p class="muted">正在读取每日归档…</p></section>
   <div class="workspace">
     <aside class="directory" aria-label="策略目录">

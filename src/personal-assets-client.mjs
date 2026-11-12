@@ -1241,7 +1241,11 @@ document.addEventListener("click", async (event) => {
   if (button.id === "theme-toggle") {
     const theme = document.documentElement.dataset.theme === "light" ? "dark" : "light";
     document.documentElement.dataset.theme = theme;
-    try { localStorage.setItem("assets-theme", theme); } catch {}
+    try {
+      localStorage.setItem("hq-theme", theme);
+      localStorage.setItem("assets-theme", theme);
+      document.cookie = `hq-theme=${theme}; Path=/; Max-Age=31536000; SameSite=Lax`;
+    } catch {}
     syncThemeToggle();
     return;
   }

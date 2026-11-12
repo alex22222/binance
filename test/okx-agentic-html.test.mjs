@@ -15,7 +15,7 @@ function status() {
 
 test("OKX overview shows actual source cutoffs, stale health, strategy scope and an independent wallet-assets entry", () => {
   const html = okxAgenticHtml({ status: status(), now: NOW });
-  assert.match(html, /<title>OKX Agentic Wallet/);
+  assert.match(html, /<title>OKX 钱包 · HQ Capital/);
   assert.match(html, /X Layer/);
   assert.match(html, /快照同步 2026-11-09 09:00/);
   assert.match(html, /2026-11-08 23:12/);
