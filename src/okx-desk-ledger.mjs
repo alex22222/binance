@@ -256,7 +256,7 @@ export async function loadOkxDeskLedger({
   let kind = "unavailable";
   try {
     markdown = await readText(ledgerPath, "utf8");
-    kind = ledgerPath === fixturePath ? "fixture" : "vault";
+    kind = ledgerPath === fixturePath ? "fixture" : ledgerPath === VAULT_LEDGER_PATH ? "vault" : "copy";
   } catch {
     if (ledgerPath !== fixturePath) {
       try {
@@ -267,7 +267,7 @@ export async function loadOkxDeskLedger({
   }
   const parsed = markdown ? parseOkxDeskLedger(markdown) : { capital: "", status: {}, shifts: [], loose: [] };
   const reports = await readReports(reportsDir, parsed.shifts.map((shift) => shift.date), readText, listDirectory);
-  const label = kind === "vault" ? "本机 Obsidian 影子日志" : kind === "fixture" ? "内置 2026-11-12 班次样本" : "影子日志不可读";
+  const label = kind === "vault" ? "本机 Obsidian 影子日志" : kind === "copy" ? "服务器上的影子日志副本" : kind === "fixture" ? "内置 2026-11-12 班次样本" : "影子日志不可读";
   return {
     ...parsed,
     reports,

@@ -152,6 +152,11 @@ test("the Mac vault, when readable, still parses the 2026-11-12 shifts without l
     await writeFile(join(directory, "not-a-report.txt"), "影子");
     const fallback = await loadOkxDeskLedger({ ledgerPath: join(directory, "missing.md"), reportsDir: directory, readText: readFile });
     assert.equal(fallback.source.kind, "fixture");
+    const copyPath = join(directory, "copy.md");
+    await writeFile(copyPath, await readFile(DESK_FIXTURE_PATH));
+    const copy = await loadOkxDeskLedger({ ledgerPath: copyPath, reportsDir: directory, fixturePath: DESK_FIXTURE_PATH });
+    assert.equal(copy.source.kind, "copy");
+    assert.equal(copy.source.label, "服务器上的影子日志副本");
     assert.equal(fallback.shifts[0].id, "2026-11-12T09:00");
     assert.equal(fallback.reports.status, "ok");
     assert.deepEqual(fallback.reports.notes, {});
