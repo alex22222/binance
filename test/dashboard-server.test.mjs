@@ -423,7 +423,7 @@ test("dashboard protects public access with basic auth and an exact HTTPS origin
     const loginPage = await fetch(`${origin}/login`);
     assert.equal(loginPage.status, 200);
     const loginHtml = await loginPage.text();
-    assert.match(loginHtml, /登录手机 Dashboard/);
+    assert.match(loginHtml, /登录 Dashboard/);
     assert.match(loginHtml, /<input name="remember" type="checkbox" value="1" checked>在这台设备上保持登录 30 天/);
 
     const invalidLogin = await fetch(`${origin}/login`, {

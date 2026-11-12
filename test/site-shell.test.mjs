@@ -4,7 +4,7 @@ import { btcRadarHtml } from "../src/btc-radar-html.mjs";
 import { dashboardLoginHtml } from "../src/dashboard-login-html.mjs";
 import { fundManagerHtml } from "../src/fund-manager-html.mjs";
 import { liveDashboardHtml } from "../src/live-dashboard-html.mjs";
-import { SITE_CSS, SITE_NAV, siteHeader } from "../src/site-shell.mjs";
+import { SITE_CSS, SITE_NAV, safeReturnPath, siteHeader, themeFromCookie, themeToggleHref } from "../src/site-shell.mjs";
 import { strategyLabHtml } from "../src/strategy-lab-html.mjs";
 import { tradeReviewHtml } from "../src/trade-review-html.mjs";
 import { weeklyResearchHtml } from "../src/weekly-research-html.mjs";
@@ -18,17 +18,35 @@ test("the shared header marks only the active page and needs no image", () => {
   assert.doesNotMatch(html + SITE_CSS, /<img|url\(/);
 });
 
-test("light is the default theme, dark stays behind data-theme, and dark-era page colors are fixed per page", () => {
+test("light is the default theme, dark stays behind data-theme, and brand hue stays indigo", () => {
   assert.match(SITE_CSS, /:root\{color-scheme:light;/);
   assert.match(SITE_CSS, /:root\[data-theme=dark\]\{color-scheme:dark;/);
+  assert.match(SITE_CSS, /--brand:#5266eb/);
+  assert.match(SITE_CSS, /:root\[data-theme=dark\]\{[^}]*--brand:#7b8cff/);
+  assert.match(SITE_CSS, /--nav-width:1280px/);
+  assert.match(SITE_CSS, /--font:ui-sans-serif/);
+  assert.doesNotMatch(SITE_CSS, /Inter,/);
   const fixes = SITE_CSS.split("\n").filter((line) => line.includes("body:has("));
-  assert.ok(fixes.length > 20);
+  assert.ok(fixes.length >= 10);
   for (const line of fixes) {
-    assert.match(line, /^html:not\(\[data-theme=dark\]\) body:has\((\.site-nav a\[aria-current\]\[href="(\/dashboard|\/strategies|\/fund-manager|\/crypto)"\]|form\[action="\/login"\])\)/, line);
+    assert.match(line, /^html:not\(\[data-theme=dark\]\) body:has\((\.site-nav a\[aria-current\]\[href="\/dashboard"\]|form\[action="\/login"\])\)/, line);
   }
 });
 
-test("navigation leads with market overview and groups the Binance wallet pages in one dropdown", () => {
+test("theme helpers read the cookie and build a safe toggle link", () => {
+  assert.equal(themeFromCookie(""), "light");
+  assert.equal(themeFromCookie("hq-theme=dark"), "dark");
+  assert.equal(themeFromCookie("a=1; hq-theme=light; b=2"), "light");
+  assert.equal(themeToggleHref("dark", "/crypto"), "/api/theme?set=dark&next=%2Fcrypto");
+  assert.equal(themeToggleHref("dark", "/market?period=5d"), "/api/theme?set=dark&next=%2Fmarket%3Fperiod%3D5d");
+  assert.equal(themeToggleHref("light", "//evil"), "/api/theme?set=light&next=%2F");
+  assert.equal(safeReturnPath("/crypto/desk?shift=2026-11-12T09:00"), "/crypto/desk?shift=2026-11-12T09:00");
+  assert.equal(safeReturnPath("https://evil.example/"), "/");
+  assert.doesNotMatch(siteHeader("/strategies", "", { themeControl: false }), /class="site-theme"/);
+  assert.match(siteHeader("/market", "", { returnTo: "/market?period=1d" }), /next=%2Fmarket%3Fperiod%3D1d/);
+});
+
+test("navigation leads with market overview and groups the wallet pages in one Chinese dropdown", () => {
   for (const active of ["/", "/dashboard"]) {
     const html = siteHeader(active);
     const links = [...html.matchAll(/<a href="([^"]+)"(?: aria-current="page")?>([^<]+)<\/a>/g)]
@@ -38,17 +56,18 @@ test("navigation leads with market overview and groups the Binance wallet pages 
     assert.equal(html.match(/aria-current="page"/g)?.length, 1, active);
   }
   const top = (html) => [...html.split("</nav>")[0].replace(/<div class="site-submenu">[\s\S]*?<\/div>/g, "").matchAll(/<a href="([^"]+)"[^>]*>|<summary>([^<]+)<\/summary>/g)].map(([, href, group]) => href || group);
-  assert.deepEqual(top(siteHeader("/assets")), ["/market", "/assets", "Agentic wallet", "数字货币", "https://polyhermes.107-191-42-75.sslip.io/future-btc5m-bridge", "https://polym.trade/perps"]);
-  const menu = siteHeader("/assets").match(/<details class="site-group"><summary>Agentic wallet<\/summary><div class="site-submenu">([\s\S]*?)<\/div><\/details>/)[1];
+  assert.deepEqual(top(siteHeader("/assets")), ["/market", "/assets", "智能钱包", "数字货币", "https://poly.spaceflag.site/future-btc5m-bridge", "https://polym.trade/perps"]);
+  const menu = siteHeader("/assets").match(/<details class="site-group"><summary>智能钱包<\/summary><div class="site-submenu">([\s\S]*?)<\/div><\/details>/)[1];
   assert.deepEqual([...menu.matchAll(/<a href="([^"]+)">([^<]+)<\/a>/g)].map(([, href, label]) => [href, label]),
-    [["/dashboard", "交易总览"], ["/agentic-wallet/okx", "OKX Agentic Wallet"], ["/strategies", "策略"], ["/reviews", "复盘"], ["/fund-manager", "基金经理"], ["/operations", "运行总览"]]);
+    [["/dashboard", "交易总览"], ["/agentic-wallet/okx", "OKX 钱包"], ["/strategies", "策略"], ["/reviews", "复盘"], ["/fund-manager", "基金经理"], ["/operations", "运行总览"]]);
   for (const active of ["/agentic-wallet/okx", "/strategies", "/reviews", "/fund-manager", "/operations"]) {
-    assert.match(siteHeader(active), new RegExp(`<details class="site-group is-current"><summary>Agentic wallet</summary>[^]*<a href="${active}" aria-current="page">`), active);
+    assert.match(siteHeader(active), new RegExp(`<details class="site-group is-current"><summary>智能钱包</summary>[^]*<a href="${active}" aria-current="page">`), active);
   }
   assert.doesNotMatch(SITE_CSS, /\.site-nav\{[^}]*overflow/);
   const html = siteHeader("/assets");
   assert.match(html, /<a class="site-brand" href="\/"><span class="site-mark" aria-hidden="true">H<\/span><span class="site-name">HQ Capital<\/span><\/a>/);
   assert.doesNotMatch(html, /Agentic Wallet<\/span>/);
+  assert.match(html, /class="site-theme"[^>]*>深色模式</);
 });
 
 test("digital currency groups the combined BTC and favorites page with GMGN", () => {
@@ -66,10 +85,11 @@ test("digital currency groups the combined BTC and favorites page with GMGN", ()
 
 test("Poly follow and Polymtrade open new tabs while internal navigation stays in this tab", () => {
   const html = siteHeader("/assets");
-  assert.ok(html.includes('<a href="https://polyhermes.107-191-42-75.sslip.io/future-btc5m-bridge" target="_blank" rel="noopener noreferrer">Poly 跟单</a>'));
-  assert.equal(html.match(/>Poly 跟单<\/a>/g)?.length, 1);
-  assert.ok(html.includes('<a href="https://polym.trade/perps" target="_blank" rel="noopener noreferrer">Polymtrade</a>'));
-  assert.equal(html.match(/>Polymtrade<\/a>/g)?.length, 1);
+  assert.ok(html.includes('<a href="https://poly.spaceflag.site/future-btc5m-bridge" class="site-external" target="_blank" rel="noopener noreferrer">Poly 跟单 ↗</a>'));
+  assert.doesNotMatch(html, /polyhermes\.107-191-42-75\.sslip\.io/);
+  assert.equal(html.match(/>Poly 跟单 ↗<\/a>/g)?.length, 1);
+  assert.ok(html.includes('<a href="https://polym.trade/perps" class="site-external" target="_blank" rel="noopener noreferrer">Polymtrade ↗</a>'));
+  assert.equal(html.match(/>Polymtrade ↗<\/a>/g)?.length, 1);
   assert.equal(html.match(/target="_blank"/g)?.length, 2);
   assert.match(html, /<a href="\/assets" aria-current="page">个人资产<\/a>/);
   assert.doesNotMatch(html, /<iframe|<script|onclick=|data-token|Authorization/i);
@@ -93,9 +113,12 @@ test("every dashboard page uses the shared shell with the right section highligh
   }
   const login = dashboardLoginHtml();
   assert.ok(login.includes(SITE_CSS));
-  assert.match(login, /class="site-mark"/);
+  assert.match(login, /class="site-mark"[^>]*>H</);
+  assert.match(login, /HQ Capital/);
+  assert.match(login, /<title>登录 · HQ Capital</);
+  assert.doesNotMatch(login, /Agentic Wallet/);
+  assert.match(strategyLabHtml(), /<title>策略研究 · HQ Capital/);
 });
-
 
 test("shared pages expose settings without requiring the assets client, and retain page-owned actions", () => {
   for (const active of ["/market", "/crypto", "/dashboard", "/agentic-wallet/okx", "/fund-manager"]) {
@@ -104,6 +127,7 @@ test("shared pages expose settings without requiring the assets client, and reta
     assert.match(html, /<summary>设置<\/summary>/);
     assert.match(html, /href="\/assets\?settings=refresh-schedule"/);
     assert.match(html, /href="\/assets\?settings=statement-passwords"/);
+    assert.match(html, /href="\/api\/theme\?set=dark&next=/);
     assert.doesNotMatch(html, /<script|onclick=|type="submit"/);
   }
   const owned = siteHeader("/assets", '<button id="asset-actions">资产操作</button>');

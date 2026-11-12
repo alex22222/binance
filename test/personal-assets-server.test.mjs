@@ -69,7 +69,7 @@ test("personal assets share Dashboard authentication and persist isolated review
       assert.equal(dashboard.status, 200, path);
       assert.equal(dashboard.headers.get("cache-control"), "no-store", path);
       const dashboardHtml = await dashboard.text();
-      assert.match(dashboardHtml, /<summary>Agentic wallet<\/summary><div class="site-submenu"><a href="\/dashboard" aria-current="page">交易总览<\/a>/, path);
+      assert.match(dashboardHtml, /<summary>智能钱包<\/summary><div class="site-submenu"><a href="\/dashboard" aria-current="page">交易总览<\/a>/, path);
       assert.match(dashboardHtml, /id="wallet-okx"/, path);
     }
     for (const path of ["/dashboard", "/dashboard/"]) {

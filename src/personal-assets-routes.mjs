@@ -19,6 +19,7 @@ import { loadOkxAgenticStatus, projectOkxAgenticAssets } from "./okx-agentic-sta
 import { okxAgenticHtml } from "./okx-agentic-html.mjs";
 import { projectAgenticWallets, readWalletPreferences, saveWalletPreference } from "./agentic-wallet-overview.mjs";
 import { agenticWalletHtml } from "./agentic-wallet-html.mjs";
+import { THEME_COOKIE, safeReturnPath, themeFromCookie } from "./site-shell.mjs";
 
 const sourceFile = (name) => fileURLToPath(new URL(name, import.meta.url));
 const files = new Map([
@@ -224,7 +225,21 @@ export async function readOperationsOverview({ stateDir, now = new Date(), syste
 }
 
 export async function handlePersonalAssetsRequest({ request, response, stateDir, requireAllowedOrigin }) {
-  const path = new URL(request.url, "http://localhost").pathname;
+  const url = new URL(request.url, "http://localhost");
+  const path = url.pathname;
+  const theme = themeFromCookie(request.headers.cookie);
+  if (request.method === "GET" && path === "/api/theme") {
+    const set = url.searchParams.get("set") === "dark" ? "dark" : "light";
+    const next = safeReturnPath(url.searchParams.get("next") || "/");
+    response.writeHead(302, {
+      Location: next,
+      "Cache-Control": "no-store",
+      "Set-Cookie": `${THEME_COOKIE}=${set}; Path=/; Max-Age=31536000; SameSite=Lax`,
+      "X-Content-Type-Options": "nosniff"
+    });
+    response.end();
+    return true;
+  }
   if (["/api/agentic-wallets", "/api/agentic-wallets/preferences"].includes(path)) {
     try {
       if (path === "/api/agentic-wallets/preferences" && request.method === "POST") {
@@ -262,12 +277,12 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
       "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
       "X-Content-Type-Options": "nosniff"
     });
-    response.end(okxAgenticHtml({ status, assets, now }));
+    response.end(okxAgenticHtml({ status, assets, now, theme }));
     return true;
   }
   if (["/", "/market", "/market/", "/api/market-overview"].includes(path)) {
     if (request.method !== "GET") { json(response, { error: "市场总览仅支持读取。" }, 405); return true; }
-    const period = new URL(request.url, "http://localhost").searchParams.get("period") || "5d";
+    const period = url.searchParams.get("period") || "5d";
     if (!["1d", "5d", "20d"].includes(period)) { json(response, { error: "请选择1日、5日或20日。" }, 400); return true; }
     const now = new Date();
     const [market, reports] = await Promise.all([
@@ -281,7 +296,7 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
       "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
       "X-Content-Type-Options": "nosniff"
     });
-    response.end(marketOverviewHtml({ market, reports, period, now }));
+    response.end(marketOverviewHtml({ market, reports, period, now, theme }));
     return true;
   }
   if (path === "/btc-radar" && request.method === "GET" && new URL(request.url, "http://localhost").searchParams.get("view") === "detail") {
@@ -293,7 +308,7 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
     if (request.method !== "GET") { json(response, { error: "交易过程只支持读取。" }, 405); return true; }
     const ledger = await syncOkxDeskStore(await loadOkxDeskLedger(), { stateDir });
     if (path === "/api/crypto/desk") { json(response, ledger); return true; }
-    const requested = new URL(request.url, "http://localhost").searchParams.get("shift") || "";
+    const requested = url.searchParams.get("shift") || "";
     const shiftId = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(requested) ? requested : "";
     response.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8",
@@ -301,7 +316,7 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
       "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
       "X-Content-Type-Options": "nosniff"
     });
-    response.end(okxDeskHtml(ledger, { shiftId, unknown: Boolean(requested) && !shiftId }));
+    response.end(okxDeskHtml(ledger, { shiftId, unknown: Boolean(requested) && !shiftId, theme }));
     return true;
   }
   if (["/crypto", "/crypto/", "/btc-radar", "/api/crypto", "/api/digital-currency"].includes(path)) {
@@ -316,7 +331,7 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
       "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
       "X-Content-Type-Options": "nosniff"
     });
-    response.end(digitalCurrencyHtml({ radar, watch: status, now: new Date() }));
+    response.end(digitalCurrencyHtml({ radar, watch: status, now: new Date(), theme }));
     return true;
   }
   // Keep the original execution UI and all of its gates in the frozen checkout.
@@ -331,7 +346,7 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
       "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
       "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
     });
-    response.end(agenticWalletHtml({ nonce }));
+    response.end(agenticWalletHtml({ nonce, theme }));
     return true;
   }
   if (request.method === "GET" && ["/operations", "/operations/", "/api/operations"].includes(path)) {
@@ -344,14 +359,14 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
       "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
       "X-Content-Type-Options": "nosniff"
     });
-    response.end(operationsHtml(overview));
+    response.end(operationsHtml(overview, { theme }));
     return true;
   }
   const assetApi = ["/api/assets", "/api/assets/snapshots", "/api/assets/snapshots/compare", "/api/assets/rates/refresh", "/api/assets/funds/configure"].includes(path);
   const refreshApi = path === "/api/assets/refresh-schedule";
-  const refreshPage = ["/assets", "/assets/"].includes(path) && new URL(request.url, "http://localhost").searchParams.get("settings") === "refresh-schedule";
+  const refreshPage = ["/assets", "/assets/"].includes(path) && url.searchParams.get("settings") === "refresh-schedule";
   const statementApi = path === "/api/assets/statement-passwords";
-  const statementPage = ["/assets", "/assets/"].includes(path) && new URL(request.url, "http://localhost").searchParams.get("settings") === "statement-passwords";
+  const statementPage = ["/assets", "/assets/"].includes(path) && url.searchParams.get("settings") === "statement-passwords";
   const syncAction = path.match(/^\/api\/assets\/sync\/(okx|futu|polymarket|future|okxweb3|tokenpocket|binanceagentic|okxagentic)\/(bind|connect|authorize|accounts|preview|apply|resume|disconnect)$/);
   const aiApi = ["/api/assets/ai", "/api/assets/ai/review", "/api/assets/ai/configure"].includes(path);
   const syncApi = path === "/api/assets/sync" || path === "/api/assets/sync/futu/callback" || syncAction;
@@ -377,7 +392,7 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
         "Content-Security-Policy": `default-src 'none'; script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'unsafe-inline'; img-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
         "X-Content-Type-Options": "nosniff"
       });
-      response.end(refreshPage ? refreshScheduleHtml({ nonce }) : statementPage ? statementPasswordsHtml({ nonce }) : personalAssetsHtml({ nonce }));
+      response.end(refreshPage ? refreshScheduleHtml({ nonce, theme }) : statementPage ? statementPasswordsHtml({ nonce, theme }) : personalAssetsHtml({ nonce, theme }));
       return true;
     }
     if (request.method === "GET" && file) {

@@ -6,7 +6,7 @@
 
 机器人飞书消息里的「打开手机 Dashboard」链接是站点首页。首页按 User-Agent 识别飞书内置浏览器（`Lark/`、`Feishu/` 或 `LarkLocale/`），飞书里打开时直接进 `/dashboard`，其他浏览器进个人资产页。
 
-登录页、交易看板、复盘等页面的浏览器标签标题仍写 Agentic Wallet：这些页面在 `src/` 交易代码里，改动会改变 Live 代码身份并停止自动续期，留待下次交易代码变更时一起改。
+登录页已统一为 **HQ Capital**。交易看板、复盘等仍由 Live 交易目录直接渲染的页面，标题口径随交易代码发布时一并调整；Dashboard-only release 通过覆盖 `site-shell.mjs` 等模块统一导航、主题与品牌色。
 
 ## 总览布局与股票盈亏
 

@@ -3,6 +3,9 @@ import test from "node:test";
 import { Script, createContext, runInContext } from "node:vm";
 import { strategyLabHtml } from "../src/strategy-lab-html.mjs";
 import { buildStrategyComparison, DEFAULT_STRATEGY_ID } from "../src/strategy-lab.mjs";
+import { catalogFor } from "../src/strategy-research.mjs";
+
+const annotate = (strategies) => strategies.map((strategy) => ({ ...strategy, catalog: catalogFor(strategy.id) }));
 
 class Node {
   children = [];
@@ -28,7 +31,7 @@ function page() {
   const fixture = {
     mode: "live", approval: { mode: "AUTO" },
     generatedAt: "2026-09-26T10:00:00Z", activeStrategyId: DEFAULT_STRATEGY_ID, control: { status: "AVAILABLE" },
-    strategies: buildStrategyComparison(DEFAULT_STRATEGY_ID, []),
+    strategies: annotate(buildStrategyComparison(DEFAULT_STRATEGY_ID, [])),
     trace: { status: "AVAILABLE" }, validation: { status: "MISSING" }, shadow: { status: "MISSING" }, paper: {}
   };
   const context = createContext({ fixture, location: { hash: "" }, document: { createElement: (tag) => new Node(tag), getElementById: get }, AbortSignal, fetch: async () => ({ ok: true, json: async () => fixture }) });
@@ -40,7 +43,7 @@ function page() {
 
 test("research shell is read-only, accessible, and uses a single saved-evidence endpoint", () => {
   const html = strategyLabHtml();
-  assert.match(html, /<title>策略研究 · Agentic Wallet/);
+  assert.match(html, /<title>策略研究 · HQ Capital/);
   assert.match(html, /id="strategyComparison"/);
   assert.match(html, /aria-label="搜索策略"/);
   assert.match(html, /aria-controls="directoryBody"/);
@@ -70,7 +73,7 @@ test("live results come from the full ledger and show the strategy's open positi
   const sell = (realizedPnlUsdt, orderId, timestamp) => ({ timestamp, event: "pending_order", status: "finished", details: { side: "SELL", strategyId: DEFAULT_STRATEGY_ID, orderId, realizedPnlUsdt } });
   const position = { symbol: "QQQ", strategyId: DEFAULT_STRATEGY_ID, openedAt: "2026-09-21T13:32:31Z", costBasisUsdt: 50, lastQuoteProceedsUsdt: 51.57, lastQuoteAt: "2026-10-08T15:59:04Z", peakReturnPct: 4.53, worstReturnPct: -0.18 };
   view.fixture.trace = { status: "AVAILABLE", period: { from: "2026-07-26T12:31:20Z", to: "2026-10-08T16:03:27Z" }, scope: "FULL_TRADE_LEDGER" };
-  view.fixture.strategies = buildStrategyComparison(DEFAULT_STRATEGY_ID, [], { scope: "FULL_TRADE_LEDGER", positions: [position, { ...position, strategyId: "adaptive-momentum" }] });
+  view.fixture.strategies = annotate(buildStrategyComparison(DEFAULT_STRATEGY_ID, [], { scope: "FULL_TRADE_LEDGER", positions: [position, { ...position, strategyId: "adaptive-momentum" }] }));
   view.run("renderDossier()");
   let text = view.get("dossierContent").textContent;
   assert.match(text, /全部实盘记录：2026-07-26 — 2026-10-08/);
@@ -78,7 +81,7 @@ test("live results come from the full ledger and show the strategy's open positi
   assert.match(text, /QQQ 2026-09-21 50\.00 U 51\.57 U \+1\.57 U（\+3\.14%） 4\.53% \/ -0\.18%/);
   assert.match(text, /还没有已完成的平仓，只有持仓中的浮动盈亏/);
 
-  view.fixture.strategies = buildStrategyComparison(DEFAULT_STRATEGY_ID, [sell(-1.5, "a", "2026-08-01T10:00:00Z"), sell(0.5, "b", "2026-08-02T10:00:00Z")], { scope: "FULL_TRADE_LEDGER" });
+  view.fixture.strategies = annotate(buildStrategyComparison(DEFAULT_STRATEGY_ID, [sell(-1.5, "a", "2026-08-01T10:00:00Z"), sell(0.5, "b", "2026-08-02T10:00:00Z")], { scope: "FULL_TRADE_LEDGER" }));
   view.run("renderDossier()");
   text = view.get("dossierContent").textContent;
   assert.match(text, /-1\.00 U/);
@@ -89,8 +92,8 @@ test("live results come from the full ledger and show the strategy's open positi
 
 test("historical rows keep distinct periods, fixed-notional basis, and missing-strategy state", () => {
   const view = page();
-  view.fixture.validation = { status: "AVAILABLE", generatedAt: "2026-08-26", historical: { assumptions: { notionalUsdt: 50 }, dataCoverage: { from: "2026-01-01", to: "2026-06-30" }, strategies: [{ id: DEFAULT_STRATEGY_ID, performance: { trades: 2, returnPct: 0, maxDrawdownPct: 0, pnlUsdt: 0 } }] }, forward: { assumptions: { notionalUsdt: 50 }, dataCoverage: { from: "2026-07-01", to: "2026-08-26" }, strategies: [{ id: DEFAULT_STRATEGY_ID, performance: { trades: 1, returnPct: -2, maxDrawdownPct: 2, pnlUsdt: -1 } }] } };
-  view.run('evidence = "history"; renderDossier()');
+  view.fixture.validation = { status: "AVAILABLE", generatedAt: "2026-08-26", historical: { assumptions: { notionalUsdt: 50 }, dataCoverage: { from: "2026-01-01", to: "2026-06-30" }, strategies: [{ id: "adaptive-momentum", performance: { trades: 2, returnPct: 0, maxDrawdownPct: 0, pnlUsdt: 0 } }] }, forward: { assumptions: { notionalUsdt: 50 }, dataCoverage: { from: "2026-07-01", to: "2026-08-26" }, strategies: [{ id: "adaptive-momentum", performance: { trades: 1, returnPct: -2, maxDrawdownPct: 2, pnlUsdt: -1 } }] } };
+  view.run('selectedId = "adaptive-momentum"; evidence = "history"; renderDossier()');
   const text = view.get("dossierContent").textContent;
   assert.match(text, /0\.00%/);
   assert.match(text, /-2\.00%/);
@@ -98,8 +101,11 @@ test("historical rows keep distinct periods, fixed-notional basis, and missing-s
   assert.match(text, /2026-07-01 — 2026-08-26/);
   assert.match(text, /分母 50\.00 USDT/);
   assert.match(text, /不是组合收益率/);
-  view.run('selectedId = "daily-turtle-55-20"; renderDossier()');
-  assert.match(view.get("dossierContent").textContent, /没有该策略的模拟结果/);
+  view.run('selectedId = "daily-turtle-55-20"; evidence = "history"; renderDossier()');
+  const daily = view.get("dossierContent").textContent;
+  assert.match(daily, /不适用于这个周期/);
+  assert.doesNotMatch(daily, /没有该策略的模拟结果/);
+  assert.doesNotMatch(daily, /0\.00%|-2\.00%/);
 });
 
 test("experimental permission is never displayed as passed research, including after expiry", () => {
@@ -124,9 +130,9 @@ test("experimental permission is never displayed as passed research, including a
 test("search and stage filters combine without changing the selected dossier", () => {
   const view = page();
   view.get("strategySearch").value = "回撤";
-  view.get("stageFilter").value = "SHADOW";
+  view.get("stageFilter").value = "closed";
   view.run("renderDirectory()");
-  assert.equal(view.get("strategyComparison").children.length, 2);
+  assert.equal(view.get("strategyComparison").children.length, 3);
   assert.equal(view.run("selectedId"), DEFAULT_STRATEGY_ID);
   view.get("strategySearch").value = "not-found";
   view.run("renderDirectory()");
@@ -136,11 +142,11 @@ test("search and stage filters combine without changing the selected dossier", (
 test("paper and shadow data never become live performance", () => {
   const view = page();
   view.fixture.paper[DEFAULT_STRATEGY_ID] = { status: "AVAILABLE", equityUsdt: 57, realizedPnlUsdt: 7, totalReturnPct: 14, closedTrades: 1 };
-  view.fixture.shadow = { status: "AVAILABLE", horizons: [{ horizonMinutes: 30, strategyCohorts: { [DEFAULT_STRATEGY_ID]: { samples: 2, averageNetReturnPct: 1.3 } } }] };
+  view.fixture.shadow = { status: "AVAILABLE", horizons: [{ horizonMinutes: 30, strategyCohorts: { "adaptive-momentum": { samples: 2, averageNetReturnPct: 1.3 } } }] };
   view.run('evidence = "paper"; renderDossier()');
   assert.match(view.get("dossierContent").textContent, /57\.00 U/);
   assert.match(view.get("dossierContent").textContent, /PAPER_CANDLE_PROXY/);
-  view.run('evidence = "shadow"; renderDossier()');
+  view.run('selectedId = "adaptive-momentum"; evidence = "shadow"; renderDossier()');
   assert.match(view.get("dossierContent").textContent, /1\.30%/);
   assert.match(view.get("dossierContent").textContent, /未完整计入卖出成本/);
   view.run('evidence = "live"; renderDossier()');
@@ -169,7 +175,7 @@ test("Paper comparison labels immediate-exit net values and never appears in Liv
   assert.doesNotMatch(view.get("dossierContent").textContent, /M-252-base/);
 });
 
-test("daily journal lists every strategy, keeps missing scores unknown and separates evidence", () => {
+test("decision header keeps frozen research separate from daily evidence scores", () => {
   const view = page();
   view.fixture.dailyJournal = { status: "AVAILABLE", errors: [], records: [{ date: "2026-11-11", capturedAt: "2026-11-10T23:35:00Z", strategies: [{
     strategyId: DEFAULT_STRATEGY_ID, primarySource: "paper", sources: { paper: {
@@ -180,8 +186,9 @@ test("daily journal lists every strategy, keeps missing scores unknown and separ
     } }
   }] }] };
   view.run('section = "daily"; evidence = "paper"; renderDossier(); renderDailyOverview()');
-  assert.match(view.get("dailyOverview").textContent, /每日跟踪总览/);
-  for (const strategy of view.fixture.strategies) assert.ok(view.get("dailyOverview").textContent.includes(strategy.name));
+  assert.match(view.get("dailyOverview").textContent, /资金决定/);
+  assert.match(view.get("dailyOverview").textContent, /3\.74%/);
+  assert.doesNotMatch(view.get("dailyOverview").textContent, /75 \/ 100/);
   const text = view.get("dossierContent").textContent;
   assert.match(text, /75 \/ 100/);
   assert.match(text, /数据时效/);

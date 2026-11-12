@@ -21,6 +21,10 @@ test("missing research stays missing without inventing zero performance or expos
   const input = await fixture(t);
   const report = await loadStrategyResearch(input);
   assert.equal(report.strategies.length, 12);
+  assert.equal(report.strategies.filter((strategy) => strategy.catalog.layer === "capital").length, 1);
+  assert.equal(report.strategies.find((strategy) => strategy.id === "weekly-etf-dual-momentum-defense").catalog.verdict, "WITHHOLD");
+  assert.equal(report.strategies.find((strategy) => strategy.id === "adaptive-momentum").catalog.verdict, "CLOSED");
+  assert.equal(report.strategies.find((strategy) => strategy.id === "daily-turtle-55-20").catalog.historyApplies, false);
   assert.equal(report.trace.status, "MISSING");
   assert.equal(report.validation.status, "MISSING");
   assert.equal(report.paper["daily-turtle-55-20"].status, "MISSING");

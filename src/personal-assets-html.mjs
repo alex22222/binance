@@ -37,7 +37,7 @@ const SETTINGS_MENU = `<div class="settings-menu"><button type="button" class="s
   + `<button type="button" class="settings-item" role="menuitem" data-action="logout">${icon('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>')}退出登录</button>`
   + `</div></div>`;
 
-export function personalAssetsHtml({ nonce }) {
+export function personalAssetsHtml({ nonce, theme = "light" } = {}) {
   const safeNonce = String(nonce).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
   return `<!doctype html>
 <html lang="zh-CN">
@@ -47,7 +47,7 @@ export function personalAssetsHtml({ nonce }) {
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>个人资产 · HQ Capital</title>
-<script nonce="${safeNonce}">{let theme="light";try{if(localStorage.getItem("assets-theme")==="dark")theme="dark"}catch{}document.documentElement.dataset.theme=theme}</script>
+<script nonce="${safeNonce}">{(()=>{const theme=${JSON.stringify(theme === "dark" ? "dark" : "light")};document.documentElement.dataset.theme=theme;try{localStorage.setItem("hq-theme",theme);localStorage.setItem("assets-theme",theme);document.cookie="hq-theme="+theme+"; Path=/; Max-Age=31536000; SameSite=Lax"}catch{}})()</script>
 <style>
 ${SITE_CSS}
 :root{--site-width:1280px;${categoryVars(LIGHT_CATEGORY_COLORS)}}
@@ -90,7 +90,7 @@ dialog{color:var(--text);background:var(--surface);border:1px solid var(--line);
 </style>
 </head>
 <body>
-${siteHeader("/assets", SETTINGS_MENU)}
+${siteHeader("/assets", SETTINGS_MENU, { theme })}
 <main class="assets-wrap" id="assets-app" aria-label="个人资产管理">
   <header class="asset-head"><nav class="asset-tabs" aria-label="资产页面导航"><button data-page="overview" aria-current="page">资产总览</button><button data-page="pnl">盈亏</button><button data-page="holdings">账户与持仓</button><button data-page="analysis">资产分析</button><button data-page="history">历史快照</button></nav></header>
   <div id="asset-message" role="status" aria-live="polite" hidden></div>
@@ -104,12 +104,13 @@ ${siteHeader("/assets", SETTINGS_MENU)}
 </html>`;
 }
 
-export function statementPasswordsHtml({ nonce }) {
+export function statementPasswordsHtml({ nonce, theme = "light" } = {}) {
   const safeNonce = String(nonce).replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>结单密码 · HQ Capital</title>
+  const themeAttr = theme === "dark" ? ' data-theme="dark"' : "";
+  return `<!doctype html><html lang="zh-CN"${themeAttr}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>结单密码 · HQ Capital</title>
 <style>${SITE_CSS}
 .passwords-wrap{max-width:760px;margin:36px auto;padding:0 20px 40px}.passwords-wrap h1{font-size:26px;margin:20px 0 10px}.passwords-wrap p{color:var(--muted);line-height:1.7}.password-card{margin:20px 0;padding:24px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}.password-card h2{font-size:18px;margin:0 0 8px}.password-card label{display:block;margin-top:18px;font-size:13px}.password-card input{box-sizing:border-box;width:100%;padding:12px;margin:8px 0 14px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}.password-actions{display:flex;gap:10px;flex-wrap:wrap}.password-actions button,.back-link{font:inherit;padding:10px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--text);text-decoration:none}.password-actions button[type=submit]{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}button:disabled{opacity:.5;cursor:wait}.password-status{font-size:13px;color:var(--muted)}#password-message{white-space:pre-wrap}#password-message[data-error=true]{color:var(--red)}
-</style></head><body>${siteHeader("/assets")}<main class="passwords-wrap"><a class="back-link" href="/assets">← 返回个人资产</a><h1>结单密码</h1><p>保存用于打开电子结单的密码。已保存的密码不会回显；更新某个账户不会改动另一个账户。保存后仍需解密、核对结单，才会更新资产。</p><p id="password-message" role="status" aria-live="polite">正在读取配置状态…</p>
+</style></head><body>${siteHeader("/assets", "", { theme, returnTo: "/assets?settings=statement-passwords" })}<main class="passwords-wrap"><a class="back-link" href="/assets">← 返回个人资产</a><h1>结单密码</h1><p>保存用于打开电子结单的密码。已保存的密码不会回显；更新某个账户不会改动另一个账户。保存后仍需解密、核对结单，才会更新资产。</p><p id="password-message" role="status" aria-live="polite">正在读取配置状态…</p>
 ${[["usmart-hk", "盈立香港", "用于香港盈立发送的日结单和月结单。"], ["usmart-sg", "盈立新加坡", "用于盈立新加坡发送的结单，与香港账户分开配置。"], ["futu", "富途", "用于富途证券发送的电子结单，与只读 API 授权分开配置。"]].map(([provider, label, description]) => `<form class="password-card" data-provider="${provider}" autocomplete="off"><h2>${label}</h2><p>${description}</p><div class="password-status" id="status-${provider}">状态待读取</div><label for="password-${provider}">结单打开密码</label><input type="password" id="password-${provider}" autocomplete="new-password" spellcheck="false" maxlength="256" required placeholder="输入新密码；已保存的密码不会显示"><div class="password-actions"><button type="submit" disabled>保存密码</button><button type="button" data-clear disabled>清除已保存密码</button></div></form>`).join("")}
 <p>密码通过本站 HTTPS 提交，仅保存在受限的服务器配置文件中，不进入资产导出、快照、AI 点评或浏览器存储。这里不需要邮箱登录密码、银行登录密码或交易密码。</p></main>
 <script nonce="${safeNonce}">
@@ -151,12 +152,13 @@ window.addEventListener("pagehide", () => { document.querySelectorAll("form inpu
 </script></body></html>`;
 }
 
-export function refreshScheduleHtml({ nonce }) {
+export function refreshScheduleHtml({ nonce, theme = "light" } = {}) {
   const safeNonce = String(nonce).replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>自动更新 · HQ Capital</title>
+  const themeAttr = theme === "dark" ? ' data-theme="dark"' : "";
+  return `<!doctype html><html lang="zh-CN"${themeAttr}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>自动更新 · HQ Capital</title>
 <style>${SITE_CSS}
 .schedule-wrap{max-width:660px;margin:36px auto;padding:0 20px 40px}.schedule-wrap h1{font-size:26px;margin:20px 0 10px}.schedule-wrap p{color:var(--muted);line-height:1.7}.schedule-card{margin:20px 0;padding:24px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}.schedule-card label{display:block;font-size:14px}.schedule-card input{display:block;box-sizing:border-box;width:100%;max-width:240px;padding:12px;margin:12px 0 20px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}.schedule-card button,.back-link{font:inherit;padding:10px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--text);text-decoration:none}.schedule-card button{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}button:disabled,input:disabled{opacity:.5}#schedule-message[data-error=true]{color:var(--red)}#schedule-status{white-space:pre-line;font-size:13px}
-</style></head><body>${siteHeader("/assets")}<main class="schedule-wrap"><a class="back-link" href="/assets">← 返回个人资产</a><h1>自动更新</h1><p>每天自动更新一次已接入的资产来源、基金和股票估值，统一使用北京时间。</p><form class="schedule-card" id="schedule-form"><label for="refresh-time">每日更新时间 · 北京时间（UTC+8）</label><input id="refresh-time" name="time" type="time" step="60" value="07:00" required disabled><button type="submit" id="schedule-save" disabled>保存更新时间</button><p id="schedule-status">正在读取更新计划…</p></form><p id="schedule-message" role="status" aria-live="polite"></p><p>当天已自动执行后，修改时间不会再次刷新。执行失败保留上次有效数据，下个更新时间再尝试。服务器恢复后会补做当天尚未执行的任务。</p><p>此设置控制服务器资产刷新。邮箱结单由本机任务每天 07:00 独立检查，需要本机和邮箱会话可用。每日资产快照仍在 23:55 保存。</p></main>
+</style></head><body>${siteHeader("/assets", "", { theme, returnTo: "/assets?settings=refresh-schedule" })}<main class="schedule-wrap"><a class="back-link" href="/assets">← 返回个人资产</a><h1>自动更新</h1><p>每天自动更新一次已接入的资产来源、基金和股票估值，统一使用北京时间。</p><form class="schedule-card" id="schedule-form"><label for="refresh-time">每日更新时间 · 北京时间（UTC+8）</label><input id="refresh-time" name="time" type="time" step="60" value="07:00" required disabled><button type="submit" id="schedule-save" disabled>保存更新时间</button><p id="schedule-status">正在读取更新计划…</p></form><p id="schedule-message" role="status" aria-live="polite"></p><p>当天已自动执行后，修改时间不会再次刷新。执行失败保留上次有效数据，下个更新时间再尝试。服务器恢复后会补做当天尚未执行的任务。</p><p>此设置控制服务器资产刷新。邮箱结单由本机任务每天 07:00 独立检查，需要本机和邮箱会话可用。每日资产快照仍在 23:55 保存。</p></main>
 <script nonce="${safeNonce}">
 const form = document.getElementById("schedule-form"), input = document.getElementById("refresh-time"), button = document.getElementById("schedule-save"), message = document.getElementById("schedule-message");
 const format = value => value ? new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : "尚未记录";
@@ -199,7 +201,7 @@ function ageText(iso, nowMs) {
 }
 
 // Server-rendered run overview of the systemd timers; see readOperationsOverview.
-export function operationsHtml(overview) {
+export function operationsHtml(overview, { theme = "light" } = {}) {
   const nowMs = Date.parse(overview.generatedAt);
   const { renewal, counts } = overview;
   const pill = (status) => `<span class="op-pill ${OPERATION_STATUS[status]?.[1] || "muted"}">${OPERATION_STATUS[status]?.[0] || escapeHtml(status)}</span>`;
@@ -220,20 +222,21 @@ export function operationsHtml(overview) {
   const groups = [...new Set(overview.tasks.map((row) => row.group))];
   const table = groups.map((group) => `<tbody><tr class="op-group"><th colspan="5">${escapeHtml(group)}</th></tr>${overview.tasks.filter((row) => row.group === group).map((row) => `<tr data-status="${escapeHtml(row.status)}"><td><strong>${escapeHtml(row.label)}</strong><small class="mono">${escapeHtml(row.unit)} · ${escapeHtml(row.cadence)}</small></td><td>${pill(row.status)}</td><td>${runCell(row)}</td><td>${dataCell(row)}</td><td><span class="num">${row.nextRunAt ? beijingTime(row.nextRunAt) : "—"}</span><small>${row.nextRunAt ? ageText(row.nextRunAt, nowMs) : row.status === "finished" ? "一次性任务" : ""}</small></td></tr>`).join("")}</tbody>`).join("");
   const metric = (label, value, tone) => `<div class="op-metric ${tone}"><span>${label}</span><strong>${value}</strong></div>`;
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="60"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><title>运行总览 · HQ Capital</title>
+  const themeAttr = theme === "dark" ? ' data-theme="dark"' : "";
+  return `<!doctype html><html lang="zh-CN"${themeAttr}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="60"><meta name="color-scheme" content="light dark"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><title>运行总览 · HQ Capital</title>
 <style>${SITE_CSS}
-:root{--site-width:1280px}*{box-sizing:border-box}body{font-size:14px;line-height:1.6}
+:root{--content-width:1280px}*{box-sizing:border-box}body{font-size:14px;line-height:1.6}
 .op-wrap{max-width:1280px;margin:auto;padding:26px 20px 56px}.op-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:18px}.op-head h1{font-size:26px;margin:0}.op-head p{margin:4px 0 0;color:var(--muted);font-size:13px}
 .op-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) minmax(0,1.6fr);gap:12px;margin-bottom:18px}.op-metric,.op-renewal{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:14px 16px}.op-metric span{display:block;color:var(--muted);font-size:12px}.op-metric strong{font-size:26px;font-weight:500;font-variant-numeric:tabular-nums}.op-metric.bad strong{color:var(--red)}.op-metric.warn strong{color:var(--gold)}.op-metric.ok strong{color:var(--green)}
 .op-renewal .row{display:flex;justify-content:space-between;align-items:center;gap:8px}.op-renewal h2{font-size:13px;margin:0;color:var(--muted);font-weight:500}.op-renewal dl{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:10px 0 0;font-size:12px}.op-renewal dt{color:var(--muted)}.op-renewal dd{margin:0;font-variant-numeric:tabular-nums}
 .op-notice{border:1px solid var(--line);border-left:3px solid var(--red);padding:10px 14px;border-radius:0;background:var(--surface);margin-bottom:16px;color:var(--red)}
 .op-table-wrap{border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px;text-align:left}th{padding:10px 14px;color:var(--muted);font-weight:500;font-size:12px;background:var(--surface-2);border-bottom:1px solid var(--line);white-space:nowrap}td{padding:11px 14px;border-bottom:1px solid var(--line-soft);vertical-align:top;white-space:nowrap}td small{display:block;color:var(--muted);font-size:11px;white-space:normal;max-width:300px}tr.op-group th{background:var(--surface);color:var(--text);font-weight:600;font-size:12px;padding-top:16px}tbody tr:not(.op-group):hover td{background:var(--surface-2)}
 .mono{font-family:var(--font-num)}.num{font-variant-numeric:tabular-nums}.muted{color:var(--muted)}
-.op-pill{display:inline-flex;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}.op-pill.ok{color:var(--green);background:var(--green-soft)}.op-pill.bad{color:var(--red);background:var(--red-soft)}.op-pill.warn{color:var(--gold);background:var(--gold-soft)}.op-pill.info{color:var(--blue);background:var(--blue-soft)}.op-pill.muted{color:var(--muted);background:var(--surface-3)}
+.op-pill{display:inline-flex;padding:2px 9px;border-radius:var(--radius-pill);font-size:12px;font-weight:600;white-space:nowrap}.op-pill.ok{color:var(--green);background:var(--green-soft)}.op-pill.bad{color:var(--red);background:var(--red-soft)}.op-pill.warn{color:var(--gold);background:var(--gold-soft)}.op-pill.info{color:var(--blue);background:var(--blue-soft)}.op-pill.muted{color:var(--muted);background:var(--surface-3)}
 .op-foot{margin-top:14px;color:var(--muted);font-size:12px}
 @media(max-width:900px){.op-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.op-renewal{grid-column:1/-1}}
 @media(max-width:600px){.op-wrap{padding:20px 12px 40px}td small.mono{display:none}td,th{padding:10px}}
-</style></head><body>${siteHeader("/operations")}<main class="op-wrap" aria-label="运行总览">
+</style></head><body>${siteHeader("/operations", "", { theme })}<main class="op-wrap" aria-label="运行总览">
 <div class="op-head"><div><h1>运行总览</h1><p>服务器 ${overview.tasks.length} 个定时任务 · 生成于 ${beijingTime(overview.generatedAt)}（北京时间）· 每分钟自动刷新</p></div></div>
 ${overview.systemdError ? `<div class="op-notice" role="alert">${escapeHtml(overview.systemdError)}；下表的运行时间与状态不可用。</div>` : ""}
 <section class="op-metrics" aria-label="状态汇总">${metric("正常", counts.ok, "ok")}${metric("失败 / 未安装", counts.failed + counts.missing, counts.failed + counts.missing ? "bad" : "")}${metric("数据滞后 / 需关注", counts.stale + counts.attention, counts.stale + counts.attention ? "warn" : "")}${metric("运行中", counts.running, "")}
