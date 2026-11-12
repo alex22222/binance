@@ -230,3 +230,79 @@ test("redesigned overview keeps quote provenance expandable and gives the formal
   assert.equal((html.match(/data-asset=/g) || []).length, 4);
   assert.equal((html.match(/<!doctype html>/g) || []).length, 1);
 });
+
+
+const reading = html => html.match(/<section class="market-reading"[^>]*>([\s\S]*?)<\/section>/)?.[1] || "";
+
+test("one-sentence reading follows the selected period and explains relative AI performance", () => {
+  const five = reading(marketOverviewHtml({ market: market(), now: NOW }));
+  assert.match(five, /一句话解读/);
+  assert.match(five, /近 5 个交易日/);
+  assert.match(five, /标普 500 上涨 1.25%/);
+  assert.match(five, /AI 主题跑赢标普 1.25 个百分点/);
+  assert.match(five, /长期美债下跌 1.20%/);
+  assert.match(five, /美元上涨 0.60%/);
+  const one = reading(marketOverviewHtml({ market: market(), period: "1d", now: NOW }));
+  assert.match(one, /近 1 个交易日/);
+  assert.match(one, /标普 500 下跌 0.40%/);
+  assert.match(one, /AI 主题与标普持平/);
+  assert.doesNotMatch(one, /1.25|1.20|0.60/);
+  const twenty = reading(marketOverviewHtml({ market: market(), period: "20d", now: NOW }));
+  assert.match(twenty, /近 20 个交易日/);
+  assert.match(twenty, /标普 500 上涨 3.50%/);
+});
+
+test("one-sentence reading describes broad equity direction only when all three sessions align", () => {
+  const view = market({ assets: [asset(), asset("QQQ"), asset("IWM")] });
+  assert.match(reading(marketOverviewHtml({ market: view, now: NOW })), /美股主要指数普涨/);
+  view.assets[1].change5d = -1;
+  assert.match(reading(marketOverviewHtml({ market: view, now: NOW })), /美股主要指数涨跌分化/);
+  view.assets[2].asOf = "2026-11-05T21:00:00Z";
+  const unmatched = reading(marketOverviewHtml({ market: view, now: NOW }));
+  assert.match(unmatched, /标普 500 上涨/);
+  assert.doesNotMatch(unmatched, /主要指数/);
+  view.assets[0].change5d = 0;
+  assert.match(reading(marketOverviewHtml({ market: view, now: NOW })), /标普 500 持平/);
+});
+
+test("one-sentence reading suppresses stale, failed, cached and mismatched evidence", () => {
+  for (const changes of [{ stale: true }, { status: "FAILED" }, { status: "ERROR" }, { lastAttempt: { status: "FAILED" } }, { status: "MISSING", assets: [] }]) {
+    const result = reading(marketOverviewHtml({ market: market(changes), now: NOW }));
+    assert.match(result, /暂不生成市场解读/);
+    assert.doesNotMatch(result, /上涨|下跌|跑赢|跑输/);
+  }
+  const view = market();
+  Object.assign(view.assets[0], { status: "CACHED" });
+  Object.assign(view.assets[1], { stale: true });
+  Object.assign(view.assets[2], { returnsSynchronized: false });
+  assert.match(reading(marketOverviewHtml({ market: view, now: NOW })), /暂不生成市场解读/);
+  for (const change of [{ asOf: "2026-11-05T21:00:00Z" }, { returnsAsOf: "2026-11-05T14:30:00Z" }, { asOf: "2026-11-09T21:00:00Z" }]) {
+    const partial = market();
+    Object.assign(partial.assets[3], change);
+    const result = reading(marketOverviewHtml({ market: partial, now: NOW }));
+    assert.match(result, /标普 500 上涨/);
+    assert.doesNotMatch(result, /AI 主题跑赢|AI 主题跑输/);
+  }
+  const partial = market();
+  partial.assets[2].status = "FAILED";
+  assert.match(reading(marketOverviewHtml({ market: partial, now: NOW })), /解读仅覆盖已核实标的/);
+});
+
+
+test("one-sentence reading rejects expired fetches and can explain declines without treating missing values as flat", () => {
+  const view = market();
+  view.assets[0].change5d = -1.25;
+  view.assets[3].change5d = -2.5;
+  view.assets[1].change5d = null;
+  view.assets[2].change5d = 0;
+  const result = reading(marketOverviewHtml({ market: view, now: NOW }));
+  assert.match(result, /标普 500 下跌 1.25%/);
+  assert.match(result, /AI 主题跑输标普 1.25 个百分点/);
+  assert.match(result, /美元持平/);
+  assert.doesNotMatch(result, /长期美债/);
+  for (const fetchedAt of [null, "2026-11-08T01:00:00Z", "2026-11-09T01:00:00Z"]) {
+    const old = market();
+    for (const asset of old.assets) asset.fetchedAt = fetchedAt;
+    assert.match(reading(marketOverviewHtml({ market: old, now: NOW })), /暂不生成市场解读/);
+  }
+});

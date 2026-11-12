@@ -137,6 +137,43 @@ function strengthSummary(assets, market, now) {
   return `<div class="strength-summary">${rows.map(([label, basis, result, change]) => `<div><div><span>${label}</span><small>${basis}</small></div><strong class="${sign(change)}">${result}${change === null ? " · 未核实" : ""}</strong></div>`).join("")}</div>`;
 }
 
+function marketReading(assets, market, period, now) {
+  const sessionDate = (asset, field) => typeof asset?.[field] === "string" && Number.isFinite(Date.parse(asset[field]))
+    ? new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(asset[field])) : null;
+  const cutoff = asset => sessionDate(asset, Object.hasOwn(asset, "returnsAsOf") ? "returnsAsOf" : "asOf");
+  const current = !market.stale && !["FAILED", "ERROR", "MISSING", "STALE"].includes(market.status) && market.lastAttempt?.status !== "FAILED";
+  const find = symbol => assets.find(asset => asset.symbol === symbol);
+  const usable = asset => current && asset?.status === "OK" && !asset.stale && asset.returnsSynchronized !== false
+    && sessionDate(asset, "asOf") !== null && Date.parse(asset.asOf) <= now.getTime() + 60_000
+    && now.getTime() - Date.parse(asset.asOf) <= 5 * 86_400_000
+    && typeof asset.fetchedAt === "string" && Number.isFinite(Date.parse(asset.fetchedAt))
+    && Date.parse(asset.fetchedAt) <= now.getTime() + 60_000 && now.getTime() - Date.parse(asset.fetchedAt) <= 45 * 60_000
+    && sessionDate(asset, "asOf") === cutoff(asset) && Number.isFinite(value(asset, `change${period}`));
+  const observed = symbol => usable(find(symbol)) ? find(symbol) : null;
+  const spy = observed("SPY"), qqq = observed("QQQ"), iwm = observed("IWM"), ai = observed("AIQ");
+  const change = asset => asset[`change${period}`];
+  const aligned = (left, right) => sessionDate(left, "asOf") === sessionDate(right, "asOf") && cutoff(left) === cutoff(right);
+  const movement = (label, amount) => Math.abs(amount) < 0.005 ? `${label}持平` : `${label}${amount > 0 ? "上涨" : "下跌"} ${number(Math.abs(amount))}%`;
+  const clauses = [];
+  if (spy) {
+    if (qqq && iwm && aligned(spy, qqq) && aligned(spy, iwm)) {
+      const moves = [spy, qqq, iwm].map(change);
+      clauses.push(moves.every(n => n > 0) ? "美股主要指数普涨" : moves.every(n => n < 0) ? "美股主要指数普跌"
+        : moves.every(n => n === 0) ? "美股主要指数持平" : "美股主要指数涨跌分化");
+    } else clauses.push(movement("标普 500 ", change(spy)));
+    if (ai && aligned(spy, ai)) {
+      const relative = change(ai) - change(spy);
+      clauses.push(Math.abs(relative) < 0.005 ? "AI 主题与标普持平" : `AI 主题${relative > 0 ? "跑赢" : "跑输"}标普 ${number(Math.abs(relative))} 个百分点`);
+    }
+  }
+  for (const [symbol, label] of [["TLT", "长期美债"], ["UUP", "美元"]]) {
+    const asset = observed(symbol);
+    if (asset) clauses.push(movement(label, change(asset)));
+  }
+  const sentence = clauses.length ? `近 ${parseInt(period, 10)} 个交易日，${clauses.join("；")}。` : "行情不足或已过期，暂不生成市场解读。";
+  return `<section class="market-reading" aria-label="一句话解读"><h2>一句话解读</h2><p>${escape(sentence)}</p><small>解读仅覆盖已核实标的 · 随所选区间更新</small></section>`;
+}
+
 function modelCards(signals, stale) {
   const direction = value => ({ UP: "向上", DOWN: "向下", FLAT: "持平" })[value] || "—";
   return `<section class="model-section"><div class="section-head"><div><p class="eyebrow">02 / TREND & VOLATILITY</p><h2>CTA 趋势与波动率观察</h2></div><p>仅模型 · 使用已收盘日线</p></div><div class="model-grid">${["SPY", "QQQ", "IWM"].map(symbol => {
@@ -181,12 +218,15 @@ body{background:#f4f5f9}main{max-width:1480px;padding:24px 28px 64px}.market-mas
 @media(max-width:760px){main{padding:20px 16px 45px}.market-masthead{padding:24px 22px 0;border-radius:16px}.hero h1{font-size:32px}.hero{margin-bottom:22px}.strength-summary{grid-template-columns:repeat(3,minmax(0,1fr))}.strength-summary>div{padding:16px 10px}.strength-summary>div+div{border-top:0;border-left:1px solid #3a455f}.strength-summary>div>div{display:block}.strength-summary small{margin-top:4px;font-size:9px}.strength-summary strong{font-size:21px}.heat-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.model-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:640px){main{padding:14px 12px 40px}.market-masthead{padding:22px 18px 0}.hero h1{font-size:29px}.hero h1 span{margin-left:5px}.lead{max-width:28ch}.strength-summary{grid-template-columns:1fr}.strength-summary>div{padding:13px 0;display:flex;align-items:center;justify-content:space-between;gap:8px}.strength-summary>div+div{border-left:0;border-top:1px solid #3a455f}.strength-summary>div>div{display:block}.strength-summary strong{font-size:23px;margin:0}.strength-summary small{font-size:10px}.heat-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.heat-tile{min-height:177px;padding:14px 12px 9px}.tile-return{font-size:27px}.tile-head h3{max-width:100%}.section-head{gap:8px;align-items:center}.section-head h2{font-size:19px}.periods a{padding:7px 9px;min-height:36px}.scope-note{font-size:10px}.model-grid{grid-template-columns:1fr}.model-metrics>div{display:flex}.directions{justify-content:flex-start;gap:30px}.report-card{padding:22px}.model-metrics strong{margin:0}.market-section,.model-section{margin-top:24px}}
 @media(max-width:640px){.market-masthead .updated{white-space:normal;line-height:1.9}.market-masthead .updated strong{display:block}.quote-details summary{min-height:44px;display:flex;align-items:center;justify-content:flex-end}}
+.market-reading{padding:18px 0 22px;border-top:1px solid #3a455f;overflow-wrap:anywhere}.market-reading h2{font-size:12px;color:#b6c6ff;margin-bottom:8px}.market-reading p{font-size:16px;line-height:1.8;color:#f4f6ff;max-width:100ch}.market-reading small{display:block;font-size:10px;color:#aebbd6;margin-top:8px}
+@media(max-width:640px){.market-reading p{font-size:14px}}
 @media(prefers-reduced-motion:reduce){.heat-tile{transition:none}}
 </style></head><body>${siteHeader("/market", "", { theme })}<main>
 <div class="market-masthead"><header class="hero"><div><p class="eyebrow">MARKET PULSE</p><h1>资本市场<span>温度</span></h1><p class="lead">从跨资产到美股与 AI，用价格与趋势观察市场强弱。</p></div><div class="updated">最近采集 · 北京时间<strong>${time(market.generatedAt)}</strong><span>公开行情可能延迟 · 每 15 分钟采集<br>页面每 5 分钟刷新</span></div></header>
 ${market.status === "ERROR" ? `<aside class="notice"><strong>行情读取暂不可用</strong><p>${escape(market.error || "等待下一次有效更新。")}</p></aside>` : ""}
 ${failed ? '<aside class="notice"><strong>最近采集失败</strong><p>保留的报价与走势沿用原始时间，请核对各标的状态。</p></aside>' : market.status === "PARTIAL" ? '<aside class="notice"><strong>部分数据未更新</strong><p>可用标的照常展示，失败或缓存状态逐项标注。</p></aside>' : ""}
 ${assets.length && (market.stale || market.status === "STALE") ? '<aside class="notice"><strong>行情已陈旧</strong><p>这些数据保留原行情时点，不代表当前可交易价格。</p></aside>' : ""}
+${marketReading(assets, market, selected, now)}
 ${strengthSummary(assets, market, now)}</div><div class="overview-layout"><div class="market-main">
 <section class="market-section"><div class="section-head"><div><p class="eyebrow">01 / ASSET PERFORMANCE</p><h2>市场热力</h2></div><nav class="periods" aria-label="收益观察区间">${[["1d", "1 日"], ["5d", "5 日"], ["20d", "20 日"]].map(([key, label]) => `<a href="?period=${key}"${selected === key ? ' aria-current="true"' : ""}>${label}</a>`).join("")}</nav></div><p class="scope-note"><strong>收益强弱代理，不代表真实资金净流入/净流出。</strong> 等面积卡片，颜色表示所选区间收益；绿涨红跌。</p>
 ${assets.length ? groups.map(([label, members]) => {

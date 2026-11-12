@@ -1,7 +1,7 @@
 // One list for the Dashboard release. stage.mjs, the loader, and the hook all import it.
 export const hookModules = [
   "personal-assets-core.mjs", "personal-assets.mjs", "personal-assets-html.mjs", "personal-assets-client.mjs",
-  "personal-assets-routes.mjs", "site-shell.mjs", "personal-assets-sync.mjs", "personal-assets-okx.mjs",
+  "personal-assets-routes.mjs", "site-shell.mjs", "dashboard-login-html.mjs", "personal-assets-sync.mjs", "personal-assets-okx.mjs",
   "personal-assets-futu.mjs", "personal-assets-fx.mjs", "personal-assets-polymarket.mjs", "personal-assets-wallets.mjs",
   "personal-assets-ai.mjs", "personal-assets-funds.mjs", "crypto-watch.mjs", "crypto-watch-html.mjs", "crypto-news.mjs",
   "market-overview.mjs", "market-overview-html.mjs", "digital-currency-html.mjs", "okx-agentic-status.mjs",
