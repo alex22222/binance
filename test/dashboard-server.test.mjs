@@ -342,7 +342,9 @@ test("dashboard protects public access with basic auth and an exact HTTPS origin
       DASHBOARD_WALLET_BALANCE_DISABLED: "1",
       DASHBOARD_USERNAME: "operator",
       DASHBOARD_PASSWORD: "server-secret",
-      DASHBOARD_PUBLIC_ORIGIN: publicOrigin
+      DASHBOARD_PUBLIC_ORIGIN: publicOrigin,
+      OKX_DESK_LEDGER_PATH: resolve("fixtures/okx-desk/shadow-log.sample.md"),
+      OKX_DESK_REPORTS_DIR: directory
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -388,6 +390,20 @@ test("dashboard protects public access with basic auth and an exact HTTPS origin
     assert.equal((await fetch(`${origin}/api/weekly-strategy`)).status, 401);
     assert.equal((await fetch(`${origin}/api/strategy-research`)).status, 401);
     assert.equal((await fetch(`${origin}/api/strategy-research`, { headers: { Authorization: authorization } })).status, 200);
+
+    const deskEntry = await fetch(`${origin}/crypto/desk?shift=2026-11-12T09:00`, { redirect: "manual" });
+    assert.equal(deskEntry.status, 303);
+    assert.equal(deskEntry.headers.get("location"), "/login");
+    assert.equal((await fetch(`${origin}/api/crypto/desk`)).status, 401);
+    const deskPage = await fetch(`${origin}/crypto/desk?shift=2026-11-12T09:00`, { headers: { Authorization: authorization } });
+    assert.equal(deskPage.status, 200);
+    assert.match(deskPage.headers.get("content-security-policy"), /default-src 'none'/);
+    assert.doesNotMatch(deskPage.headers.get("content-security-policy"), /script-src/);
+    const deskHtml = await deskPage.text();
+    assert.match(deskHtml, /aria-current="page">交易过程</);
+    assert.match(deskHtml, /ONDO-USDT-SWAP/);
+    assert.match(deskHtml, /评分<\/dt><dd>5<\/dd>/);
+    assert.doesNotMatch(deskHtml, /<script|<form|下单按钮/);
 
     const reviewEntry = await fetch(`${origin}/reviews?period=7d`, { redirect: "manual" });
     assert.equal(reviewEntry.status, 303);

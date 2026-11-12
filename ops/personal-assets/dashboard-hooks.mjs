@@ -6,7 +6,8 @@ const MODULES = [
   "market-overview.mjs", "market-overview-html.mjs",
   "digital-currency-html.mjs", "okx-agentic-status.mjs", "okx-agentic-html.mjs",
   "agentic-wallet-overview.mjs", "agentic-wallet-html.mjs", "agentic-wallet-client.mjs",
-  "strategy-research.mjs", "strategy-lab-html.mjs", "strategy-daily.mjs", "fund-manager-html.mjs"
+  "strategy-research.mjs", "strategy-lab-html.mjs", "strategy-daily.mjs", "fund-manager-html.mjs",
+  "okx-desk-ledger.mjs", "okx-desk-html.mjs"
 ];
 
 let source;

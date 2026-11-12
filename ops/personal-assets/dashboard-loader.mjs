@@ -14,7 +14,8 @@ const releaseFiles = [
   "src/market-overview.mjs", "src/market-overview-html.mjs",
   "src/digital-currency-html.mjs", "src/okx-agentic-status.mjs", "src/okx-agentic-html.mjs",
   "src/agentic-wallet-overview.mjs", "src/agentic-wallet-html.mjs", "src/agentic-wallet-client.mjs",
-  "src/strategy-research.mjs", "src/strategy-lab-html.mjs", "src/strategy-daily.mjs", "src/fund-manager-html.mjs"
+  "src/strategy-research.mjs", "src/strategy-lab-html.mjs", "src/strategy-daily.mjs", "src/fund-manager-html.mjs",
+  "src/okx-desk-ledger.mjs", "src/okx-desk-html.mjs"
 ];
 
 export async function verifyPersonalAssetsRelease(directory, { metadata = lstat } = {}) {

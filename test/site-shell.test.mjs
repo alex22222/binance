@@ -55,8 +55,8 @@ test("digital currency groups the combined BTC and favorites page with GMGN", ()
   const menu = siteHeader("/assets").match(/<details class="site-group"><summary>数字货币<\/summary><div class="site-submenu">([\s\S]*?)<\/div><\/details>/)?.[1];
   assert.ok(menu);
   assert.deepEqual([...menu.matchAll(/<a href="([^"]+)">([^<]+)<\/a>/g)].map(([, href, label]) => [href, label]),
-    [["/crypto", "BTC 与收藏"], ["/gmgn/", "GMGN"]]);
-  for (const active of ["/crypto", "/gmgn/"]) {
+    [["/crypto", "BTC 与收藏"], ["/crypto/desk", "交易过程"], ["/gmgn/", "GMGN"]]);
+  for (const active of ["/crypto", "/crypto/desk", "/gmgn/"]) {
     const html = siteHeader(active);
     assert.match(html, new RegExp(`<details class="site-group is-current"><summary>数字货币</summary>[^]*<a href="${active}" aria-current="page">`), active);
     assert.equal(html.match(/site-group is-current/g)?.length, 1, active);
