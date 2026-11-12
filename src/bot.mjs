@@ -48,9 +48,11 @@ import {
 import { retry } from "./retry.mjs";
 import { buildBawEnvironment } from "./baw-runtime.mjs";
 import {
+  automaticApprovalDecision,
   createApprovalRequest,
   recordApprovalDecision
 } from "./approvals.mjs";
+import { cycleWorkItem } from "./cycle-plan.mjs";
 import { readApprovalControl } from "./approval-control.mjs";
 import { feishuMessageWithDashboardLink } from "./feishu-message.mjs";
 import {
@@ -261,14 +263,33 @@ async function weeklyEtfDecisionForNow(state, nowMs = Date.now()) {
   const window = weeklyEtfLiveDecisionWindow(nowMs, state.weeklyEtfLive);
   if (window.decisionUsable) return window.decision;
   if (!window.canCreateDecision) return null;
-  const { signal } = await loadWeeklyEtfDefensiveSignal(window.plan.date);
+  let loaded;
+  try {
+    loaded = await loadWeeklyEtfDefensiveSignal(window.plan.date);
+  } catch (error) {
+    await traceAction("weekly_etf_live_decision", "missing", {
+      week: window.week,
+      sessionDate: window.plan.date,
+      error: error.message
+    }, currentCycleId);
+    return null;
+  }
+  const { signal, check } = loaded;
+  if (check.status !== "matched") {
+    await traceAction("weekly_etf_live_decision", "data_check", {
+      week: window.week,
+      sessionDate: window.plan.date,
+      status: check.status
+    }, currentCycleId);
+  }
   const decision = {
     signalDate: signal.signalDate,
     target: signal.target,
     candidates: signal.candidates,
     allRiskAssets: signal.allRiskAssets,
     defensiveAsset: signal.defensiveAsset,
-    absoluteMomentumRequired: true
+    absoluteMomentumRequired: true,
+    dataCheck: check.status
   };
   state.weeklyEtfLive = {
     strategyId: WEEKLY_ETF_DEFENSIVE_STRATEGY_ID,
@@ -946,24 +967,28 @@ async function requestTradeApproval(config, state, statePath, details) {
   const approvalControl = await readApprovalControl(
     resolve(dirname(statePath), "approval-control.json")
   );
-  if (approvalControl.enabled) {
-    const decision = {
-      approvalId: request.approvalId,
-      decision: "APPROVE",
-      dyorAcknowledged: true,
-      auditUnavailableAcknowledged: request.audit?.status === "OFFICIAL_RWA_UNSUPPORTED_ACKNOWLEDGED",
-      decidedAt: new Date().toISOString()
-    };
+  const autoDecision = automaticApprovalDecision(request, {
+    enabled: approvalControl.enabled,
+    decidedAt: new Date().toISOString()
+  });
+  if (autoDecision) {
     await recordApprovalDecision(
       resolve(projectRoot, config.approvalDecisionDirectory),
       request,
-      decision
+      autoDecision
     );
     await traceAction("trade_approval", "auto_approved", {
       approvalId: request.approvalId,
       side: request.side,
       symbol: request.symbol,
       appliesAfterRevalidation: true
+    }, currentCycleId);
+  } else if (approvalControl.enabled) {
+    await traceAction("trade_approval", "audit_confirmation_required", {
+      approvalId: request.approvalId,
+      side: request.side,
+      symbol: request.symbol,
+      audit: request.audit?.status || null
     }, currentCycleId);
   }
   const valueLine = request.side === "BUY"
@@ -985,9 +1010,11 @@ async function requestTradeApproval(config, state, statePath, details) {
       `审计: ${request.audit?.riskLevel || request.audit?.status || "TRUSTED_TARGET"}`,
       `确认截止: ${request.expiresAt}`,
       `审批编号: ${request.approvalId}`,
-      approvalControl.enabled
+      autoDecision
         ? "自动审批已记录；Bot 将在下一周期重新验证全部条件后决定是否执行。"
-        : "请打开手机 Dashboard 查看完整数据并逐笔确认。真实链上交易不可撤销，请先自行研究（DYOR）。"
+        : approvalControl.enabled
+          ? "自动审批未记录：该标的没有可用安全审计，请打开 Dashboard 逐笔确认。"
+          : "请打开手机 Dashboard 查看完整数据并逐笔确认。真实链上交易不可撤销，请先自行研究（DYOR）。"
     ].join("\n")
   );
   return request;
@@ -2893,9 +2920,10 @@ async function cycle(config, state, statePath, emergencyStopPath) {
     await checkSessionExpiry(config, state);
     await refreshWalletBalance(state, statePath);
 
-    if (state.pendingOrder) {
+    const workItem = cycleWorkItem(state);
+    if (workItem === "pending-order") {
       await finalizePendingOrder(config, state, statePath);
-    } else if (state.approvalRequest) {
+    } else if (workItem === "approval") {
       await processTradeApproval(config, state, statePath, emergencyStopPath);
     } else {
       let monitoringError = null;

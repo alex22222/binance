@@ -75,6 +75,34 @@ async function fetchYahooAdjustedDaily(ticker, sessionDate, fetchImpl) {
   })).filter(({ date, close }) => date < sessionDate && Number.isFinite(close) && close > 0);
 }
 
+function stooqSymbol(ticker) {
+  return `${String(ticker).toLowerCase()}.us`;
+}
+
+async function fetchStooqDaily(ticker, sessionDate, fetchImpl) {
+  const url = new URL("https://stooq.com/q/d/l/");
+  url.searchParams.set("s", stooqSymbol(ticker));
+  url.searchParams.set("i", "d");
+  const response = await fetchImpl(url, { signal: AbortSignal.timeout(30_000) });
+  if (!response.ok) throw new Error(`Stooq daily HTTP ${response.status}: ${ticker}`);
+  const rows = String(await response.text()).trim().split(/\r?\n/).slice(1);
+  return rows.map((line) => {
+    const [date, , , , close] = line.split(",");
+    return { date, close: Number(close) };
+  }).filter(({ date, close }) => date && date < sessionDate && Number.isFinite(close) && close > 0);
+}
+
+// The second source never selects the weekly target. It only says whether Yahoo's last close agrees.
+export function compareWeeklyCloses(primarySeries, secondarySeries) {
+  const primary = primarySeries?.at(-1) || null;
+  const secondary = secondarySeries?.at(-1) || null;
+  if (!primary?.date) return { status: "missing", primaryDate: null, secondaryDate: secondary?.date || null };
+  if (!secondary?.date) return { status: "unavailable", primaryDate: primary.date, secondaryDate: null };
+  if (primary.date !== secondary.date) return { status: "diverged", primaryDate: primary.date, secondaryDate: secondary.date };
+  const gap = Math.abs(primary.close - secondary.close) / primary.close;
+  return { status: gap > 0.02 ? "diverged" : "matched", primaryDate: primary.date, secondaryDate: secondary.date };
+}
+
 export async function loadWeeklyEtfDefensiveSignal(sessionDate, { fetchImpl = fetch } = {}) {
   const tickers = [
     ...WEEKLY_ETF_ROTATION_UNIVERSE.riskTickers,
@@ -86,8 +114,25 @@ export async function loadWeeklyEtfDefensiveSignal(sessionDate, { fetchImpl = fe
   ])));
   const signal = weeklyEtfDefensiveSignal(seriesByTicker, {}, WEEKLY_ETF_ROTATION_UNIVERSE);
   const expectedSignalDate = previousNyseTradingDate(sessionDate);
-  if (signal.signalDate !== expectedSignalDate) throw new Error("Stale weekly ETF signal date");
-  return { signal, seriesByTicker };
+  if (signal.signalDate !== expectedSignalDate) {
+    const error = new Error("Stale weekly ETF signal date");
+    error.code = "WEEKLY_DATA_MISSING";
+    throw error;
+  }
+  const checks = [];
+  for (const ticker of tickers) {
+    try {
+      checks.push(compareWeeklyCloses(seriesByTicker[ticker], await fetchStooqDaily(ticker, sessionDate, fetchImpl)));
+    } catch {
+      checks.push({ status: "unavailable", primaryDate: seriesByTicker[ticker]?.at(-1)?.date || null, secondaryDate: null, ticker });
+    }
+  }
+  const check = checks.some((item) => item.status === "diverged")
+    ? { status: "diverged", checks }
+    : checks.every((item) => item.status === "matched")
+      ? { status: "matched", checks }
+      : { status: "unavailable", checks };
+  return { signal, seriesByTicker, check };
 }
 
 export function weeklyEtfLiveExitDecision({

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   approvalDecisionStatus,
+  automaticApprovalDecision,
   createApprovalRequest,
   loadApprovalDecision,
   recordApprovalDecision
@@ -49,14 +50,26 @@ test("accepts only a fresh, matching, explicit DYOR approval", () => {
     approvalId: request.approvalId,
     decision: "APPROVE",
     dyorAcknowledged: true,
+    auditUnavailableAcknowledged: true,
     decidedAt: "2026-07-24T13:01:00.000Z"
   };
 
   assert.equal(approvalDecisionStatus(request, null, Date.parse("2026-07-24T13:01:00.000Z")).status, "WAITING");
   assert.equal(approvalDecisionStatus(request, approved, Date.parse("2026-07-24T13:01:01.000Z")).status, "APPROVED");
+  assert.equal(approvalDecisionStatus(request, { ...approved, auditUnavailableAcknowledged: false }, Date.parse("2026-07-24T13:01:01.000Z")).status, "INVALID");
   assert.equal(approvalDecisionStatus(request, { ...approved, dyorAcknowledged: false }, Date.parse("2026-07-24T13:01:01.000Z")).status, "INVALID");
   assert.equal(approvalDecisionStatus(request, { ...approved, approvalId: "aaaaaaaaaaaaaaaaaaaaaaaa" }, Date.parse("2026-07-24T13:01:01.000Z")).status, "INVALID");
   assert.equal(approvalDecisionStatus(request, approved, Date.parse("2026-07-24T13:05:01.000Z")).status, "EXPIRED");
+});
+
+test("automatic approval leaves an unavailable audit for the Dashboard", () => {
+  const request = createApprovalRequest(order, { createdAt: "2026-07-24T13:00:00.000Z", ttlSeconds: 300 });
+  assert.equal(automaticApprovalDecision(request, { enabled: true, decidedAt: "2026-07-24T13:01:00.000Z" }), null);
+  const tradable = createApprovalRequest({ ...order, audit: { status: "LOW_RISK" } }, { createdAt: "2026-07-24T13:00:00.000Z", ttlSeconds: 300 });
+  const decision = automaticApprovalDecision(tradable, { enabled: true, decidedAt: "2026-07-24T13:01:00.000Z" });
+  assert.equal(decision.decision, "APPROVE");
+  assert.equal(decision.auditUnavailableAcknowledged, false);
+  assert.equal(automaticApprovalDecision(tradable, { enabled: false, decidedAt: "2026-07-24T13:01:00.000Z" }), null);
 });
 
 test("records an approval decision once and refuses replacement", async () => {
@@ -69,6 +82,7 @@ test("records an approval decision once and refuses replacement", async () => {
     approvalId: request.approvalId,
     decision: "APPROVE",
     dyorAcknowledged: true,
+    auditUnavailableAcknowledged: true,
     decidedAt: "2026-07-24T13:01:00.000Z"
   };
 

@@ -13,6 +13,8 @@ import { fetchNasdaqStockQuote } from "../src/theoretical-price.mjs";
 import { createAvailableUsdtLoader } from "../src/wallet-balance.mjs";
 import { liveDashboardHtml } from "../src/live-dashboard-html.mjs";
 import { dashboardLoginHtml } from "../src/dashboard-login-html.mjs";
+import { createLoginLimiter, loginClientKey } from "../src/dashboard-login-limit.mjs";
+import { dashboardHealth } from "../src/dashboard-health.mjs";
 import { strategyLabHtml } from "../src/strategy-lab-html.mjs";
 import { loadStrategyResearch, tradeLedgerPath } from "../src/strategy-research.mjs";
 import { tradeReviewHtml } from "../src/trade-review-html.mjs";
@@ -55,6 +57,7 @@ const tradeReviewDirectory = resolve(
 );
 const btcRadarDirectory = resolve(projectRoot, process.env.BTC_RADAR_DIR || "state/btc-radar");
 const personalAssetsDirectory = resolve(projectRoot, process.env.PERSONAL_ASSETS_DIR || "state");
+const loginLimiter = createLoginLimiter();
 
 async function executeBaw(args) {
   let stdout;
@@ -209,7 +212,30 @@ const server = createServer(async (request, response) => {
         return;
       }
       const body = await readFormBody(request);
+      const client = loginClientKey(request);
+      if (loginLimiter.blocked(client)) {
+        response.writeHead(429, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Retry-After": "900",
+          "Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+          "X-Content-Type-Options": "nosniff"
+        });
+        response.end(dashboardLoginHtml({ limited: true }));
+        return;
+      }
       if (!dashboardCredentialsAuthorized(body.get("username"), body.get("password"), authConfig)) {
+        if (loginLimiter.recordFailure(client)) {
+          response.writeHead(429, {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Retry-After": "900",
+            "Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+            "X-Content-Type-Options": "nosniff"
+          });
+          response.end(dashboardLoginHtml({ limited: true }));
+          return;
+        }
         response.writeHead(401, {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store",
@@ -219,6 +245,7 @@ const server = createServer(async (request, response) => {
         response.end(dashboardLoginHtml({ invalid: true }));
         return;
       }
+      loginLimiter.recordSuccess(client);
       response.writeHead(303, {
         "Location": "/",
         "Set-Cookie": dashboardSessionCookie(authConfig, Date.now(), { remember: body.get("remember") === "1" }),
@@ -257,7 +284,9 @@ const server = createServer(async (request, response) => {
         "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff"
       });
-      response.end(JSON.stringify({ status: "ok" }));
+      response.end(JSON.stringify(await dashboardHealth({
+        readIdentity: () => readFile("/opt/binance-agentic-authorization/current/release.json", "utf8")
+      })));
       return;
     }
     if (request.method === "GET" && request.url === "/") {
@@ -583,7 +612,10 @@ const server = createServer(async (request, response) => {
       const body = await readJsonBody(request);
       const config = await loadConfig();
       const approvalControl = await readApprovalControl(approvalControlPath(config));
-      if (approvalControl.enabled) {
+      const state = JSON.parse(await readFile(resolve(projectRoot, config.stateFile), "utf8"));
+      const approval = state.approvalRequest;
+      const auditUnavailable = approval?.audit?.status === "OFFICIAL_RWA_UNSUPPORTED_ACKNOWLEDGED";
+      if (approvalControl.enabled && !auditUnavailable) {
         response.writeHead(409, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
         response.end(JSON.stringify({
           success: false,
@@ -591,8 +623,6 @@ const server = createServer(async (request, response) => {
         }));
         return;
       }
-      const state = JSON.parse(await readFile(resolve(projectRoot, config.stateFile), "utf8"));
-      const approval = state.approvalRequest;
       if (!approval || body.approvalId !== approval.approvalId) {
         response.writeHead(409, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
         response.end(JSON.stringify({ success: false, error: "Approval request is no longer current" }));
@@ -604,7 +634,6 @@ const server = createServer(async (request, response) => {
         response.end(JSON.stringify({ success: false, error: "Exact trade confirmation required" }));
         return;
       }
-      const auditUnavailable = approval.audit?.status === "OFFICIAL_RWA_UNSUPPORTED_ACKNOWLEDGED";
       if (body.decision === "APPROVE" && auditUnavailable && body.auditUnavailableAcknowledged !== true) {
         response.writeHead(400, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
         response.end(JSON.stringify({ success: false, error: "Explicit acknowledgment of unavailable security audit required" }));

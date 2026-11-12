@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  compareWeeklyCloses,
   loadWeeklyEtfDefensiveSignal,
   weeklyEtfLiveDecisionWindow,
   weeklyEtfLiveExitDecision
@@ -16,13 +17,23 @@ test("Live data collection and ranking require only QQQ, SPY and SGOV", async ()
   const fetched = [];
   const dates = Array.from({ length: 30 }, (_, i) => Date.parse("2026-08-01") / 1000 + i * 86400);
   dates[29] = Date.parse("2026-09-18") / 1000;
-  const { signal } = await loadWeeklyEtfDefensiveSignal("2026-09-21", { fetchImpl: async (url) => {
-    fetched.push(new URL(url).pathname.split("/").at(-1));
+  const { signal, check } = await loadWeeklyEtfDefensiveSignal("2026-09-21", { fetchImpl: async (url) => {
+    const parsed = new URL(url);
+    if (parsed.hostname.endsWith("yahoo.com")) fetched.push(parsed.pathname.split("/").at(-1));
     return { ok: true, json: async () => ({ chart: { result: [{ timestamp: dates,
       indicators: { adjclose: [{ adjclose: dates.map((_, i) => 100 + i) }] } }] } }) };
   } });
+  assert.equal(check.status, "unavailable");
   assert.deepEqual(fetched.sort(), ["QQQ", "SGOV", "SPY"]);
   assert.deepEqual(signal.allRiskAssets.map(a => a.ticker), ["QQQ", "SPY"]);
+});
+
+test("a second close source can disagree without changing the Yahoo target", () => {
+  const primary = [{ date: "2026-09-18", close: 100 }];
+  assert.equal(compareWeeklyCloses(primary, [{ date: "2026-09-18", close: 101 }]).status, "matched");
+  assert.equal(compareWeeklyCloses(primary, [{ date: "2026-09-17", close: 100 }]).status, "diverged");
+  assert.equal(compareWeeklyCloses(primary, []).status, "unavailable");
+  assert.equal(compareWeeklyCloses([], primary).status, "missing");
 });
 
 test("creates a weekly decision only during the first NYSE session but can finish a cached rotation later", () => {
