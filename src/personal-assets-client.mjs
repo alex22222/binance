@@ -543,12 +543,30 @@ function stockPnlAccounts() {
   return portfolio().accounts.filter(account => !pendingAccount(account) && ((portfolio().stockPnl || []).some(row => row.accountId === account.id)
     || portfolio().entries.some(row => row.accountId === account.id && ["股票", "股票ETF", "永续合约"].includes(row.category))));
 }
+function pnlAccountChart(summary) {
+  if (hidden) return '<div class="privacy-mask">盈亏图表与金额已隐藏</div>';
+  const pnl = summary.stockPnl;
+  const counted = new Set([...summary.included, ...summary.missing].map(row => row.accountId));
+  const rows = stockPnlAccounts().filter(account => counted.has(account.id)).map(account => {
+    const row = [...pnl.included, ...pnl.missing].find(item => item.accountId === account.id);
+    const value = row && pnl.included.includes(row) ? displayValue(row.amount * (row.currency === "CNY" ? 1 : portfolio().rates[row.currency].value)) : null;
+    const reason = !row ? "尚未提供盈亏" : pnl.missing.includes(row) ? "缺汇率，暂不绘图" : `${displayCurrency} 汇率不可用，暂不绘图`;
+    return { account, row, value, reason };
+  }).sort((a, b) => (b.value === null ? -1 : Math.abs(b.value)) - (a.value === null ? -1 : Math.abs(a.value)));
+  const maximum = Math.max(0, ...rows.map(item => Math.abs(item.value ?? 0)));
+  return `<figure class="pnl-chart" aria-label="账户浮动盈亏对比"><figcaption><h3>账户盈亏对比</h3><p class="muted small">统一折合 ${displayCurrency} · 按绝对金额排序 · 非同一时点收益，不代表收益率或历史趋势</p></figcaption><div class="pnl-chart-axis" aria-hidden="true"><span>← 亏损</span><span>0</span><span>盈利 →</span></div>${rows.length ? `<ul class="pnl-chart-list">${rows.map(({ account, row, value, reason }) => {
+    const tone = value < 0 ? "negative" : value > 0 ? "positive" : "";
+    const width = maximum ? Math.abs(value ?? 0) / maximum * 50 : 0;
+    const status = value < 0 ? "亏损" : value > 0 ? "盈利" : "持平";
+    return `<li class="pnl-chart-row"><div class="pnl-chart-label"><strong>${escape(account.name)}</strong><span class="num ${tone}">${value === null ? escape(reason) : `${status} ${displayCurrency} ${value > 0 ? "+" : ""}${number(value)}`}</span></div>${value === null ? "" : `<div class="pnl-chart-track" aria-hidden="true">${value === 0 ? '<span class="pnl-chart-zero"></span>' : `<span class="pnl-chart-bar ${tone}" style="left:${value < 0 ? 50 - width : 50}%;width:${width}%"></span>`}</div>`}${row ? `<p class="muted small">${escape(row.asOf)} · ${row.scope === "perpetuals" ? "永续合约未实现盈亏" : row.estimated ? "固定股数收盘估算" : sourceName(row.source)}${row.asOfBasis === "imported" ? row.source === "api" ? " · 源时点未提供" : " · 截图时点未核实" : ""}</p>` : ""}</li>`;
+  }).join("")}</ul>` : '<p class="empty small">尚无可绘制的账户盈亏；缺失数据不按零展示。</p>'}<p class="muted small pnl-chart-note">条形共用同一线性刻度，零点居中；小额盈亏请以金额标签为准。来源与原币金额见下方明细。</p></figure>`;
+}
 function stockPnlPanel(summary) {
   const pnl = summary.stockPnl;
   const rows = [...pnl.included, ...pnl.missing];
   const value = displayValue(pnl.total);
   const perps = rows.some(row => row.scope === "perpetuals") || portfolio().entries.some(row => row.category === "永续合约");
-  return `<div class="stock-pnl"><div class="row"><span class="metric-label">${perps ? "持仓浮动盈亏" : "股票浮动盈亏"} · 已记录部分</span><button class="button small quiet" data-action="stock-pnl">更新盈亏</button></div><div class="stock-pnl-value num${!hidden && value < 0 ? " negative" : !hidden && value > 0 ? " positive" : ""}">${displayCurrency} ${!hidden && value > 0 ? "+" : ""}${number(value)}</div><p class="metric-foot">已含在当前市值中，不重复加减 · ${pnl.included.length} / ${stockPnlAccounts().length} 个${perps ? "持仓" : "股票"}账户已提供${pnl.missing.length ? ` · ${pnl.missing.length} 个缺汇率` : ""}</p><details class="pnl-sources"><summary>查看盈亏来源与日期</summary>${hidden ? '<p class="muted small">盈亏明细已隐藏。</p>' : rows.length ? rows.map(row => `<div class="pnl-source"><span>${escape(portfolio().accounts.find(account => account.id === row.accountId)?.name)}<small>${row.scope === "perpetuals" ? "永续合约未实现盈亏（不含预测市场收益）" : row.estimated ? "固定股数收盘估算" : sourceName(row.source)} · ${escape(row.asOf)}${row.asOfBasis === "imported" ? row.source === "api" ? "（读取日期，源盈亏时点未提供）" : "（导入日期，截图时点未核实）" : "（盈亏记录日）"}${row.observedAt ? ` · 来源时点 ${escape(dateTime(row.observedAt))}` : ""}${row.fetchedAt ? ` · 成功读取 ${escape(dateTime(row.fetchedAt))}` : ""}${row.estimated ? ` · 成本基准 ${escape(row.currency)} ${number(row.costBasis)}（未含后续分红、费用或成本调整）` : ""}</small></span><span class="num">${escape(row.currency)} ${number(row.amount)}</span></div>`).join("") : '<p class="muted small">尚未提供股票盈亏；缺失值不按零统计。</p>'}</details></div>`;
+  return `<div class="stock-pnl"><div class="row"><span class="metric-label">${perps ? "持仓浮动盈亏" : "股票浮动盈亏"} · 已记录部分</span><button class="button small quiet" data-action="stock-pnl">更新盈亏</button></div><div class="stock-pnl-value num${!hidden && value < 0 ? " negative" : !hidden && value > 0 ? " positive" : ""}">${displayCurrency} ${!hidden && value > 0 ? "+" : ""}${number(value)}</div><p class="metric-foot">已含在当前市值中，不重复加减 · ${pnl.included.length} / ${stockPnlAccounts().length} 个${perps ? "持仓" : "股票"}账户已提供${pnl.missing.length ? ` · ${pnl.missing.length} 个缺汇率` : ""}</p>${pnlAccountChart(summary)}<details class="pnl-sources"><summary>查看盈亏来源与日期</summary>${hidden ? '<p class="muted small">盈亏明细已隐藏。</p>' : rows.length ? rows.map(row => `<div class="pnl-source"><span>${escape(portfolio().accounts.find(account => account.id === row.accountId)?.name)}<small>${row.scope === "perpetuals" ? "永续合约未实现盈亏（不含预测市场收益）" : row.estimated ? "固定股数收盘估算" : sourceName(row.source)} · ${escape(row.asOf)}${row.asOfBasis === "imported" ? row.source === "api" ? "（读取日期，源盈亏时点未提供）" : "（导入日期，截图时点未核实）" : "（盈亏记录日）"}${row.observedAt ? ` · 来源时点 ${escape(dateTime(row.observedAt))}` : ""}${row.fetchedAt ? ` · 成功读取 ${escape(dateTime(row.fetchedAt))}` : ""}${row.estimated ? ` · 成本基准 ${escape(row.currency)} ${number(row.costBasis)}（未含后续分红、费用或成本调整）` : ""}</small></span><span class="num">${escape(row.currency)} ${number(row.amount)}</span></div>`).join("") : '<p class="muted small">尚未提供股票盈亏；缺失值不按零统计。</p>'}</details></div>`;
 }
 function openStockPnl() {
   stockPnlDraft ??= Object.fromEntries(stockPnlAccounts().map(account => {

@@ -614,6 +614,59 @@ test("PnL tab keeps missing amounts unknown rather than inventing zero", async (
   assert.doesNotMatch(ui.get("asset-content").innerHTML, /CNY 0\.00/);
 });
 
+test("PnL chart compares converted signed amounts on a common zero baseline without changing assets", async () => {
+  const initial = stateWith([entry({ category: "股票", amount: 500 })]);
+  initial.portfolio.accounts.push({ ...initial.portfolio.accounts[0], id: "gain", name: "盈利账户" }, { ...initial.portfolio.accounts[0], id: "zero", name: "零盈亏账户" });
+  initial.portfolio.entries.push(entry({ id: "gain-entry", accountId: "gain" }), entry({ id: "zero-entry", accountId: "zero" }));
+  initial.portfolio.rates.USD = { value: 5, date: entry().asOf };
+  initial.portfolio.stockPnl = [
+    { accountId: "account-1", amount: -100, currency: "CNY", asOf: entry().asOf, source: "manual" },
+    { accountId: "gain", amount: 10, currency: "USD", asOf: entry().asOf, source: "api", asOfBasis: "imported" },
+    { accountId: "zero", amount: 0, currency: "CNY", asOf: entry().asOf, source: "manual" }
+  ];
+  const ui = await view(initial), requests = ui.requests.length, total = ui.run("summarize(portfolio()).total");
+  ui.run('page="pnl"; render()');
+  const html = ui.get("asset-content").innerHTML;
+  assert.match(html, /aria-label="账户浮动盈亏对比"/);
+  assert.match(html, /class="pnl-chart-bar negative" style="left:0%;width:50%"/);
+  assert.match(html, /class="pnl-chart-bar positive" style="left:50%;width:25%"/);
+  assert.match(html, /盈利 CNY \+50\.00/);
+  assert.match(html, /class="pnl-chart-zero"/);
+  assert.match(html, /持平 CNY 0\.00/);
+  assert.match(html, /非同一时点收益[\s\S]*源时点未提供/);
+  ui.run('displayCurrency="USD"; render()');
+  assert.match(ui.get("asset-content").innerHTML, /亏损 USD -20\.00/);
+  assert.match(ui.get("asset-content").innerHTML, /盈利 USD \+10\.00/);
+  ui.run('hidden=true; render()');
+  assert.match(ui.get("asset-content").innerHTML, /盈亏图表与金额已隐藏/);
+  assert.doesNotMatch(ui.get("asset-content").innerHTML, /pnl-chart-bar|pnl-chart-zero|亏损 USD|盈利 USD/);
+  assert.equal(ui.requests.length, requests);
+  assert.equal(ui.run("summarize(portfolio()).total"), total);
+  ui.run('hidden=false; state.portfolio.stockPnl.forEach(row => { row.amount=0; }); render()');
+  assert.equal((ui.get("asset-content").innerHTML.match(/class="pnl-chart-zero"/g) || []).length, 3);
+  assert.doesNotMatch(ui.get("asset-content").innerHTML, /pnl-chart-bar|NaN|Infinity/);
+});
+
+test("PnL chart excludes out-of-scope accounts and distinguishes missing FX and unreported PnL from zero", async () => {
+  const initial = stateWith([entry({ category: "股票", amount: 500 })]);
+  initial.portfolio.accounts.push({ ...initial.portfolio.accounts[0], id: "unreported", name: "未提供账户" }, { ...initial.portfolio.accounts[0], id: "excluded", name: "不计入账户" });
+  initial.portfolio.entries.push(entry({ id: "unreported-entry", accountId: "unreported", category: "股票" }));
+  initial.portfolio.stockPnl = [
+    { accountId: "account-1", amount: -25, currency: "USD", asOf: entry().asOf, source: "api" },
+    { accountId: "excluded", amount: 900, currency: "CNY", asOf: entry().asOf, source: "api" }
+  ];
+  delete initial.portfolio.rates.USD;
+  const ui = await view(initial);
+  ui.run('page="pnl"; render()');
+  const html = ui.get("asset-content").innerHTML;
+  assert.match(html, /缺汇率，暂不绘图/);
+  assert.match(html, /未提供账户[\s\S]*尚未提供盈亏/);
+  assert.doesNotMatch(html, /pnl-chart-bar|pnl-chart-zero|不计入账户|900\.00/);
+  ui.run('state.portfolio.rates.USD={value:5,date:currentDate()}; displayCurrency="HKD"; delete state.portfolio.rates.HKD; render()');
+  assert.match(ui.get("asset-content").innerHTML, /HKD 汇率不可用，暂不绘图/);
+  assert.doesNotMatch(ui.get("asset-content").innerHTML, /pnl-chart-bar|pnl-chart-zero/);
+});
+
 test("overview measures core and satellite against the 50/50 rule and keeps mixed records apart", async () => {
   const holding = (id, name, category, amount) => entry({ id, kind: "holding", name, category, amount });
   const initial = stateWith([
