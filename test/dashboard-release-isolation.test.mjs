@@ -8,31 +8,9 @@ import test from "node:test";
 import { stageDashboardRelease, sourceIdentity } from "../ops/dashboard-release/stage.mjs";
 import { decideRenewal, digest } from "../ops/auth-renewal/core.mjs";
 import { verifyPersonalAssetsRelease } from "../ops/personal-assets/dashboard-loader.mjs";
+import { releaseFiles as code, supportingFiles } from "../ops/personal-assets/dashboard-release-files.mjs";
 
 const hash = value => createHash("sha256").update(value).digest("hex");
-const code = ["dashboard-loader.mjs", "dashboard-hooks.mjs", "src/personal-assets-client.mjs",
-  "src/personal-assets-core.mjs", "src/personal-assets-html.mjs", "src/personal-assets-routes.mjs",
-  "src/personal-assets.mjs", "src/personal-assets-history.mjs", "src/site-shell.mjs", "src/personal-assets-sync.mjs",
-  "src/personal-assets-okx.mjs", "src/personal-assets-futu.mjs", "src/personal-assets-fx.mjs",
-  "src/personal-assets-polymarket.mjs", "src/personal-assets-wallets.mjs",
-  "src/personal-assets-ai.mjs", "src/personal-assets-funds.mjs",
-  "src/crypto-watch.mjs", "src/crypto-watch-html.mjs", "src/crypto-news.mjs", "src/market-overview.mjs", "src/market-overview-html.mjs",
-  "src/digital-currency-html.mjs", "src/okx-agentic-status.mjs", "src/okx-agentic-html.mjs",
-  "src/agentic-wallet-overview.mjs", "src/agentic-wallet-html.mjs", "src/agentic-wallet-client.mjs",
-  "src/strategy-research.mjs", "src/strategy-lab-html.mjs", "src/strategy-daily.mjs", "src/fund-manager-html.mjs",
-  "src/okx-desk-ledger.mjs", "src/okx-desk-html.mjs"];
-const supportingFiles = ["README.md", "docs/personal-assets-page.md",
-  "scripts/sync-personal-assets.mjs", "scripts/snapshot-personal-assets.mjs",
-  "deploy/binance-personal-assets-sync.service", "deploy/binance-personal-assets-sync.timer",
-  "deploy/binance-personal-assets-daily-snapshot.service", "deploy/binance-personal-assets-daily-snapshot.timer",
-  "scripts/run-crypto-watch.mjs", "deploy/binance-agentic-crypto-watch.service", "deploy/binance-agentic-crypto-watch.timer",
-  "docs/2026-10-31-crypto-watch.md", "docs/2026-11-08-market-landing.md",
-  "scripts/run-market-overview.mjs", "deploy/binance-agentic-market-overview.service", "deploy/binance-agentic-market-overview.timer",
-  "scripts/sync-okx-agentic-status.mjs", "scripts/receive-okx-agentic-status.mjs", "docs/2026-11-09-navigation-crypto-wallet.md",
-  "docs/2026-11-11-agentic-wallet-overview.md", "test/agentic-wallet-overview.test.mjs", "test/agentic-wallet-client.test.mjs", "test/agentic-wallet-server.test.mjs",
-  "scripts/record-strategy-daily.mjs", "deploy/binance-agentic-strategy-daily.service", "deploy/binance-agentic-strategy-daily.timer",
-  "docs/2026-11-11-strategy-daily-journal.md", "test/strategy-daily.test.mjs", "test/strategy-research.test.mjs", "test/strategy-lab-html.test.mjs", "test/fund-manager-html.test.mjs",
-  "fixtures/okx-desk/shadow-log.sample.md"];
 
 async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), "dashboard-release-isolation-"));

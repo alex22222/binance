@@ -1,5 +1,5 @@
-import { readFile, readdir } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Stage-1 OKX desk shadow log. The Obsidian file is the source of truth.
@@ -273,4 +273,52 @@ export async function loadOkxDeskLedger({
     reports,
     source: { kind, label, readAt: new Date().toISOString() }
   };
+}
+
+export function deskStoreDocument(ledger) {
+  return {
+    schemaVersion: 1,
+    source: ledger.source,
+    capital: ledger.capital,
+    status: ledger.status,
+    shifts: ledger.shifts,
+    loose: ledger.loose,
+    reports: ledger.reports
+  };
+}
+
+async function readDeskStore(path, readText) {
+  const parsed = JSON.parse(await readText(path, "utf8"));
+  if (parsed?.schemaVersion !== 1 || !Array.isArray(parsed.shifts)) throw new Error("Invalid desk store");
+  return parsed;
+}
+
+async function writeDeskStore(path, document) {
+  await mkdir(dirname(path), { recursive: true });
+  const text = `${JSON.stringify(document)}\n`;
+  const temporary = `${path}.${process.pid}.tmp`;
+  await writeFile(temporary, text, { mode: 0o600 });
+  await rename(temporary, path);
+}
+
+export async function syncOkxDeskStore(ledger, { stateDir, readText = readFile } = {}) {
+  if (!stateDir) return ledger;
+  const path = join(stateDir, "okx-desk", "shifts.json");
+  const document = deskStoreDocument(ledger);
+  if (ledger.source.kind === "unavailable") {
+    try {
+      const stored = await readDeskStore(path, readText);
+      return { ...stored, source: { ...stored.source, store: "saved" } };
+    } catch {
+      return ledger;
+    }
+  }
+  try {
+    const previous = await readText(path, "utf8").catch(() => "");
+    const next = `${JSON.stringify(document)}\n`;
+    if (previous !== next) await writeDeskStore(path, document);
+    return { ...document, source: { ...document.source, store: "current" } };
+  } catch {
+    return { ...document, source: { ...document.source, store: "unavailable" } };
+  }
 }

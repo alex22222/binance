@@ -8,12 +8,10 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { verifyPersonalAssetsRelease } from "../ops/personal-assets/dashboard-loader.mjs";
 import { initialize, resolve as resolveAssetModule } from "../ops/personal-assets/dashboard-hooks.mjs";
+import { hookModules, releaseFiles } from "../ops/personal-assets/dashboard-release-files.mjs";
 
-const modules = ["personal-assets-core.mjs", "personal-assets.mjs", "personal-assets-html.mjs", "personal-assets-client.mjs", "personal-assets-routes.mjs", "site-shell.mjs", "personal-assets-sync.mjs", "personal-assets-okx.mjs", "personal-assets-futu.mjs", "personal-assets-fx.mjs", "personal-assets-polymarket.mjs", "personal-assets-wallets.mjs", "personal-assets-ai.mjs", "personal-assets-funds.mjs", "crypto-watch.mjs", "crypto-watch-html.mjs", "crypto-news.mjs", "market-overview.mjs", "market-overview-html.mjs", "digital-currency-html.mjs", "okx-agentic-status.mjs", "okx-agentic-html.mjs", "agentic-wallet-overview.mjs", "agentic-wallet-html.mjs", "agentic-wallet-client.mjs"];
-modules.push("strategy-research.mjs", "strategy-lab-html.mjs", "strategy-daily.mjs", "fund-manager-html.mjs");
-modules.push("okx-desk-ledger.mjs", "okx-desk-html.mjs");
-modules.push("personal-assets-history.mjs");
-const codeFiles = ["dashboard-loader.mjs", "dashboard-hooks.mjs", ...modules.map((name) => `src/${name}`)];
+const modules = hookModules;
+const codeFiles = releaseFiles;
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const urlDirectory = (path) => pathToFileURL(path + sep).href;
 const rootMetadata = async (path) => Object.assign(await lstat(path), { uid: 0 });
@@ -176,7 +174,7 @@ test("child process resolves released assets and shell while shared code and sou
     const child = spawnSync(process.execPath, ["--input-type=module", "-e", program], { encoding: "utf8", timeout: 10_000 });
     assert.equal(child.status, 0, child.stderr);
     const result = JSON.parse(child.stdout);
-    assert.equal(result[4], "released/personal-assets.mjs|released/site-shell.mjs|original-shared");
+    assert.equal(result[modules.indexOf("personal-assets-routes.mjs")], "released/personal-assets.mjs|released/site-shell.mjs|original-shared");
     assert.equal(result[5], "released/site-shell.mjs");
     assert.equal(result[modules.indexOf("crypto-watch.mjs")], "released/crypto-watch.mjs|released/crypto-news.mjs");
     assert.equal(result[modules.indexOf("crypto-watch-html.mjs")], "released/crypto-watch.mjs|released/crypto-news.mjs|released/site-shell.mjs|original-shared");

@@ -73,13 +73,10 @@ from the trading hash or refresh the authorization baseline to hide this.
 
 Personal-assets pages, shared navigation and OCR use the existing Dashboard-only
 loader and immutable `/opt/binance-agentic-personal-assets/releases/<id>/`
-releases. Prepare a manifest with all sixteen loader/page/collector module
-hashes required by the current personal-assets loader. Optional supporting files
-are limited to `README.md`, `docs/personal-assets-page.md`,
-`scripts/sync-personal-assets.mjs`, `scripts/snapshot-personal-assets.mjs`,
-the four `deploy/binance-personal-assets-{sync,daily-snapshot}.{service,timer}`
-templates, OCR resources and personal-assets tests. No other source module,
-script or systemd unit is accepted. Then use the guarded staging entry:
+releases. The required modules and the optional supporting files are the
+two lists in `ops/personal-assets/dashboard-release-files.mjs`. No other
+source module, script, or systemd unit is accepted. Then use the guarded
+staging entry:
 
 ```bash
 sudo node /opt/binance-dashboard-release-tools/current/stage.mjs check /path/to/prepared-ui-payload new-release-id
@@ -103,6 +100,28 @@ explicit review/authorization.
 This guard is the supported UI staging path, not a claim that arbitrary root
 commands cannot bypass it. Never copy a full local checkout over a running Live
 checkout for a page-only update.
+
+## What can place a live order
+
+Only `binance-agentic-stock-bot` submits a wallet swap. It does that after an
+approval, a fresh quote, and the strategy gate. `binance-agentic-dashboard`
+can record an approval, an emergency stop, or a strategy control change; it
+does not submit the swap. `binance-agentic-authorization` renews or withholds
+the experimental lease; a halted lease blocks new experimental entries.
+
+These timers are read-only collectors or research. Leave the research ones
+disabled unless that research run is the task:
+
+- Read-only and expected when the host is up: market overview, BTC radar,
+  crypto watch, personal-asset sync, personal-asset daily snapshot, and the
+  authorization status check.
+- Research or paper, not a live order path: strategy validation, strategy
+  evidence, shadow outcomes, turtle paper, both weekly ETF paper timers, ETF
+  frequency paper, off-hours research, monthly research, premarket brief,
+  trade review, SPY open check, and strategy daily.
+
+Adding a page does not add an order path. A new read-only page belongs in the
+Dashboard release list in `ops/personal-assets/dashboard-release-files.mjs`.
 
 ## Start in safe mode
 

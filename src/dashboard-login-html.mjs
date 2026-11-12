@@ -1,6 +1,6 @@
 import { SITE_CSS } from "./site-shell.mjs";
 
-export function dashboardLoginHtml({ invalid = false } = {}) {
+export function dashboardLoginHtml({ invalid = false, limited = false } = {}) {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -32,6 +32,7 @@ export function dashboardLoginHtml({ invalid = false } = {}) {
     <div class="login-brand"><span class="site-mark" aria-hidden="true">A</span><span>Agentic Wallet</span></div>
     <h1>登录手机 Dashboard</h1>
     <p>使用 Dashboard 用户名和密码。登录仅在 HTTPS 加密连接中有效。共用的电脑请取消「保持登录」。</p>
+    ${limited ? '<div class="error" role="alert">登录失败次数过多，请 15 分钟后再试</div>' : ""}
     ${invalid ? '<div class="error" role="alert">用户名或密码错误</div>' : ""}
     <form method="post" action="/login">
       <label>用户名<input name="username" autocomplete="username" required></label>

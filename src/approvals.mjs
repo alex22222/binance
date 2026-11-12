@@ -56,7 +56,23 @@ export function approvalDecisionStatus(request, decision, nowMs = Date.now()) {
   }
   if (decision.decision === "REJECT") return { status: "REJECTED" };
   if (decision.dyorAcknowledged !== true) return { status: "INVALID" };
+  if (request.audit?.status === "OFFICIAL_RWA_UNSUPPORTED_ACKNOWLEDGED" && decision.auditUnavailableAcknowledged !== true) {
+    return { status: "INVALID" };
+  }
   return { status: "APPROVED" };
+}
+
+// Automatic approval never supplies the per-order audit acknowledgement.
+// Those requests stay pending for an explicit Dashboard confirmation.
+export function automaticApprovalDecision(request, { enabled, decidedAt }) {
+  if (!enabled || request?.audit?.status === "OFFICIAL_RWA_UNSUPPORTED_ACKNOWLEDGED") return null;
+  return {
+    approvalId: request.approvalId,
+    decision: "APPROVE",
+    dyorAcknowledged: true,
+    auditUnavailableAcknowledged: false,
+    decidedAt
+  };
 }
 
 export async function recordApprovalDecision(directory, request, decision) {

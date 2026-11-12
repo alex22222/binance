@@ -13,7 +13,7 @@ import { loadMarketOverview } from "./market-overview.mjs";
 import { loadLandingReports, marketOverviewHtml } from "./market-overview-html.mjs";
 import { loadBtcRadarView } from "./btc-radar.mjs";
 import { digitalCurrencyHtml } from "./digital-currency-html.mjs";
-import { loadOkxDeskLedger } from "./okx-desk-ledger.mjs";
+import { loadOkxDeskLedger, syncOkxDeskStore } from "./okx-desk-ledger.mjs";
 import { okxDeskHtml } from "./okx-desk-html.mjs";
 import { loadOkxAgenticStatus, projectOkxAgenticAssets } from "./okx-agentic-status.mjs";
 import { okxAgenticHtml } from "./okx-agentic-html.mjs";
@@ -291,7 +291,7 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
   }
   if (["/crypto/desk", "/crypto/desk/", "/api/crypto/desk"].includes(path)) {
     if (request.method !== "GET") { json(response, { error: "交易过程只支持读取。" }, 405); return true; }
-    const ledger = await loadOkxDeskLedger();
+    const ledger = await syncOkxDeskStore(await loadOkxDeskLedger(), { stateDir });
     if (path === "/api/crypto/desk") { json(response, ledger); return true; }
     const requested = new URL(request.url, "http://localhost").searchParams.get("shift") || "";
     const shiftId = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(requested) ? requested : "";

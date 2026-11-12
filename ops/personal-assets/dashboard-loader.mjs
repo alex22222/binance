@@ -3,20 +3,10 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import { register } from "node:module";
 import { join, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { releaseFiles } from "./dashboard-release-files.mjs";
 
 const dashboardPath = "/opt/binance-agentic-stock-bot/scripts/serve-live-dashboard.mjs";
-const releaseFiles = [
-  "dashboard-loader.mjs", "dashboard-hooks.mjs",
-  "src/personal-assets-core.mjs", "src/personal-assets.mjs", "src/personal-assets-history.mjs", "src/personal-assets-html.mjs",
-  "src/personal-assets-client.mjs", "src/personal-assets-routes.mjs", "src/site-shell.mjs",
-  "src/personal-assets-sync.mjs", "src/personal-assets-okx.mjs", "src/personal-assets-futu.mjs", "src/personal-assets-fx.mjs", "src/personal-assets-polymarket.mjs", "src/personal-assets-wallets.mjs", "src/personal-assets-ai.mjs", "src/personal-assets-funds.mjs",
-  "src/crypto-watch.mjs", "src/crypto-watch-html.mjs", "src/crypto-news.mjs",
-  "src/market-overview.mjs", "src/market-overview-html.mjs",
-  "src/digital-currency-html.mjs", "src/okx-agentic-status.mjs", "src/okx-agentic-html.mjs",
-  "src/agentic-wallet-overview.mjs", "src/agentic-wallet-html.mjs", "src/agentic-wallet-client.mjs",
-  "src/strategy-research.mjs", "src/strategy-lab-html.mjs", "src/strategy-daily.mjs", "src/fund-manager-html.mjs",
-  "src/okx-desk-ledger.mjs", "src/okx-desk-html.mjs"
-];
+export { releaseFiles };
 
 export async function verifyPersonalAssetsRelease(directory, { metadata = lstat } = {}) {
   const entry = await metadata(directory);

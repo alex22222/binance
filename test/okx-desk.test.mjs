@@ -11,7 +11,8 @@ import {
   VAULT_REPORTS_DIR,
   loadOkxDeskLedger,
   parseOkxDeskLedger,
-  shadowSentences
+  shadowSentences,
+  syncOkxDeskStore
 } from "../src/okx-desk-ledger.mjs";
 
 const fixture = () => readFile(DESK_FIXTURE_PATH, "utf8");
@@ -70,6 +71,21 @@ BTC-USDT-SWAP | 条件多
   assert.equal(shift(ledger, "2026-11-08T13:00").counts.none, null);
 });
 
+test("the page record is the structured store, refreshed from a newer log", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "okx-desk-store-"));
+  const ledger = parseOkxDeskLedger(await fixture());
+  ledger.source = { kind: "copy", label: "服务器上的影子日志副本", readAt: "2026-11-13T00:00:00.000Z" };
+  const saved = await syncOkxDeskStore(ledger, { stateDir: directory });
+  assert.equal(saved.source.store, "current");
+  assert.equal(saved.shifts[0].id, "2026-11-12T09:00");
+  const stored = JSON.parse(await readFile(join(directory, "okx-desk", "shifts.json"), "utf8"));
+  assert.equal(stored.schemaVersion, 1);
+  const offline = await syncOkxDeskStore({ source: { kind: "unavailable", label: "影子日志不可读" }, capital: "", status: {}, shifts: [], loose: [], reports: { notes: {}, status: "unavailable" } }, { stateDir: directory });
+  assert.equal(offline.source.store, "saved");
+  assert.equal(offline.shifts.at(-1).id, "2026-11-12T21:00");
+  await rm(directory, { recursive: true, force: true });
+});
+
 test("daily report shadow sentences stay quotes and skip unrelated desk words", () => {
   const sentences = shadowSentences("我的关注点：OKX 影子账户继续只观察、不下真单。先看 75,000 能否守住。\n- 关注点：和你的多角色交易台思路一致。");
   assert.deepEqual(sentences, ["我的关注点：OKX 影子账户继续只观察、不下真单。"]);
@@ -94,9 +110,10 @@ test("desk routes are read-only HTML and JSON behind the shared handler", async 
   const previousReports = process.env.OKX_DESK_REPORTS_DIR;
   process.env.OKX_DESK_LEDGER_PATH = DESK_FIXTURE_PATH;
   process.env.OKX_DESK_REPORTS_DIR = join(tmpdir(), "okx-desk-no-reports");
+  const stateDir = await mkdtemp(join(tmpdir(), "okx-desk-route-"));
   const call = async (url, method = "GET") => {
     const response = { headers: null, body: "", status: null, writeHead(status, headers) { this.status = status; this.headers = headers; }, end(body) { this.body = body || ""; } };
-    const handled = await handlePersonalAssetsRequest({ request: { method, url, headers: {} }, response, stateDir: "/nonexistent-state", requireAllowedOrigin() {} });
+    const handled = await handlePersonalAssetsRequest({ request: { method, url, headers: {} }, response, stateDir, requireAllowedOrigin() {} });
     return { handled, response };
   };
   try {
@@ -114,6 +131,7 @@ test("desk routes are read-only HTML and JSON behind the shared handler", async 
     const api = await call("/api/crypto/desk");
     const body = JSON.parse(api.response.body);
     assert.equal(body.source.kind, "fixture");
+    assert.equal(body.source.store, "current");
     assert.equal(body.shifts.at(-1).id, "2026-11-12T21:00");
     const denied = await call("/crypto/desk", "POST");
     assert.equal(denied.response.status, 405);
@@ -123,6 +141,7 @@ test("desk routes are read-only HTML and JSON behind the shared handler", async 
     else process.env.OKX_DESK_LEDGER_PATH = previousLedger;
     if (previousReports === undefined) delete process.env.OKX_DESK_REPORTS_DIR;
     else process.env.OKX_DESK_REPORTS_DIR = previousReports;
+    await rm(stateDir, { recursive: true, force: true });
   }
 });
 
