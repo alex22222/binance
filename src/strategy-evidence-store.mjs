@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { readJsonLinesTail } from "./dashboard.mjs";
 import { STRATEGIES } from "./strategy-lab.mjs";
 import { archiveEvidence, contentHash } from "./strategy-governance.mjs";
@@ -69,20 +69,37 @@ export async function captureSavedEvidence({ projectRoot, config }) {
     }
   });
   if (config.traceFile) {
+    const ledgerPath = resolve(projectRoot, dirname(config.traceFile), "trade-ledger.json");
+    let live = null;
     try {
-      const records = await readJsonLinesTail(resolve(projectRoot, config.traceFile));
+      const ledger = JSON.parse(await readFile(ledgerPath, "utf8"));
+      if (ledger?.version !== 1 || !Array.isArray(ledger.records)) throw new Error("Invalid trade ledger");
+      live = { records: ledger.records, scope: "FULL_TRADE_LEDGER", sourcePath: "state/trade-ledger.json" };
+    } catch (error) {
+      if (error.code !== "ENOENT") errors.push({ source: "trade-ledger", error: error.message });
+    }
+    if (!live) {
+      try {
+        live = {
+          records: await readJsonLinesTail(resolve(projectRoot, config.traceFile)),
+          scope: "TRACE_WINDOW_NOT_FULL_HISTORY",
+          sourcePath: "configured trace (bounded window)"
+        };
+      } catch (error) {
+        if (error.code === "ENOENT") missing.push("trace");
+        else errors.push({ source: "trace", error: error.message });
+      }
+    }
+    if (live) {
       for (const strategy of STRATEGIES) {
-        const fills = records.filter((r) => r.event === "pending_order" && r.status === "finished" && r.details?.strategyId === strategy.id);
+        const fills = live.records.filter((r) => r.event === "pending_order" && r.status === "finished" && r.details?.strategyId === strategy.id);
         if (!fills.length) continue;
         const dates = fills.map((r) => r.timestamp).filter((s) => Number.isFinite(Date.parse(s))).sort();
         await archive({ strategyId: strategy.id, kind: "LIVE", evidenceLevel: "LIVE_TERMINAL_FILLS",
-          sourcePath: "configured trace (bounded window)", sourceHash: contentHash(JSON.stringify(fills)),
+          sourcePath: live.sourcePath, sourceHash: contentHash(JSON.stringify(fills)),
           generatedAt: dates.at(-1), dataCutoff: dates.at(-1), costModel: { model: "ORIGINAL_RECORDED_COSTS_NOT_REAUDITED" },
-          payload: { scope: "TRACE_WINDOW_NOT_FULL_HISTORY", fills } });
+          payload: { scope: live.scope, fills } });
       }
-    } catch (error) {
-      if (error.code === "ENOENT") missing.push("trace");
-      else errors.push({ source: "trace", error: error.message });
     }
   }
   return { evidenceIds: [...new Set(evidenceIds)], missing, errors };
