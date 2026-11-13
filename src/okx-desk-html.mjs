@@ -105,7 +105,7 @@ export function okxDeskHtml(ledger, { shiftId = "", unknown = false, theme = "li
   const missing = unknown || (Boolean(shiftId) && !shift);
   const source = ledger.source || { kind: "unavailable", label: "影子日志不可读", readAt: "" };
   const themeAttr = theme === "dark" ? ' data-theme="dark"' : "";
-  return `<!doctype html><html lang="zh-CN"${themeAttr}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="60"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><title>交易过程 · HQ Capital</title><style>${SITE_CSS}
+  return `<!doctype html><html lang="zh-CN"${themeAttr}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="60"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><title>数字货币投研组 · HQ Capital</title><style>${SITE_CSS}
 :root{--content-width:1180px}*{box-sizing:border-box}body{font-size:14px;line-height:1.6}
 .desk{max-width:var(--content-width);margin:0 auto;padding:28px 20px 64px}.desk h1,.desk h2,.desk h3,.desk p{margin:0}.desk h1{font-size:30px;letter-spacing:-.03em;line-height:1.25}.desk h2{margin:28px 0 12px;font-size:18px}.desk a{color:var(--brand);text-decoration:none}.desk a:hover{text-decoration:underline}.desk :is(a,summary):focus-visible{outline:2px solid var(--brand);outline-offset:3px}
 .desk-kicker{font-size:12px;letter-spacing:.08em;color:var(--muted);margin-bottom:6px}.desk-head,.desk-top{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:18px}.desk-head p,.desk-lead{color:var(--muted);font-size:13px;margin-top:8px}
@@ -121,7 +121,7 @@ export function okxDeskHtml(ledger, { shiftId = "", unknown = false, theme = "li
 @media(max-width:760px){.desk{padding:22px 12px 40px}.desk h1{font-size:26px}.desk-head,.desk-top{display:block}.desk-status,.desk-counts,.desk-card dl{grid-template-columns:1fr}.desk-head .desk-pill{margin-top:12px}}
 @media print{.desk-back{display:none}.desk-card,.desk-summary{break-inside:avoid}}
 </style></head><body>${siteHeader("/crypto/desk", "", { theme, returnTo: shiftId ? `/crypto/desk?shift=${encodeURIComponent(shiftId)}` : "/crypto/desk" })}<main class="desk">
-${shift ? "" : `<header class="desk-top"><div><p class="desk-kicker">数字货币 · 阶段1影子</p><h1>交易过程</h1><p class="desk-lead">侦察 → 图表 → 策略 → 风控。只读班次记录，不连接下单。</p></div></header>`}
+${shift ? "" : `<header class="desk-top"><div><p class="desk-kicker">数字货币 · 阶段1影子</p><h1>数字货币投研组</h1><p class="desk-lead">侦察 → 图表 → 策略 → 风控。只读班次记录，不连接下单。</p></div></header>`}
 <p class="desk-lead">来源：${escapeHtml(source.label)}${source.readAt ? ` · 读取 ${shanghai(source.readAt)}` : ""}</p>
 ${missing ? `<p class="desk-missing">没有这一班。下面仍是日志里的班次。</p>${index(ledger)}` : shift ? detail(ledger, shift) : index(ledger)}
 </main></body></html>`;
