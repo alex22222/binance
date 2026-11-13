@@ -325,13 +325,16 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
     if (path === "/api/crypto") { json(response, status); return true; }
     const radar = await loadBtcRadarView(process.env.BTC_RADAR_DIR || join(stateDir, "btc-radar")).catch(() => ({ status: "ERROR", latest: null, history: [], settings: {} }));
     if (path === "/api/digital-currency") { json(response, { radar, watch: status }); return true; }
+    const view = url.searchParams.get("view") === "favorites" ? "favorites" : "btc";
+    const sortParam = url.searchParams.get("sort");
+    const sort = ["24h", "7d", "name"].includes(sortParam) ? sortParam : "24h";
     response.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
       "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
       "X-Content-Type-Options": "nosniff"
     });
-    response.end(digitalCurrencyHtml({ radar, watch: status, now: new Date(), theme }));
+    response.end(digitalCurrencyHtml({ radar, watch: status, now: new Date(), theme, view, sort }));
     return true;
   }
   // Keep the original execution UI and all of its gates in the frozen checkout.

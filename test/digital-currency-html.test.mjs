@@ -27,9 +27,52 @@ test("unified page is one real SSR document with BTC before all favorite instrum
   assert.match(html, /0\.0000123456789/);
   assert.match(html, /0\.000000123456/);
   assert.match(html, /href="\/btc-radar\?view=detail/);
-  assert.match(html, /高级情景与总资金设置/);
-  assert.match(html, /http-equiv="refresh" content="60"/);
+  assert.match(html, /拖动预览与总资金设置|风险测算/);
+  assert.match(html, /dc-tabs/);
+  assert.match(html, /BTC 决策/);
+  assert.match(html, /收藏日报/);
+  assert.doesNotMatch(html, /http-equiv="refresh"/);
   assert.doesNotMatch(html, /<iframe|<script|pressure-v3|一年滚动分位数|每 365 天/);
+});
+
+test("BTC decision page embeds the daily score and price chart from the radar DTO", () => {
+  const input = radar();
+  input.daily.closes = [
+    { date: "2026-11-01", close: 78000 }, { date: "2026-11-02", close: 79000 },
+    { date: "2026-11-03", close: 80000 }, { date: "2026-11-04", close: 81000 }
+  ];
+  input.daily.snapshots = [
+    { date: "2026-11-02", modelVersion: VERSION, price: 79000, score: 55, forward: { 1: 0.01 } },
+    { date: "2026-11-03", modelVersion: VERSION, price: 80000, score: 62, forward: { 1: -0.01 } },
+    { date: "2026-11-04", modelVersion: VERSION, price: 81000, score: 70, forward: { 1: null } }
+  ];
+  const html = digitalCurrencyHtml({ radar: input, watch: watch(), now: NOW });
+  assert.match(html, /评分与 BTC 走势/);
+  assert.match(html, /<svg[^>]*role="img"[^>]*aria-label="每日评分与 BTC 日收盘价"/);
+  assert.match(html, /<\/svg>\s*<p class="dc-footnote">/);
+  assert.match(html, /<polyline /);
+  assert.match(html, /每日快照分数/);
+  assert.match(html, /href="\/btc-radar\?view=detail#account-risk">风险测算</);
+});
+
+test("empty BTC perpetual risk collapses to one compact row", () => {
+  const available = radar();
+  available.latest.positions = [];
+  const html = digitalCurrencyHtml({ radar: available, watch: watch(), now: NOW });
+  assert.match(html, /BTC 永续：本次无持仓/);
+  assert.match(html, /不代表其他币种空仓/);
+  assert.match(html, /dc-risk-compact/);
+  assert.doesNotMatch(html, /暂无可展示的 BTC 持仓明细/);
+});
+
+test("favorites view leads with the watchlist and keeps a BTC score strip", () => {
+  const html = digitalCurrencyHtml({ radar: radar(), watch: watch(), now: NOW, view: "favorites", sort: "7d" });
+  const body = html.slice(html.indexOf("<main"));
+  assert.ok(body.indexOf("dc-score-strip") < body.indexOf('id="favorites"'));
+  assert.match(html, /aria-current="page">收藏日报</);
+  assert.match(html, /打开 BTC 决策/);
+  assert.match(html, /sort=7d|aria-current="true">7 日/);
+  assert.doesNotMatch(html, /id="btc-overview"/);
 });
 
 test("v2 factors, trend and per-source BTC positions are displayed without new risk or score calculations", () => {
@@ -102,6 +145,7 @@ test("each source fails independently, and a missing BTC position never claims t
   const inverse = digitalCurrencyHtml({ radar: available, watch: { status: "ERROR", error: "收藏读取错误", latest: null }, now: NOW });
   assert.match(inverse, /class="dc-score">63\.5<\/strong>/);
   assert.match(inverse, /收藏读取错误/);
+  assert.match(inverse, /BTC 永续：本次无持仓/);
   assert.match(inverse, /不代表其他币种空仓/);
   assert.doesNotMatch(inverse, /账户已空仓|无账户风险/);
 });
