@@ -305,7 +305,7 @@ export async function handlePersonalAssetsRequest({ request, response, stateDir,
     return false;
   }
   if (["/crypto/desk", "/crypto/desk/", "/api/crypto/desk"].includes(path)) {
-    if (request.method !== "GET") { json(response, { error: "交易过程只支持读取。" }, 405); return true; }
+    if (request.method !== "GET") { json(response, { error: "数字货币投研组只支持读取。" }, 405); return true; }
     const ledger = await syncOkxDeskStore(await loadOkxDeskLedger(), { stateDir });
     if (path === "/api/crypto/desk") { json(response, ledger); return true; }
     const requested = url.searchParams.get("shift") || "";

@@ -400,7 +400,7 @@ test("dashboard protects public access with basic auth and an exact HTTPS origin
     assert.match(deskPage.headers.get("content-security-policy"), /default-src 'none'/);
     assert.doesNotMatch(deskPage.headers.get("content-security-policy"), /script-src/);
     const deskHtml = await deskPage.text();
-    assert.match(deskHtml, /aria-current="page">交易过程</);
+    assert.match(deskHtml, /aria-current="page">数字货币投研组</);
     assert.match(deskHtml, /ONDO-USDT-SWAP/);
     assert.match(deskHtml, /评分<\/dt><dd>5<\/dd>/);
     assert.doesNotMatch(deskHtml, /<script|<form|下单按钮/);

@@ -95,7 +95,7 @@ test("the page renders one shift, escapes ledger text and does not echo a bad qu
   const ledger = parseOkxDeskLedger(await fixture());
   ledger.shifts[0].rows[0].idea = `<script>alert(1)</script>`;
   const html = okxDeskHtml(ledger, { shiftId: "2026-11-12T09:00" });
-  assert.match(html, /<a href="\/crypto\/desk" aria-current="page">交易过程<\/a>/);
+  assert.match(html, /<a href="\/crypto\/desk" aria-current="page">数字货币投研组<\/a>/);
   assert.match(html, /ONDO-USDT-SWAP/);
   assert.match(html, /否决条件<\/dt><dd>若下一根已收盘4H/);
   assert.doesNotMatch(html, /<li>S2<\/li>/);
