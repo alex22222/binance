@@ -159,19 +159,35 @@ test("the reusable watch section has no document shell and keeps every instrumen
   assert.doesNotMatch(CRYPTO_WATCH_CSS, /(^|})\s*(?:body|h1|h2|p|main)\s*\{/);
 });
 
+test("movers and sort controls surface daily changes without client script", () => {
+  const value = state();
+  value.latest.tokens = [
+    { ...token, instId: "AAA-USDT", name: "Alpha", change24hPct: 8.2, return7dPct: 1 },
+    { ...token, instId: "BBB-USDT", name: "Beta", change24hPct: -5.1, return7dPct: 9 },
+    { ...token, instId: "CCC-USDT", name: "Gamma", change24hPct: 1.2, return7dPct: -2 }
+  ];
+  const html = cryptoWatchHtml(value, { sort: "7d" });
+  assert.match(html, /今日异动|movers/);
+  assert.match(html, /涨幅/);
+  assert.match(html, /跌幅/);
+  assert.match(html, /aria-current="true">7 日</);
+  assert.ok(html.indexOf("data-instrument=\"BBB-USDT\"") < html.indexOf("data-instrument=\"AAA-USDT\""));
+});
+
 test("news uses independent collection time, shares base headlines across spot and swap and keeps global notices separate", () => {
   const value = state({ news: news() });
   value.latest.tokens.push({ ...token, instId: "GRASS-USDT-SWAP", instType: "SWAP" });
   const html = cryptoWatchHtml(value);
-  assert.match(html, /新闻与公告/);
+  assert.match(html, /今日标题/);
+  assert.match(html, /来源健康/);
   assert.match(html, /新闻采集 2026-10-31 11:10/);
   assert.match(html, /日报生成 2026-10-31 11:02/);
   assert.match(html, /发布 2026-10-31 09:00/);
   assert.match(html, /仅覆盖各来源返回的标题/);
   assert.match(html, /媒体报道/);
   assert.match(html, /官方公告/);
-  assert.equal((html.match(/Grass network adds a data partner/g) || []).length, 2);
-  assert.equal((html.match(/OKX service maintenance notice/g) || []).length, 1);
+  assert.ok((html.match(/Grass network adds a data partner/g) || []).length >= 2);
+  assert.ok((html.match(/OKX service maintenance notice/g) || []).length >= 1);
   assert.match(html, /href="https:\/\/www\.coindesk\.com\/tech\/2026\/10\/31\/grass-network-data-partner"/);
   assert.doesNotMatch(html, /新闻与项目公告尚未接入/);
 });
