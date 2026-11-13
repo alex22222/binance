@@ -27,12 +27,31 @@ test("unified page is one real SSR document with BTC before all favorite instrum
   assert.match(html, /0\.0000123456789/);
   assert.match(html, /0\.000000123456/);
   assert.match(html, /href="\/btc-radar\?view=detail/);
-  assert.match(html, /高级情景与总资金设置/);
+  assert.match(html, /拖动预览与总资金设置|风险测算/);
   assert.match(html, /dc-tabs/);
   assert.match(html, /BTC 决策/);
   assert.match(html, /收藏日报/);
   assert.doesNotMatch(html, /http-equiv="refresh"/);
   assert.doesNotMatch(html, /<iframe|<script|pressure-v3|一年滚动分位数|每 365 天/);
+});
+
+test("BTC decision page embeds the daily score and price chart from the radar DTO", () => {
+  const input = radar();
+  input.daily.closes = [
+    { date: "2026-11-01", close: 78000 }, { date: "2026-11-02", close: 79000 },
+    { date: "2026-11-03", close: 80000 }, { date: "2026-11-04", close: 81000 }
+  ];
+  input.daily.snapshots = [
+    { date: "2026-11-02", modelVersion: VERSION, price: 79000, score: 55, forward: { 1: 0.01 } },
+    { date: "2026-11-03", modelVersion: VERSION, price: 80000, score: 62, forward: { 1: -0.01 } },
+    { date: "2026-11-04", modelVersion: VERSION, price: 81000, score: 70, forward: { 1: null } }
+  ];
+  const html = digitalCurrencyHtml({ radar: input, watch: watch(), now: NOW });
+  assert.match(html, /评分与 BTC 走势/);
+  assert.match(html, /role="img" aria-label="每日评分与 BTC 日收盘价"/);
+  assert.match(html, /<polyline /);
+  assert.match(html, /每日快照分数/);
+  assert.match(html, /href="\/btc-radar\?view=detail#account-risk">风险测算</);
 });
 
 test("empty BTC perpetual risk collapses to one compact row", () => {

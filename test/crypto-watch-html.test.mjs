@@ -172,6 +172,13 @@ test("movers and sort controls surface daily changes without client script", () 
   assert.match(html, /跌幅/);
   assert.match(html, /aria-current="true">7 日</);
   assert.ok(html.indexOf("data-instrument=\"BBB-USDT\"") < html.indexOf("data-instrument=\"AAA-USDT\""));
+  const up = html.match(/movers-label">涨幅<\/span>([\s\S]*?)(?:movers-label">跌幅|<\/div><\/div>)/)?.[1] || "";
+  const down = html.match(/movers-label">跌幅<\/span>([\s\S]*?)<\/div><\/div>/)?.[1] || "";
+  assert.match(up, /Alpha/);
+  assert.doesNotMatch(up, /Beta/);
+  assert.match(down, /Beta/);
+  assert.doesNotMatch(down, /Alpha/);
+  assert.match(html, /id="instrument-AAA-USDT" data-instrument="AAA-USDT"/);
 });
 
 test("news uses independent collection time, shares base headlines across spot and swap and keeps global notices separate", () => {

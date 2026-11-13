@@ -100,7 +100,7 @@ function globalAnnouncements(news) {
 function tokenRow(token, news) {
   const swap = token.instType === "SWAP";
   const errors = Array.isArray(token.errors) ? token.errors : [];
-  return `<article class="token-row" data-instrument="${escape(token.instId)}">
+  return `<article class="token-row" id="instrument-${escape(token.instId)}" data-instrument="${escape(token.instId)}">
 <div class="token-head"><div class="token-identity"><h3>${escape(token.name || token.instId)}</h3><p class="instrument">${escape(token.instId)}</p><span class="badge${token.status === "OK" ? "" : " warning"}">${statusLabel(token.status)}</span></div><div><div class="eyebrow">现价 · USDT</div><div class="token-price">${number(token.price)}</div></div><div class="change ${changeClass(token.change24hPct)}">${percent(token.change24hPct)}<small>24 小时</small></div><div class="change ${changeClass(token.return7dPct)}">${percent(token.return7dPct)}<small>7 日收盘涨跌</small></div></div>
 ${token.kind === "tradfi" ? '<p class="asset-kind">TradFi / Pre-IPO · 合约标的，不代表持有公司股票。</p>' : ""}
 <details class="instrument-details"><summary>报价、指标与相关新闻</summary><p class="digest">${escape(token.summary || "暂无可用行情摘要。")}</p>
@@ -129,13 +129,13 @@ function moverChip(token) {
 
 function moversSection(tokens) {
   const usable = tokens.filter((token) => Number.isFinite(token.change24hPct));
-  if (usable.length < 2) return "";
+  if (!usable.length) return "";
   const byType = (instType) => usable.filter((token) => token.instType === instType);
   const block = (label, rows) => {
-    if (rows.length < 2) return "";
-    const up = [...rows].sort((a, b) => b.change24hPct - a.change24hPct).slice(0, 3);
-    const down = [...rows].sort((a, b) => a.change24hPct - b.change24hPct).slice(0, 3);
-    return `<div class="movers-block"><p class="eyebrow">${label} · 24 小时</p><div class="movers-row"><span class="movers-label">涨幅</span>${up.map(moverChip).join("")}</div><div class="movers-row"><span class="movers-label">跌幅</span>${down.map(moverChip).join("")}</div></div>`;
+    const up = rows.filter((token) => token.change24hPct > 0).sort((a, b) => b.change24hPct - a.change24hPct).slice(0, 3);
+    const down = rows.filter((token) => token.change24hPct < 0).sort((a, b) => a.change24hPct - b.change24hPct).slice(0, 3);
+    if (!up.length && !down.length) return "";
+    return `<div class="movers-block"><p class="eyebrow">${label} · 24 小时</p>${up.length ? `<div class="movers-row"><span class="movers-label">涨幅</span>${up.map(moverChip).join("")}</div>` : ""}${down.length ? `<div class="movers-row"><span class="movers-label">跌幅</span>${down.map(moverChip).join("")}</div>` : ""}</div>`;
   };
   const body = `${block("现货", byType("SPOT"))}${block("永续", byType("SWAP"))}`;
   return body ? `<section class="movers" aria-label="今日异动">${body}</section>` : "";
@@ -189,7 +189,7 @@ ${failedAttempt || reportStatus === "FAILED" ? '<aside class="notice warning"><s
 ${errors.length ? `<aside class="notice warning"><strong>采集记录</strong><ul>${errors.map((error) => `<li>${escape(message(error))}</li>`).join("")}</ul></aside>` : ""}
 ${emptyFavorites ? '<section class="empty"><h2>收藏列表为空</h2><p>本次已确认的收藏名单没有交易标的，日报已完成。</p></section>' : !report || !tokens.length ? '<section class="empty"><h2>日报尚未生成</h2><p>尚无可展示的行情汇总。下一次每日采集后将在这里显示结果。</p></section>' : groups.map(([instType, label]) => {
     const entries = tokens.filter((token) => token.instType === instType);
-    return entries.length ? `<section class="group"><div class="section-head"><h2>${label} <span>${entries.length}</span></h2><p>${instType === "SPOT" ? "价格与成交额以 USDT 计" : "资金费率按下一结算周期展示，不作年化"}</p></div><div class="token-list">${entries.map((token) => `<div id="instrument-${escape(token.instId)}">${tokenRow(token, news)}</div>`).join("")}</div></section>` : "";
+    return entries.length ? `<section class="group"><div class="section-head"><h2>${label} <span>${entries.length}</span></h2><p>${instType === "SPOT" ? "价格与成交额以 USDT 计" : "资金费率按下一结算周期展示，不作年化"}</p></div><div class="token-list">${entries.map((token) => tokenRow(token, news)).join("")}</div></section>` : "";
   }).join("")}
 ${news ? `<details class="platform-news"><summary>OKX 平台公告 · 单独归档</summary>${globalAnnouncements(news)}</details>` : ""}
 <footer class="scope">${news ? '<p>新闻仅展示来源标题与发布时间，不据此判断情绪或解释价格变化。</p>' : '<p>新闻与项目公告尚未接入。</p>'}<p>24h 涨跌与高低价为滚动行情；7 日涨跌使用已收盘日线。— 表示未取得有效数据。</p><p>行情数据来源：OKX。日报每次采集保留各标的原始时间；此页展示市场信息，不执行交易。</p></footer>
