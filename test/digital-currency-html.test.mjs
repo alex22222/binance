@@ -48,7 +48,8 @@ test("BTC decision page embeds the daily score and price chart from the radar DT
   ];
   const html = digitalCurrencyHtml({ radar: input, watch: watch(), now: NOW });
   assert.match(html, /评分与 BTC 走势/);
-  assert.match(html, /role="img" aria-label="每日评分与 BTC 日收盘价"/);
+  assert.match(html, /<svg[^>]*role="img"[^>]*aria-label="每日评分与 BTC 日收盘价"/);
+  assert.match(html, /<\/svg>\s*<p class="dc-footnote">/);
   assert.match(html, /<polyline /);
   assert.match(html, /每日快照分数/);
   assert.match(html, /href="\/btc-radar\?view=detail#account-risk">风险测算</);

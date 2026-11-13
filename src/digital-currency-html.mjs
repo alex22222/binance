@@ -169,7 +169,7 @@ function dailyChart(daily) {
   }
   svg += `<text x="${L}" y="${H - 6}">${dayLabel(d0)}</text><text x="${W - R}" y="${H - 6}" text-anchor="end">${dayLabel(d1)}</text>`;
   const rescored = snaps.filter((row) => row.rescoredFrom).length;
-  return `<div class="dc-chart" role="img" aria-label="每日评分与 BTC 日收盘价"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">${svg}</svg>
+  return `<div class="dc-chart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="每日评分与 BTC 日收盘价">${svg}</svg>
 <p class="dc-footnote">彩色点为当天快照：上方对齐快照时 BTC 价格，下方对齐分数。${rescored ? `空心点 ${rescored} 天为按本版规则重算的旧快照。` : ""}${Number(daily?.otherVersionDays) > 0 ? `另有 ${number(daily.otherVersionDays, 0)} 天其他版本评分不混入本图。` : ""}</p></div>`;
 }
 
