@@ -175,7 +175,9 @@ export function strategyLabHtml({ theme = "light" } = {}) {
     const latestDaily = () => data.dailyJournal?.records?.[0];
     function renderDailyOverview() {
       const parent = document.getElementById("dailyOverview"), latest = latestDaily(); parent.replaceChildren();
-      const active = data.strategies.find((strategy) => strategy.id === data.activeStrategyId) || data.strategies.find((strategy) => strategy.catalog?.layer === "capital") || data.strategies[0];
+      // Always prefer the frozen capital-layer entry; live activeStrategyId may be another rule.
+      const capital = data.strategies.find((strategy) => strategy.catalog?.layer === "capital");
+      const active = capital || data.strategies.find((strategy) => strategy.id === data.activeStrategyId) || data.strategies[0];
       const catalog = active?.catalog || {};
       const head = el("div", "journal-heading"); head.append(el("h1", "", "资金决定"), el("span", "source-meta", "冻结研究结论，不是今日净值")); parent.append(head);
       parent.append(el("p", "", (active?.name || "未配置策略") + " · " + (catalog.label || "未分级")));
@@ -338,13 +340,14 @@ export function strategyLabHtml({ theme = "light" } = {}) {
     function renderPerformance(parent, strategy) {
       parent.append(el("h3", "", "表现分析"));
       const choices = [["live", "实盘"], ["paper", "Paper"], ["history", "历史模拟"], ["shadow", "Shadow"]].filter(([id]) => id === "live" || id === "paper" || (id === "history" ? strategy.catalog?.historyApplies !== false : strategy.catalog?.shadowApplies !== false));
-      if (!choices.some(([id]) => id === evidence)) evidence = choices[0][0];
+      // Fallback only for this tab; do not rewrite shared evidence used by 每日记录.
+      const shown = choices.some(([id]) => id === evidence) ? evidence : choices[0][0];
       const head = el("div", "analysis-head"), tabs = el("div", "evidence-tabs"); tabs.setAttribute("aria-label", "表现证据来源");
-      for (const [id, label] of choices) { const item = button(label, "", () => { evidence = id; renderDossier(); }); item.setAttribute("aria-pressed", String(id === evidence)); tabs.append(item); } head.append(tabs); parent.append(head);
+      for (const [id, label] of choices) { const item = button(label, "", () => { evidence = id; renderDossier(); }); item.setAttribute("aria-pressed", String(id === shown)); tabs.append(item); } head.append(tabs); parent.append(head);
       const omitted = [["history", "历史模拟"], ["shadow", "Shadow"]].filter(([id]) => !choices.some(([choice]) => choice === id)).map(([, label]) => label);
       if (omitted.length) parent.append(el("p", "note", omitted.join("、") + "不适用于这个周期，不在这里展示。"));
-      ({ live: renderLive, paper: renderPaper, history: renderHistory, shadow: renderShadow })[evidence](parent, strategy);
-      if (evidence === "paper" && strategy.id === "weekly-etf-dual-momentum-defense") renderFrequencyPaper(parent);
+      ({ live: renderLive, paper: renderPaper, history: renderHistory, shadow: renderShadow })[shown](parent, strategy);
+      if (shown === "paper" && strategy.id === "weekly-etf-dual-momentum-defense") renderFrequencyPaper(parent);
       const metadata = [...parent.children].find((node) => node.className === "source-meta");
       if (metadata) head.append(metadata);
       const actions = el("div", "actions"); actions.append(button("阅读研究依据", "primary", () => { section = "overview"; renderDossier(); }), button("交易规则与数据来源", "secondary", () => { section = "rules"; renderDossier(); })); parent.append(actions);

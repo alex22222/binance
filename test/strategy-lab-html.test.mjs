@@ -198,6 +198,45 @@ test("decision header keeps frozen research separate from daily evidence scores"
   assert.doesNotMatch(view.get("dossierContent").textContent, /75 \/ 100|51\.00/);
 });
 
+test("capital decision header prefers the capital-layer catalog over live activeStrategyId", () => {
+  const view = page();
+  view.fixture.activeStrategyId = "daily-turtle-55-20";
+  view.run('selectedId = "daily-turtle-55-20"; renderDailyOverview()');
+  const text = view.get("dailyOverview").textContent;
+  assert.match(text, /资金决定/);
+  assert.match(text, /周频 ETF 双动量防守轮动/);
+  assert.match(text, /3\.74%/);
+  assert.match(text, /暂缓实盘/);
+  assert.doesNotMatch(text, /海龟|样本仍不足|个股代币池/);
+});
+
+test("performance tab does not reset shared evidence used by daily records", () => {
+  const view = page();
+  view.fixture.dailyJournal = { status: "AVAILABLE", errors: [], records: [{ date: "2026-11-11", capturedAt: "2026-11-10T23:35:00Z", strategies: [{
+    strategyId: "daily-turtle-55-20", primarySource: "history", sources: {
+      history: {
+        kind: "HISTORY", status: "AVAILABLE", asOf: "2026-11-10T20:59:00Z", sourceHash: "b".repeat(64),
+        score: { total: 40, components: { freshness: { label: "数据时效", points: 10, maximum: 30 } } },
+        metrics: { samples: 1, cumulativeNetPnlUsdt: -1.87, realizedPnlUsdt: -1.87, equityUsdt: null },
+        daily: { netPnlUsdt: null, returnPct: null, reason: "NO_CONSECUTIVE_BASELINE" }, warnings: []
+      },
+      live: {
+        kind: "LIVE", status: "MISSING", asOf: null, sourceHash: null,
+        score: { total: null, components: {} },
+        metrics: { samples: 0, cumulativeNetPnlUsdt: null, realizedPnlUsdt: null, equityUsdt: null },
+        daily: { netPnlUsdt: null, returnPct: null, reason: "NO_CONSECUTIVE_BASELINE" }, warnings: []
+      }
+    }
+  }] }] };
+  view.run('selectedId = "daily-turtle-55-20"; section = "daily"; evidence = "history"; renderDossier()');
+  assert.match(view.get("dossierContent").textContent, /40 \/ 100/);
+  view.run('section = "performance"; renderDossier()');
+  assert.equal(view.run("evidence"), "history");
+  view.run('section = "daily"; renderDossier()');
+  assert.match(view.get("dossierContent").textContent, /40 \/ 100/);
+  assert.doesNotMatch(view.get("dossierContent").textContent, /尚无此来源的每日记录/);
+});
+
 test("missing or corrupt daily archives show a gap, not a synthetic day or score", () => {
   const view = page();
   view.fixture.dailyJournal = { status: "ERROR", errors: ["2026-11-10"], records: [] };
