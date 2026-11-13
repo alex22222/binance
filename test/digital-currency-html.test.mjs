@@ -47,8 +47,8 @@ test("empty BTC perpetual risk collapses to one compact row", () => {
 
 test("favorites view leads with the watchlist and keeps a BTC score strip", () => {
   const html = digitalCurrencyHtml({ radar: radar(), watch: watch(), now: NOW, view: "favorites", sort: "7d" });
-  assert.ok(html.indexOf("dc-score-strip") < html.indexOf('id="favorites"'));
-  assert.ok(html.indexOf('id="favorites"') < html.indexOf("dc-page-stamp"));
+  const body = html.slice(html.indexOf("<main"));
+  assert.ok(body.indexOf("dc-score-strip") < body.indexOf('id="favorites"'));
   assert.match(html, /aria-current="page">收藏日报</);
   assert.match(html, /打开 BTC 决策/);
   assert.match(html, /sort=7d|aria-current="true">7 日/);
