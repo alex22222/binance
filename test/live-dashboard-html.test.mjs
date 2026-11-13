@@ -136,7 +136,7 @@ test("live dashboard makes unavailable-audit acknowledgement explicit in the app
   assert.match(html, />策略<\/a>/);
   assert.match(html, /href="\/reviews"/);
   assert.match(html, />复盘<\/a>/);
-  assert.match(html, /<nav class="site-nav" aria-label="主导航"><a href="\/market">市场总览<\/a><a href="\/assets">个人资产<\/a><details class="site-group is-current"><summary>智能钱包<\/summary><div class="site-submenu"><a href="\/dashboard" aria-current="page">交易总览<\/a>.*<a href="\/gmgn\/">GMGN<\/a><\/div><\/details><a href="https:\/\/poly\.spaceflag\.site\/future-btc5m-bridge" class="site-external" target="_blank" rel="noopener noreferrer">Poly 跟单 ↗<\/a><a href="https:\/\/polym\.trade\/perps" class="site-external" target="_blank" rel="noopener noreferrer">Polymtrade ↗<\/a><\/nav>/);
+  assert.match(html, /<nav class="site-nav" aria-label="主导航"><a href="\/market">市场总览<\/a><a href="\/assets">个人资产<\/a><a href="\/operations" class="site-ops">运行总览<\/a><details class="site-group is-current"><summary>智能钱包<\/summary><div class="site-submenu"><a href="\/dashboard" aria-current="page">交易总览<\/a>.*<a href="\/gmgn\/">GMGN<\/a><\/div><\/details><a href="https:\/\/poly\.spaceflag\.site\/future-btc5m-bridge" class="site-external" target="_blank" rel="noopener noreferrer">Poly 跟单 ↗<\/a><a href="https:\/\/polym\.trade\/perps" class="site-external" target="_blank" rel="noopener noreferrer">Polymtrade ↗<\/a><\/nav>/);
   assert.doesNotMatch(html, /id="strategyComparison"/);
   assert.doesNotMatch(html, /function renderStrategies\(data\)/);
 });

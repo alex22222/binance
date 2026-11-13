@@ -49,20 +49,25 @@ test("theme helpers read the cookie and build a safe toggle link", () => {
 test("navigation leads with market overview and groups the wallet pages in one Chinese dropdown", () => {
   for (const active of ["/", "/dashboard"]) {
     const html = siteHeader(active);
-    const links = [...html.matchAll(/<a href="([^"]+)"(?: aria-current="page")?>([^<]+)<\/a>/g)]
+    const links = [...html.matchAll(/<a href="([^"]+)"(?: aria-current="page"| class="[^"]*")*>([^<]+)<\/a>/g)]
       .map(([, href, label]) => [href, label]);
-    assert.deepEqual(links.slice(0, 3), [["/market", "市场总览"], ["/assets", "个人资产"], ["/dashboard", "交易总览"]], active);
+    assert.deepEqual(links.slice(0, 4), [["/market", "市场总览"], ["/assets", "个人资产"], ["/operations", "运行总览"], ["/dashboard", "交易总览"]], active);
     assert.match(html, /<a href="\/dashboard" aria-current="page">交易总览<\/a>/, active);
     assert.equal(html.match(/aria-current="page"/g)?.length, 1, active);
   }
   const top = (html) => [...html.split("</nav>")[0].replace(/<div class="site-submenu">[\s\S]*?<\/div>/g, "").matchAll(/<a href="([^"]+)"[^>]*>|<summary>([^<]+)<\/summary>/g)].map(([, href, group]) => href || group);
-  assert.deepEqual(top(siteHeader("/assets")), ["/market", "/assets", "智能钱包", "数字货币", "https://poly.spaceflag.site/future-btc5m-bridge", "https://polym.trade/perps"]);
+  assert.deepEqual(top(siteHeader("/assets")), ["/market", "/assets", "/operations", "智能钱包", "数字货币", "https://poly.spaceflag.site/future-btc5m-bridge", "https://polym.trade/perps"]);
   const menu = siteHeader("/assets").match(/<details class="site-group"><summary>智能钱包<\/summary><div class="site-submenu">([\s\S]*?)<\/div><\/details>/)[1];
   assert.deepEqual([...menu.matchAll(/<a href="([^"]+)">([^<]+)<\/a>/g)].map(([, href, label]) => [href, label]),
-    [["/dashboard", "交易总览"], ["/agentic-wallet/okx", "OKX 钱包"], ["/strategies", "策略"], ["/reviews", "复盘"], ["/fund-manager", "基金经理"], ["/operations", "运行总览"]]);
-  for (const active of ["/agentic-wallet/okx", "/strategies", "/reviews", "/fund-manager", "/operations"]) {
+    [["/dashboard", "交易总览"], ["/agentic-wallet/okx", "OKX 钱包"], ["/strategies", "策略"], ["/reviews", "复盘"], ["/fund-manager", "基金经理"]]);
+  assert.doesNotMatch(menu, /\/operations|运行总览/);
+  for (const active of ["/agentic-wallet/okx", "/strategies", "/reviews", "/fund-manager"]) {
     assert.match(siteHeader(active), new RegExp(`<details class="site-group is-current"><summary>智能钱包</summary>[^]*<a href="${active}" aria-current="page">`), active);
   }
+  const ops = siteHeader("/operations");
+  assert.match(ops, /<a href="\/operations" aria-current="page" class="site-ops">运行总览<\/a>/);
+  assert.doesNotMatch(ops, /site-group is-current/);
+  assert.match(SITE_CSS, /\.site-nav a\.site-ops\{font-weight:700\}/);
   assert.doesNotMatch(SITE_CSS, /\.site-nav\{[^}]*overflow/);
   const html = siteHeader("/assets");
   assert.match(html, /<a class="site-brand" href="\/"><span class="site-mark" aria-hidden="true">H<\/span><span class="site-name">HQ Capital<\/span><\/a>/);
