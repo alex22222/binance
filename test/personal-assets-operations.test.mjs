@@ -131,13 +131,33 @@ test("the page is server-rendered without script, escapes values and refreshes i
   assert.doesNotMatch(html, /<script|<img src=x|<b>续签/);
   assert.match(html, /&lt;b&gt;续签&lt;\/b&gt;/);
   assert.match(html, /<meta http-equiv="refresh" content="60">/);
-  assert.match(html, /<a href="\/operations" aria-current="page">运行总览<\/a>/);
-  assert.match(html, /服务器 19 个定时任务/);
+  assert.match(html, /<a href="\/operations" aria-current="page" class="site-ops">运行总览<\/a>/);
+  assert.match(html, /系统功能监控与维护 · 19 个定时任务/);
+  assert.match(html, /当前问题 · 0/);
   for (const group of ["市场总览", "交易与风控", "数字货币", "策略研究", "纸面模拟", "个人资产", "研究", "其他"]) assert.match(html, new RegExp(`<tr class="op-group"><th colspan="5">${group}</th>`));
   assert.match(html, /交易授权续签<\/h2><span class="op-pill ok">ACTIVE<\/span>/);
   assert.match(html, /2026-10-23 交易日/);
   assert.match(html, /24 小时后/);
   assert.doesNotMatch(html, /\b0 分钟前|-\d+ 分钟/);
+});
+
+test("current issues surface failed auth and stale collection first", async () => {
+  const result = await overview({
+    services: { "binance-agentic-trade-review": { Result: "exit-code", ExecMainStatus: "1" } },
+    timers: { "binance-agentic-monthly-research": { LoadState: "not-found" } }
+  }, {
+    [renewalPath]: { schemaVersion: 1, strategyId: "weekly-etf-dual-momentum-defense", checkedAt: "2026-10-25T13:29:02.000Z", authorizationAllowed: false, entryControlsOpen: false, leaseExpiresAt: "2026-10-29T02:36:49.374Z", hardDeadline: "2026-11-21T04:00:49.002Z", autoRenewalState: "HALTED", reason: "STRATEGY_CONTROL_CHANGED", generation: 0 },
+    [join(stateDir, "turtle-paper/latest.json")]: { lastObservation: { sessionDate: "2026-10-19" } }
+  });
+  const html = operationsHtml(result);
+  assert.match(html, /当前问题 · [1-9]/);
+  assert.match(html, /aria-label="当前问题"/);
+  assert.match(html, /交易授权续签/);
+  assert.match(html, /STRATEGY_CONTROL_CHANGED|续签 HALTED/);
+  assert.match(html, /data-status="failed"/);
+  assert.match(html, /data-status="attention"/);
+  assert.match(html, /data-status="stale"/);
+  assert.match(html, /data-status="missing"/);
 });
 
 test("the overview routes serve HTML without script and a JSON view, and leave other paths alone", async () => {

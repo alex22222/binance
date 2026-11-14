@@ -10,12 +10,13 @@ const CRYPTO_GROUP = "数字货币";
 export const SITE_NAV = Object.freeze([
   ["/market", "市场总览"],
   ["/assets", "个人资产"],
+  // Top-level: system health must be one click away from every page.
+  ["/operations", "运行总览"],
   ["/dashboard", "交易总览", WALLET_GROUP],
   ["/agentic-wallet/okx", "OKX 钱包", WALLET_GROUP],
   ["/strategies", "策略", WALLET_GROUP],
   ["/reviews", "复盘", WALLET_GROUP],
   ["/fund-manager", "基金经理", WALLET_GROUP],
-  ["/operations", "运行总览", WALLET_GROUP],
   ["/crypto", "BTC 与收藏", CRYPTO_GROUP],
   ["/crypto/desk", "数字货币投研组", CRYPTO_GROUP],
   ["/gmgn/", "GMGN", CRYPTO_GROUP],
@@ -62,7 +63,8 @@ export function siteHeader(active, actions = "", { theme = "light", returnTo, th
   const link = ([href, label]) => {
     const external = href.startsWith("https://");
     const text = external ? `${label} ↗` : label;
-    return `<a href="${href}"${href === current ? ' aria-current="page"' : ""}${external ? ' class="site-external" target="_blank" rel="noopener noreferrer"' : ""}>${text}</a>`;
+    const classes = [external ? "site-external" : "", href === "/operations" ? "site-ops" : ""].filter(Boolean).join(" ");
+    return `<a href="${href}"${href === current ? ' aria-current="page"' : ""}${classes ? ` class="${classes}"` : ""}${external ? ' target="_blank" rel="noopener noreferrer"' : ""}>${text}</a>`;
   };
   let links = "";
   for (let index = 0; index < SITE_NAV.length;) {
@@ -164,6 +166,8 @@ background-size:auto,auto,32px 32px,32px 32px,auto;background-attachment:fixed}
 [data-theme=dark] .site-nav a:hover{background:rgba(255,255,255,.05)}
 .site-nav a[aria-current]{color:var(--brand);background:var(--brand-soft)}
 .site-nav a.site-external{color:var(--faint);font-weight:600}
+.site-nav a.site-ops{font-weight:700}
+.site-nav a.site-ops:not([aria-current]){color:var(--text)}
 .site-brand:focus-visible,.site-nav a:focus-visible,.site-group>summary:focus-visible,.site-theme:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 .site-group{position:relative}
 .site-group>summary{display:flex;align-items:center;gap:6px;padding:8px 12px;border-radius:var(--radius-sm);color:var(--muted);font-size:13px;font-weight:650;white-space:nowrap;cursor:pointer;list-style:none;transition:color .15s,background-color .15s}
