@@ -1,0 +1,114 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { RFQ_SCHEDULE, qualifyingRfqPairs } from "../scripts/scheduled-turtle-rfq.mjs";
+const load = () => import("../scripts/server-turtle-rfq.mjs");
+const sha = v => createHash("sha256").update(v).digest("hex");
+
+test("nonzero collectors preserve their valid diagnostic JSON but never gain sample eligibility", async () => {
+  const { parseRfqCollectorOutput } = await import("../scripts/research-turtle-rfq-server.mjs");
+  const source = { mode: "READ_ONLY", pairedQuotes: [{ symbol: "SPY" }], protection: { protectedFingerprintUnchanged: false } };
+  const report = parseRfqCollectorOutput({ code: 1 }, JSON.stringify(source));
+  assert.deepEqual(report.pairedQuotes, source.pairedQuotes);
+  assert.equal(report.collectorProcess.exitedSuccessfully, false);
+  assert.deepEqual(qualifyingRfqPairs(report, RFQ_SCHEDULE[0]), []);
+  assert.throws(() => parseRfqCollectorOutput({ code: 1 }, ""), /failed/);
+});
+
+test("partial even-sized quote groups report the statistical median, not the upper middle sample", async () => {
+  const { rfqCostStatistics } = await load();
+  const even = rfqCostStatistics([{ symbol: "SPY", amount: "50", losses: [3, 1] }])[0];
+  assert.equal(even.medianPct, 2); assert.equal(even.p90Pct, 3); assert.equal(even.worstPct, 3);
+  assert.equal(rfqCostStatistics([{ symbol: "SPY", amount: "50", losses: [3, 1, 2] }])[0].medianPct, 2);
+});
+
+test("native quote source parses without SSH and the extra fee queries cannot expand to writes", async () => {
+  const { buildServerTurtleRfqSource, isRfqFeeRead } = await import("../scripts/research-turtle-rfq-server.mjs");
+  assert.equal(typeof buildServerTurtleRfqSource, "function");
+  assert.equal(isRfqFeeRead(["wallet", "address"]), true);
+  assert.equal(isRfqFeeRead(["wallet", "tx-history", "--tx", "0x" + "a".repeat(64), "--binanceChainId", "56"]), true);
+  for (const args of [["wallet", "send"], ["auth", "signin"], ["wallet", "tx-history"], ["wallet", "tx-history", "--tx", "bad", "--binanceChainId", "56"], ["market-order", "swap"]]) assert.equal(isRfqFeeRead(args), false);
+  const directory = await mkdtemp(join(tmpdir(), "native-source-"));
+  try {
+    const source = await buildServerTurtleRfqSource({ slotAt: RFQ_SCHEDULE[0].at, feeEvidence: true });
+    assert.ok(!source.includes("/Users/henry")); assert.ok(!source.includes("execFile(\"ssh\""));
+    const file = join(directory, "source.mjs"); await writeFile(file, source);
+    execFileSync(process.execPath, ["--check", file]);
+  } finally { await rm(directory, { recursive: true }); }
+});
+
+async function fixture() {
+  const directory = await mkdtemp(join(tmpdir(), "native-turtle-"));
+  const releaseDirectory = join(directory, "release"), stateDirectory = join(directory, "state");
+  await mkdir(releaseDirectory); await mkdir(stateDirectory);
+  const baseline = "# 八 ETF 研究\n\n原210组回测保留，WITHHOLD。\n";
+  const reportPath = join(directory, "report.md");
+  await writeFile(reportPath, baseline); await writeFile(join(releaseDirectory, "baseline.md"), baseline);
+  const manifest = { stateDirectory, reportPath, reportBaselineHash: sha(baseline) };
+  return { directory, releaseDirectory, stateDirectory, reportPath, manifest, baseline };
+}
+
+test("native runner never invokes collection outside the original nine windows", async () => {
+  const { runNativeSlot } = await load();
+  const result = await runNativeSlot({ phase: "open", nowMs: Date.parse("2026-11-15T15:00Z"), collect: () => { throw Error("No call"); } });
+  assert.equal(result.status, "OUTSIDE_WINDOW_NO_WALLET_CALL");
+});
+
+test("native failed claim survives process replacement without a stale global lock", async () => {
+  const { runNativeSlot } = await load(), f = await fixture();
+  try {
+    let calls = 0;
+    const options = { manifest: f.manifest, phase: "open", nowMs: Date.parse(RFQ_SCHEDULE[0].at), collect: async (_, options) => { calls++; assert.equal(options.local, true); assert.equal(options.feeEvidence, true); throw Error("SOURCE_UNAVAILABLE"); } };
+    assert.equal((await runNativeSlot(options)).status, "FAILED_WITHOUT_BACKFILL");
+    assert.equal((await runNativeSlot(options)).status, "SLOT_ALREADY_CLAIMED_NO_REPEAT");
+    assert.equal(calls, 1);
+    await assert.rejects(readFile(join(f.stateDirectory, "runner.lock")), { code: "ENOENT" });
+  } finally { await rm(f.directory, { recursive: true }); }
+});
+
+test("finalizer cannot run early or use a wallet, then reports missing coverage and preserves baseline", async () => {
+  const { finalizeNativeReport } = await load(), f = await fixture();
+  try {
+    await assert.rejects(finalizeNativeReport({ ...f, nowMs: Date.parse(RFQ_SCHEDULE.at(-1).at) }), /not ended/);
+    const options = { ...f, nowMs: Date.parse("2026-11-18T20:55:00Z") };
+    const first = await finalizeNativeReport(options);
+    assert.equal(first.qualifyingPairs, 0); assert.equal(first.missingPairs, 216);
+    assert.equal(first.status, "WITHHOLD"); assert.equal(first.currentUserGasDebitVerified, false);
+    assert.equal(first.automaticTradingEligible, false);
+    const report = await readFile(f.reportPath, "utf8");
+    assert.ok(report.includes("0/216")); assert.ok(report.includes(f.baseline));
+    assert.ok(report.includes("UNKNOWN"));
+    const second = await finalizeNativeReport(options);
+    assert.deepEqual(second, first); assert.equal(await readFile(f.reportPath, "utf8"), report);
+  } finally { await rm(f.directory, { recursive: true }); }
+});
+
+test("report publication cannot overwrite someone else's later research edits", async () => {
+  const { finalizeNativeReport } = await load(), f = await fixture();
+  try {
+    await writeFile(f.reportPath, "Another author's updated report");
+    const result = await finalizeNativeReport({ ...f, nowMs: Date.parse("2026-11-18T20:55:00Z") });
+    assert.equal(result.publication.status, "CONFLICT_PRESERVED");
+    assert.equal(await readFile(f.reportPath, "utf8"), "Another author's updated report");
+    assert.ok((await readFile(join(f.stateDirectory, "report.md"), "utf8")).includes("0/216"));
+  } finally { await rm(f.directory, { recursive: true }); }
+});
+
+test("server timers pin three absolute UTC dates, do not catch up quotes, and finalize independently", async () => {
+  const { nativeTimerUnits } = await load();
+  const units = nativeTimerUnits();
+  assert.equal(Object.keys(units).filter(k => k.endsWith(".timer")).length, 4);
+  for (const phase of ["open", "mid", "close"]) {
+    const timer = units[`binance-turtle-rfq-20261116-${phase}.timer`];
+    for (const slot of RFQ_SCHEDULE.filter(s => s.phase === phase)) assert.ok(timer.includes(slot.at.replace("T", " ").replace(".000Z", " UTC")));
+    assert.ok(timer.includes("Persistent=false"));
+  }
+  assert.ok(units["binance-turtle-rfq-20261116-final.timer"].includes("2026-11-18 20:55:00 UTC"));
+  assert.ok(units["binance-turtle-rfq-20261116-final.timer"].includes("Persistent=true"));
+  assert.ok(!Object.values(units).join().includes("/Users/henry"));
+  assert.ok(!Object.values(units).join().includes("restart binance-agentic"));
+});
