@@ -23,8 +23,11 @@ const canonical = value => {
 // First wallet call may start up to 10 minutes after the slot. Quotes stay valid until 20 minutes.
 export const RFQ_LAUNCH_WINDOW_MS = 600_000;
 export const RFQ_QUOTE_WINDOW_MS = 1_200_000;
-// Collection uses the full quote window; gas verification and the receipt write need the extra two minutes.
-export const RFQ_SLOT_TIMEOUT_MS = RFQ_QUOTE_WINDOW_MS + 120_000;
+// After the last valid quote the child still scans the trace, reads fee history, checks the fingerprint, and prints JSON.
+export const RFQ_POST_QUOTE_MS = 240_000;
+export const RFQ_COLLECT_TIMEOUT_MS = RFQ_QUOTE_WINDOW_MS + RFQ_POST_QUOTE_MS;
+// The parent persists that report and receipt, then verifies historical gas.
+export const RFQ_SLOT_TIMEOUT_MS = RFQ_COLLECT_TIMEOUT_MS + 120_000;
 
 export function dueRfqSlot(nowMs, phase) {
   if (!["open", "mid", "close"].includes(phase) || !Number.isFinite(nowMs)) throw new Error("Invalid schedule phase/time");

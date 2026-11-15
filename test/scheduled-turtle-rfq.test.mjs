@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { RFQ_QUOTE_WINDOW_MS, RFQ_SCHEDULE, RFQ_SLOT_TIMEOUT_MS, dueRfqSlot, qualifyingRfqPairs, runScheduledRfq, summarizeScheduledRfq } from "../scripts/scheduled-turtle-rfq.mjs";
+import { RFQ_COLLECT_TIMEOUT_MS, RFQ_POST_QUOTE_MS, RFQ_QUOTE_WINDOW_MS, RFQ_SCHEDULE, RFQ_SLOT_TIMEOUT_MS, dueRfqSlot, qualifyingRfqPairs, runScheduledRfq, summarizeScheduledRfq } from "../scripts/scheduled-turtle-rfq.mjs";
 
 async function releaseFixture(directory) {
   await mkdir(join(directory, "scripts"), { recursive: true });
@@ -104,7 +104,9 @@ function savedQuoteReport(slot) {
 
 test("quote collection is allowed through the 20 minute validity window", () => {
   assert.equal(RFQ_QUOTE_WINDOW_MS, 1_200_000);
-  assert.ok(RFQ_SLOT_TIMEOUT_MS > RFQ_QUOTE_WINDOW_MS);
+  assert.equal(RFQ_POST_QUOTE_MS, 240_000);
+  assert.equal(RFQ_COLLECT_TIMEOUT_MS, RFQ_QUOTE_WINDOW_MS + RFQ_POST_QUOTE_MS);
+  assert.ok(RFQ_SLOT_TIMEOUT_MS > RFQ_COLLECT_TIMEOUT_MS);
 });
 
 test("a saved quote report without a receipt is sealed once and is not collected again", async () => {

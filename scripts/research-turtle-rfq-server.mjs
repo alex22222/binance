@@ -3,8 +3,8 @@ import { execFile } from "node:child_process";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { RFQ_QUOTE_WINDOW_MS } from "./scheduled-turtle-rfq.mjs";
-export { RFQ_QUOTE_WINDOW_MS };
+import { RFQ_COLLECT_TIMEOUT_MS, RFQ_QUOTE_WINDOW_MS } from "./scheduled-turtle-rfq.mjs";
+export { RFQ_COLLECT_TIMEOUT_MS, RFQ_QUOTE_WINDOW_MS };
 
 export function assertRfqExecutionTime(slotAt, firstCall, nowMs = Date.now()) {
   if (slotAt === undefined) return; // Unscheduled one-shot diagnostics retain their explicit invocation.
@@ -21,7 +21,9 @@ export function parseRfqCollectorOutput(error, stdout) {
   let report;
   try { report = JSON.parse(stdout); } catch { throw new Error("Read-only collector failed without a complete JSON receipt"); }
   if (report?.mode !== "READ_ONLY") throw new Error("Invalid read-only collector receipt");
-  return { ...report, collectorProcess: { exitedSuccessfully: !error, exitCode: error?.code ?? 0 } };
+  // A timer kill after the final JSON is flushed is not a failed collection. A real nonzero exit still is.
+  const flushedAfterTimeout = Boolean(error?.killed && error?.signal === "SIGTERM" && report.completedAt);
+  return { ...report, collectorProcess: { exitedSuccessfully: !error || flushedAfterTimeout, exitCode: error?.code ?? 0, flushedAfterTimeout } };
 }
 
 export async function buildServerTurtleRfqSource({ slotAt, feeEvidence = false } = {}) {
@@ -135,7 +137,7 @@ export async function collectServerTurtleRfq(directory, { slotAt, local = false,
   await mkdir(directory, { recursive: true });
   await writeFile(resolve(directory, "remote-runner.mjs"), source, { flag: "wx", mode: 0o600 });
   const result = await new Promise((ok, fail) => {
-    const child = execFile(local ? process.execPath : "ssh", local ? ["--input-type=module"] : args, { timeout: RFQ_QUOTE_WINDOW_MS, maxBuffer: 8 << 20 }, (error, stdout) => {
+    const child = execFile(local ? process.execPath : "ssh", local ? ["--input-type=module"] : args, { timeout: RFQ_COLLECT_TIMEOUT_MS, maxBuffer: 8 << 20 }, (error, stdout) => {
       try { ok(parseRfqCollectorOutput(error, stdout)); } catch (failure) { fail(failure); }
     });
     child.stdin.end(source);

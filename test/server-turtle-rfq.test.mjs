@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { RFQ_QUOTE_WINDOW_MS, RFQ_SCHEDULE, RFQ_SLOT_TIMEOUT_MS, qualifyingRfqPairs } from "../scripts/scheduled-turtle-rfq.mjs";
+import { RFQ_COLLECT_TIMEOUT_MS, RFQ_QUOTE_WINDOW_MS, RFQ_SCHEDULE, RFQ_SLOT_TIMEOUT_MS, qualifyingRfqPairs } from "../scripts/scheduled-turtle-rfq.mjs";
 const load = () => import("../scripts/server-turtle-rfq.mjs");
 const sha = v => createHash("sha256").update(v).digest("hex");
 
@@ -16,6 +16,12 @@ test("nonzero collectors preserve their valid diagnostic JSON but never gain sam
   assert.deepEqual(report.pairedQuotes, source.pairedQuotes);
   assert.equal(report.collectorProcess.exitedSuccessfully, false);
   assert.deepEqual(qualifyingRfqPairs(report, RFQ_SCHEDULE[0]), []);
+  const flushed = { ...source, mode: "READ_ONLY", completedAt: RFQ_SCHEDULE[0].at, walletStatus: "CONNECTED", context: { scope: "EXACT_RUNNING_BOT_CONTEXT" }, protection: { protectedFingerprintUnchanged: true, servicePidsUnchanged: true }, at: RFQ_SCHEDULE[0].at, market: { payload: { data: { marketStatus: "regular", openState: true } } }, instruments: [], pairedQuotes: [] };
+  const timedOut = parseRfqCollectorOutput({ killed: true, signal: "SIGTERM", code: null }, JSON.stringify(flushed));
+  assert.equal(timedOut.collectorProcess.exitedSuccessfully, true);
+  assert.equal(timedOut.collectorProcess.flushedAfterTimeout, true);
+  const unfinished = parseRfqCollectorOutput({ killed: true, signal: "SIGTERM" }, JSON.stringify(source));
+  assert.equal(unfinished.collectorProcess.exitedSuccessfully, false);
   assert.throws(() => parseRfqCollectorOutput({ code: 1 }, ""), /failed/);
 });
 
@@ -118,10 +124,12 @@ test("report publication cannot overwrite someone else's later research edits", 
 });
 
 test("native collection is not killed before the quote window and receipt write", async () => {
-  const { RFQ_QUOTE_WINDOW_MS: quoteWindow } = await import("../scripts/research-turtle-rfq-server.mjs");
-  assert.equal(quoteWindow, RFQ_QUOTE_WINDOW_MS);
+  const timers = await import("../scripts/research-turtle-rfq-server.mjs");
+  assert.equal(timers.RFQ_QUOTE_WINDOW_MS, RFQ_QUOTE_WINDOW_MS);
+  assert.equal(timers.RFQ_COLLECT_TIMEOUT_MS, RFQ_COLLECT_TIMEOUT_MS);
   assert.equal(RFQ_QUOTE_WINDOW_MS, 1_200_000);
-  assert.equal(RFQ_SLOT_TIMEOUT_MS, 1_320_000);
+  assert.ok(RFQ_COLLECT_TIMEOUT_MS > RFQ_QUOTE_WINDOW_MS);
+  assert.ok(RFQ_SLOT_TIMEOUT_MS > RFQ_COLLECT_TIMEOUT_MS);
 });
 
 test("server timers pin three absolute UTC dates, do not catch up quotes, and finalize independently", async () => {
@@ -135,8 +143,8 @@ test("server timers pin three absolute UTC dates, do not catch up quotes, and fi
   }
   assert.ok(units["binance-turtle-rfq-20261116-final.timer"].includes("2026-11-18 20:55:00 UTC"));
   assert.ok(units["binance-turtle-rfq-20261116-final.timer"].includes("Persistent=true"));
-  for (const phase of ["open", "mid", "close", "final"]) assert.match(units[`binance-turtle-rfq-20261116-${phase}.service`], /TimeoutStartSec=23min/);
-  assert.ok(!Object.values(units).join().includes("TimeoutStartSec=12min"));
+  for (const phase of ["open", "mid", "close", "final"]) assert.match(units[`binance-turtle-rfq-20261116-${phase}.service`], /TimeoutStartSec=27min/);
+  assert.ok(!/TimeoutStartSec=1[23]min/.test(Object.values(units).join()));
   assert.ok(!Object.values(units).join().includes("/Users/henry"));
   assert.ok(!Object.values(units).join().includes("restart binance-agentic"));
 });
