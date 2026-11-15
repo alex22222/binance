@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { RFQ_SCHEDULE, qualifyingRfqPairs } from "../scripts/scheduled-turtle-rfq.mjs";
+import { RFQ_QUOTE_WINDOW_MS, RFQ_SCHEDULE, RFQ_SLOT_TIMEOUT_MS, qualifyingRfqPairs } from "../scripts/scheduled-turtle-rfq.mjs";
 const load = () => import("../scripts/server-turtle-rfq.mjs");
 const sha = v => createHash("sha256").update(v).digest("hex");
 
@@ -70,6 +70,25 @@ test("native failed claim survives process replacement without a stale global lo
   } finally { await rm(f.directory, { recursive: true }); }
 });
 
+test("finalizer seals a saved quote report that never received a receipt", async () => {
+  const { finalizeNativeReport } = await load(), f = await fixture();
+  try {
+    const slot = RFQ_SCHEDULE[0];
+    const location = join(f.stateDirectory, "slots", slot.id);
+    await mkdir(location, { recursive: true });
+    const usdt = "0x55d398326f99059fF775485246999027B3197955";
+    const instrument = { symbol: "SPY", tokenSymbol: "SPYon", contractAddress: "0x" + "1".padStart(40, "0"), statusSource: { payload: { data: { marketStatus: "regular" } } } };
+    const report = { walletStatus: "CONNECTED", context: { scope: "EXACT_RUNNING_BOT_CONTEXT" }, protection: { protectedFingerprintUnchanged: true, servicePidsUnchanged: true }, at: slot.at, market: { payload: { data: { marketStatus: "regular", openState: true } } }, instruments: [instrument], collectorProcess: { exitedSuccessfully: true, exitCode: 0 }, pairedQuotes: [{ symbol: "SPY", amount: "50", contractAddress: instrument.contractAddress, regularSessionEligible: true, buyRequest: { fromToken: usdt, toToken: instrument.contractAddress, fromTokenQty: "50", binanceChainId: "56" }, sellRequest: { fromToken: instrument.contractAddress, toToken: usdt, fromTokenQty: "0.10", binanceChainId: "56" }, buyResponse: { fromCoinSymbol: "USDT", toCoinSymbol: "SPYon", fromCoinAmount: "50", toCoinAmount: "0.1" }, sellResponse: { fromCoinSymbol: "SPYon", toCoinSymbol: "USDT", fromCoinAmount: "0.1", toCoinAmount: "50" }, returnedUsdt: "50", quotedRoundTripPct: 0, startedAt: slot.at, endedAt: new Date(Date.parse(slot.at) + 2000).toISOString() }] };
+    await writeFile(join(location, "quote-report.json"), JSON.stringify(report, null, 2));
+    const result = await finalizeNativeReport({ ...f, nowMs: Date.parse("2026-11-18T20:55:00Z") });
+    assert.equal(result.qualifyingPairs, 1);
+    assert.equal(result.missingPairs, 215);
+    const receipt = JSON.parse(await readFile(join(location, "receipt.json"), "utf8"));
+    assert.equal(receipt.sealedFromSavedReport, true);
+    assert.equal(receipt.qualifyingPairs, 1);
+  } finally { await rm(f.directory, { recursive: true }); }
+});
+
 test("finalizer cannot run early or use a wallet, then reports missing coverage and preserves baseline", async () => {
   const { finalizeNativeReport } = await load(), f = await fixture();
   try {
@@ -98,6 +117,13 @@ test("report publication cannot overwrite someone else's later research edits", 
   } finally { await rm(f.directory, { recursive: true }); }
 });
 
+test("native collection is not killed before the quote window and receipt write", async () => {
+  const { RFQ_QUOTE_WINDOW_MS: quoteWindow } = await import("../scripts/research-turtle-rfq-server.mjs");
+  assert.equal(quoteWindow, RFQ_QUOTE_WINDOW_MS);
+  assert.equal(RFQ_QUOTE_WINDOW_MS, 1_200_000);
+  assert.equal(RFQ_SLOT_TIMEOUT_MS, 1_320_000);
+});
+
 test("server timers pin three absolute UTC dates, do not catch up quotes, and finalize independently", async () => {
   const { nativeTimerUnits } = await load();
   const units = nativeTimerUnits();
@@ -109,6 +135,8 @@ test("server timers pin three absolute UTC dates, do not catch up quotes, and fi
   }
   assert.ok(units["binance-turtle-rfq-20261116-final.timer"].includes("2026-11-18 20:55:00 UTC"));
   assert.ok(units["binance-turtle-rfq-20261116-final.timer"].includes("Persistent=true"));
+  for (const phase of ["open", "mid", "close", "final"]) assert.match(units[`binance-turtle-rfq-20261116-${phase}.service`], /TimeoutStartSec=23min/);
+  assert.ok(!Object.values(units).join().includes("TimeoutStartSec=12min"));
   assert.ok(!Object.values(units).join().includes("/Users/henry"));
   assert.ok(!Object.values(units).join().includes("restart binance-agentic"));
 });

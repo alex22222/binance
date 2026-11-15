@@ -20,10 +20,16 @@ const canonical = value => {
   return whole.replace(/^0+(?=\d)/, "") + (fraction.replace(/0+$/, "") ? "." + fraction.replace(/0+$/, "") : "");
 };
 
+// First wallet call may start up to 10 minutes after the slot. Quotes stay valid until 20 minutes.
+export const RFQ_LAUNCH_WINDOW_MS = 600_000;
+export const RFQ_QUOTE_WINDOW_MS = 1_200_000;
+// Collection uses the full quote window; gas verification and the receipt write need the extra two minutes.
+export const RFQ_SLOT_TIMEOUT_MS = RFQ_QUOTE_WINDOW_MS + 120_000;
+
 export function dueRfqSlot(nowMs, phase) {
   if (!["open", "mid", "close"].includes(phase) || !Number.isFinite(nowMs)) throw new Error("Invalid schedule phase/time");
   // A delayed launch can start at most ten minutes after its fixed slot, never before it.
-  return RFQ_SCHEDULE.find(slot => slot.phase === phase && nowMs >= Date.parse(slot.at) && nowMs < Date.parse(slot.at) + 600000) ?? null;
+  return RFQ_SCHEDULE.find(slot => slot.phase === phase && nowMs >= Date.parse(slot.at) && nowMs < Date.parse(slot.at) + RFQ_LAUNCH_WINDOW_MS) ?? null;
 }
 
 export function qualifyingRfqPairs(report, slot) {
@@ -47,7 +53,7 @@ export function qualifyingRfqPairs(report, slot) {
       if (![pair.sellRequest.fromTokenQty, pair.sellResponse.fromCoinAmount].every(v => canonical(v) === canonical(pair.buyResponse.toCoinAmount))) continue;
       if (canonical(pair.returnedUsdt) !== canonical(pair.sellResponse.toCoinAmount)) continue;
       const from = Date.parse(pair.startedAt), to = Date.parse(pair.endedAt);
-      if (!(from >= start && to >= from && to - from <= 30000 && to < start + 1200000)) continue;
+      if (!(from >= start && to >= from && to - from <= 30000 && to < start + RFQ_QUOTE_WINDOW_MS)) continue;
       const loss = (1 - Number(pair.returnedUsdt) / Number(pair.amount)) * 100;
       if (!Number.isFinite(loss) || Math.abs(loss - pair.quotedRoundTripPct) > 1e-10) continue;
       seen.add(key); valid.push({ ...pair, scheduledSlot: slot.id });
@@ -76,7 +82,7 @@ export async function summarizeScheduledRfq(directory, nowMs = Date.now()) {
     catch (error) { if (error.code !== "ENOENT") throw error; }
     const report = raw ? JSON.parse(raw) : null;
     const valid = report && receipt?.quoteReportHash === sha(raw) ? qualifyingRfqPairs(report, slot) : [];
-    rows.push({ ...slot, status: receipt?.status ?? (nowMs >= Date.parse(slot.at) + 600000 ? "MISSED_WINDOW" : "PENDING"), qualifyingPairs: valid.length,
+    rows.push({ ...slot, status: receipt?.status ?? (nowMs >= Date.parse(slot.at) + RFQ_LAUNCH_WINDOW_MS ? "MISSED_WINDOW" : "PENDING"), qualifyingPairs: valid.length,
       missing: symbols.flatMap(symbol => amounts.map(amount => ({ symbol, amount }))).filter(target => !valid.some(p => p.symbol === target.symbol && canonical(p.amount) === target.amount)), quoteReportHash: raw ? sha(raw) : null });
   }
   const count = rows.reduce((n, row) => n + row.qualifyingPairs, 0);
@@ -84,6 +90,23 @@ export async function summarizeScheduledRfq(directory, nowMs = Date.now()) {
     requiredPairs: 216, qualifyingPairs: count, slots: rows, currentUserGasDebitVerified: false, automaticTradingEligible: false };
   await atomicJson(resolve(directory, "progress.json"), result);
   return result;
+}
+
+// A killed collector can leave quote-report.json without receipt.json. Seal that file once.
+// Never call the wallet again, and never treat a bare claim as coverage.
+export async function sealSavedRfqReceipt(location, slot) {
+  const receiptPath = resolve(location, "receipt.json");
+  const readReceipt = async () => JSON.parse(await readFile(receiptPath, "utf8"));
+  try { return { receipt: await readReceipt(), created: false }; }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+  let raw;
+  try { raw = await readFile(resolve(location, "quote-report.json"), "utf8"); }
+  catch (error) { if (error.code === "ENOENT") return null; throw error; }
+  const pairs = qualifyingRfqPairs(JSON.parse(raw), slot);
+  const receipt = { slot: slot.id, completedAt: new Date().toISOString(), status: pairs.length === 24 ? "COLLECTED_24" : "PARTIAL_OR_BLOCKED", qualifyingPairs: pairs.length, quoteReportHash: sha(raw), sealedFromSavedReport: true, automaticTradingEligible: false };
+  try { await writeFile(receiptPath, JSON.stringify(receipt, null, 2), { flag: "wx", mode: 0o600 }); }
+  catch (error) { if (error.code !== "EEXIST") throw error; return { receipt: await readReceipt(), created: false }; }
+  return { receipt, created: true };
 }
 
 export async function runScheduledRfq({ directory, releaseDirectory, phase, nowMs = Date.now(), collect }) {
@@ -103,8 +126,15 @@ export async function runScheduledRfq({ directory, releaseDirectory, phase, nowM
   try {
     const location = resolve(directory, "slots", slot.id);
     await mkdir(location, { recursive: true, mode: 0o700 });
-    try { await writeFile(resolve(location, "claim.json"), JSON.stringify({ slot, claimedAt: new Date(nowMs).toISOString() }), { flag: "wx", mode: 0o600 }); }
-    catch (error) { if (error.code === "EEXIST") return { status: "SLOT_ALREADY_CLAIMED_NO_REPEAT", slot: slot.id }; throw error; }
+    let claimedNow = false;
+    try { await writeFile(resolve(location, "claim.json"), JSON.stringify({ slot, claimedAt: new Date(nowMs).toISOString() }), { flag: "wx", mode: 0o600 }); claimedNow = true; }
+    catch (error) { if (error.code !== "EEXIST") throw error; }
+    const sealed = await sealSavedRfqReceipt(location, slot);
+    if (!claimedNow) {
+      if (!sealed?.created) return { status: "SLOT_ALREADY_CLAIMED_NO_REPEAT", slot: slot.id };
+      const progress = await summarizeScheduledRfq(directory);
+      return { ...sealed.receipt, totalQualifyingPairs: progress.qualifyingPairs, needsFinalResearchReport: slot.id === RFQ_SCHEDULE.at(-1).id };
+    }
     let receipt;
     try {
       const report = await collect(location, { slotAt: slot.at }), raw = await readFile(resolve(location, "quote-report.json"), "utf8");

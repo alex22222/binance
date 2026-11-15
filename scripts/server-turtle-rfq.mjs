@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { RFQ_SCHEDULE, dueRfqSlot, qualifyingRfqPairs, summarizeScheduledRfq } from "./scheduled-turtle-rfq.mjs";
+import { RFQ_SCHEDULE, RFQ_QUOTE_WINDOW_MS, RFQ_SLOT_TIMEOUT_MS, dueRfqSlot, qualifyingRfqPairs, sealSavedRfqReceipt, summarizeScheduledRfq } from "./scheduled-turtle-rfq.mjs";
 import { collectServerTurtleRfq } from "./research-turtle-rfq-server.mjs";
 import { verifyRfqHistoricalGas } from "./research-turtle-rfq-chain.mjs";
 
@@ -39,8 +39,15 @@ export async function runNativeSlot({ manifest, phase, nowMs = Date.now(), colle
   if (!slot) return { status: "OUTSIDE_WINDOW_NO_WALLET_CALL", phase };
   const directory = manifest.stateDirectory, location = resolve(directory, "slots", slot.id);
   await mkdir(location, { recursive: true, mode: 0o700 });
-  try { await writeFile(resolve(location, "claim.json"), JSON.stringify({ slot, claimedAt: new Date().toISOString() }), { flag: "wx", mode: 0o600 }); }
-  catch (error) { if (error.code === "EEXIST") return { status: "SLOT_ALREADY_CLAIMED_NO_REPEAT", slot: slot.id }; throw error; }
+  let claimedNow = false;
+  try { await writeFile(resolve(location, "claim.json"), JSON.stringify({ slot, claimedAt: new Date().toISOString() }), { flag: "wx", mode: 0o600 }); claimedNow = true; }
+  catch (error) { if (error.code !== "EEXIST") throw error; }
+  const sealed = await sealSavedRfqReceipt(location, slot);
+  if (!claimedNow) {
+    if (!sealed?.created) return { status: "SLOT_ALREADY_CLAIMED_NO_REPEAT", slot: slot.id };
+    const progress = await summarizeScheduledRfq(directory);
+    return { ...sealed.receipt, totalQualifyingPairs: progress.qualifyingPairs };
+  }
   let receipt;
   try {
     const report = await collect(location, { slotAt: slot.at, local: true, feeEvidence: true });
@@ -66,9 +73,10 @@ export function rfqCostStatistics(groups) {
 }
 
 export async function finalizeNativeReport({ manifest, releaseDirectory, nowMs = Date.now() }) {
-  if (nowMs < Date.parse(RFQ_SCHEDULE.at(-1).at) + 1200000) throw Error("Scheduled sampling has not ended");
+  if (nowMs < Date.parse(RFQ_SCHEDULE.at(-1).at) + RFQ_QUOTE_WINDOW_MS) throw Error("Scheduled sampling has not ended");
   const directory = manifest.stateDirectory, finalPath = resolve(directory, "final-result.json");
   try { return await json(finalPath); } catch (e) { if (e.code !== "ENOENT") throw e; }
+  for (const slot of RFQ_SCHEDULE) await sealSavedRfqReceipt(resolve(directory, "slots", slot.id), slot);
   const baseline = await readFile(resolve(releaseDirectory, "baseline.md"), "utf8");
   if (sha(baseline) !== manifest.reportBaselineHash) throw Error("Research baseline changed");
   const progress = await summarizeScheduledRfq(directory, nowMs), groups = new Map(), gasEvidence = [];
@@ -114,7 +122,7 @@ export function nativeTimerUnits() {
     const name = prefix + phase, final = phase === "final";
     const calendars = final ? ["2026-11-18 20:55:00 UTC"] : RFQ_SCHEDULE.filter(s => s.phase === phase).map(s => s.at.replace("T", " ").replace(".000Z", " UTC"));
     units[name + ".timer"] = `[Unit]\nDescription=Finite read-only ETF RFQ ${phase}\n[Timer]\n${calendars.map(t => "OnCalendar=" + t).join("\n")}\nPersistent=${final}\nAccuracySec=1s\nRandomizedDelaySec=0\nUnit=${name}.service\n[Install]\nWantedBy=timers.target\n`;
-    units[name + ".service"] = `[Unit]\nDescription=Finite read-only ETF RFQ ${phase}\nAfter=network-online.target time-sync.target\nWants=network-online.target\n${final ? "StartLimitIntervalSec=3600\nStartLimitBurst=3\n" : ""}[Service]\nType=oneshot\nUser=root\nWorkingDirectory=${root}/release-v3\nExecStart=/usr/bin/node ${root}/release-v3/scripts/server-turtle-rfq.mjs ${phase}\n${final ? "ExecStartPost=/usr/bin/systemctl disable --now " + timers.join(" ") + "\nRestart=on-failure\nRestartSec=300\n" : "Restart=no\n"}TimeoutStartSec=12min\nNice=15\nCPUWeight=10\nIOWeight=10\nMemoryHigh=220M\nMemoryMax=320M\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths=${state} /var/lib/binance-agentic-stock-bot/.baw /opt/binance-agentic-stock-bot/docs\n`;
+    units[name + ".service"] = `[Unit]\nDescription=Finite read-only ETF RFQ ${phase}\nAfter=network-online.target time-sync.target\nWants=network-online.target\n${final ? "StartLimitIntervalSec=3600\nStartLimitBurst=3\n" : ""}[Service]\nType=oneshot\nUser=root\nWorkingDirectory=${root}/release-v3\nExecStart=/usr/bin/node ${root}/release-v3/scripts/server-turtle-rfq.mjs ${phase}\n${final ? "ExecStartPost=/usr/bin/systemctl disable --now " + timers.join(" ") + "\nRestart=on-failure\nRestartSec=300\n" : "Restart=no\n"}TimeoutStartSec=23min\nNice=15\nCPUWeight=10\nIOWeight=10\nMemoryHigh=220M\nMemoryMax=320M\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths=${state} /var/lib/binance-agentic-stock-bot/.baw /opt/binance-agentic-stock-bot/docs\n`;
   }
   return units;
 }
@@ -127,7 +135,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     console.log(JSON.stringify({ status: "OUTSIDE_WINDOW_NO_WALLET_CALL", phase }));
   } else if (!locked) {
     await mkdir(manifest.stateDirectory, { recursive: true, mode: 0o700 });
-    try { process.stdout.write(execFileSync("/usr/bin/flock", ["--nonblock", "--conflict-exit-code", "75", resolve(manifest.stateDirectory, "kernel.lock"), process.execPath, process.argv[1], "--locked", phase], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 700000 })); }
+    try { process.stdout.write(execFileSync("/usr/bin/flock", ["--nonblock", "--conflict-exit-code", "75", resolve(manifest.stateDirectory, "kernel.lock"), process.execPath, process.argv[1], "--locked", phase], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: RFQ_SLOT_TIMEOUT_MS })); }
     catch (e) { if (e.status === 75) { console.log(JSON.stringify({ status: "RESEARCH_KERNEL_LOCK_BUSY" })); process.exitCode = 75; } else throw Error("Server research command failed; inspect its scoped journal and evidence"); }
   } else {
     const result = phase === "final" ? await finalizeNativeReport({ manifest, releaseDirectory }) : phase === "--status" ? await summarizeScheduledRfq(manifest.stateDirectory) : await runNativeSlot({ manifest, phase });

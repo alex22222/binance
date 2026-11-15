@@ -3,10 +3,12 @@ import { execFile } from "node:child_process";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { RFQ_QUOTE_WINDOW_MS } from "./scheduled-turtle-rfq.mjs";
+export { RFQ_QUOTE_WINDOW_MS };
 
 export function assertRfqExecutionTime(slotAt, firstCall, nowMs = Date.now()) {
   if (slotAt === undefined) return; // Unscheduled one-shot diagnostics retain their explicit invocation.
-  const start = Date.parse(slotAt), deadline = start + (firstCall ? 600000 : 1200000);
+  const start = Date.parse(slotAt), deadline = start + (firstCall ? 600000 : 1200000); // 10 min to start, 20 min of quote validity
   if (!Number.isFinite(start) || nowMs < start || nowMs >= deadline) throw new Error("Outside scheduled read-only wallet window");
 }
 
@@ -133,7 +135,7 @@ export async function collectServerTurtleRfq(directory, { slotAt, local = false,
   await mkdir(directory, { recursive: true });
   await writeFile(resolve(directory, "remote-runner.mjs"), source, { flag: "wx", mode: 0o600 });
   const result = await new Promise((ok, fail) => {
-    const child = execFile(local ? process.execPath : "ssh", local ? ["--input-type=module"] : args, { timeout: 600000, maxBuffer: 8 << 20 }, (error, stdout) => {
+    const child = execFile(local ? process.execPath : "ssh", local ? ["--input-type=module"] : args, { timeout: RFQ_QUOTE_WINDOW_MS, maxBuffer: 8 << 20 }, (error, stdout) => {
       try { ok(parseRfqCollectorOutput(error, stdout)); } catch (failure) { fail(failure); }
     });
     child.stdin.end(source);
