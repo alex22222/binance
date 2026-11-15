@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { RFQ_SCHEDULE, RFQ_QUOTE_WINDOW_MS, RFQ_SLOT_TIMEOUT_MS, dueRfqSlot, qualifyingRfqPairs, sealSavedRfqReceipt, summarizeScheduledRfq } from "./scheduled-turtle-rfq.mjs";
+import { RFQ_SCHEDULE, RFQ_SERVICE_TIMEOUT_MS, RFQ_SLOT_TIMEOUT_MS, dueRfqSlot, qualifyingRfqPairs, rfqFinalAt, sealSavedRfqReceipt, summarizeScheduledRfq } from "./scheduled-turtle-rfq.mjs";
 import { collectServerTurtleRfq } from "./research-turtle-rfq-server.mjs";
 import { verifyRfqHistoricalGas } from "./research-turtle-rfq-chain.mjs";
 
@@ -73,7 +73,7 @@ export function rfqCostStatistics(groups) {
 }
 
 export async function finalizeNativeReport({ manifest, releaseDirectory, nowMs = Date.now() }) {
-  if (nowMs < Date.parse(RFQ_SCHEDULE.at(-1).at) + RFQ_QUOTE_WINDOW_MS) throw Error("Scheduled sampling has not ended");
+  if (nowMs < Date.parse(RFQ_SCHEDULE.at(-1).at) + RFQ_SLOT_TIMEOUT_MS) throw Error("Scheduled sampling has not ended");
   const directory = manifest.stateDirectory, finalPath = resolve(directory, "final-result.json");
   try { return await json(finalPath); } catch (e) { if (e.code !== "ENOENT") throw e; }
   for (const slot of RFQ_SCHEDULE) await sealSavedRfqReceipt(resolve(directory, "slots", slot.id), slot);
@@ -120,9 +120,9 @@ export function nativeTimerUnits() {
   const units = {}, timers = ["open", "mid", "close", "final"].map(p => prefix + p + ".timer");
   for (const phase of ["open", "mid", "close", "final"]) {
     const name = prefix + phase, final = phase === "final";
-    const calendars = final ? ["2026-11-18 20:55:00 UTC"] : RFQ_SCHEDULE.filter(s => s.phase === phase).map(s => s.at.replace("T", " ").replace(".000Z", " UTC"));
+    const calendars = final ? [rfqFinalAt().replace("T", " ").replace(".000Z", " UTC")] : RFQ_SCHEDULE.filter(s => s.phase === phase).map(s => s.at.replace("T", " ").replace(".000Z", " UTC"));
     units[name + ".timer"] = `[Unit]\nDescription=Finite read-only ETF RFQ ${phase}\n[Timer]\n${calendars.map(t => "OnCalendar=" + t).join("\n")}\nPersistent=${final}\nAccuracySec=1s\nRandomizedDelaySec=0\nUnit=${name}.service\n[Install]\nWantedBy=timers.target\n`;
-    units[name + ".service"] = `[Unit]\nDescription=Finite read-only ETF RFQ ${phase}\nAfter=network-online.target time-sync.target\nWants=network-online.target\n${final ? "StartLimitIntervalSec=3600\nStartLimitBurst=3\n" : ""}[Service]\nType=oneshot\nUser=root\nWorkingDirectory=${root}/release-v3\nExecStart=/usr/bin/node ${root}/release-v3/scripts/server-turtle-rfq.mjs ${phase}\n${final ? "ExecStartPost=/usr/bin/systemctl disable --now " + timers.join(" ") + "\nRestart=on-failure\nRestartSec=300\n" : "Restart=no\n"}TimeoutStartSec=27min\nNice=15\nCPUWeight=10\nIOWeight=10\nMemoryHigh=220M\nMemoryMax=320M\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths=${state} /var/lib/binance-agentic-stock-bot/.baw /opt/binance-agentic-stock-bot/docs\n`;
+    units[name + ".service"] = `[Unit]\nDescription=Finite read-only ETF RFQ ${phase}\nAfter=network-online.target time-sync.target\nWants=network-online.target\n${final ? "StartLimitIntervalSec=3600\nStartLimitBurst=3\n" : ""}[Service]\nType=oneshot\nUser=root\nWorkingDirectory=${root}/release-v3\nExecStart=/usr/bin/node ${root}/release-v3/scripts/server-turtle-rfq.mjs ${phase}\n${final ? "ExecStartPost=/usr/bin/systemctl disable --now " + timers.join(" ") + "\nRestart=on-failure\nRestartSec=300\n" : "Restart=no\n"}TimeoutStartSec=${RFQ_SERVICE_TIMEOUT_MS / 60_000}min\nNice=15\nCPUWeight=10\nIOWeight=10\nMemoryHigh=220M\nMemoryMax=320M\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths=${state} /var/lib/binance-agentic-stock-bot/.baw /opt/binance-agentic-stock-bot/docs\n`;
   }
   return units;
 }

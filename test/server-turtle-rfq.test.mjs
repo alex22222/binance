@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { RFQ_COLLECT_TIMEOUT_MS, RFQ_QUOTE_WINDOW_MS, RFQ_SCHEDULE, RFQ_SLOT_TIMEOUT_MS, qualifyingRfqPairs } from "../scripts/scheduled-turtle-rfq.mjs";
+import { RFQ_COLLECT_TIMEOUT_MS, RFQ_QUOTE_WINDOW_MS, RFQ_SCHEDULE, RFQ_SERVICE_TIMEOUT_MS, RFQ_SLOT_TIMEOUT_MS, qualifyingRfqPairs, rfqFinalAt } from "../scripts/scheduled-turtle-rfq.mjs";
 const load = () => import("../scripts/server-turtle-rfq.mjs");
 const sha = v => createHash("sha256").update(v).digest("hex");
 
@@ -86,7 +86,7 @@ test("finalizer seals a saved quote report that never received a receipt", async
     const instrument = { symbol: "SPY", tokenSymbol: "SPYon", contractAddress: "0x" + "1".padStart(40, "0"), statusSource: { payload: { data: { marketStatus: "regular" } } } };
     const report = { walletStatus: "CONNECTED", context: { scope: "EXACT_RUNNING_BOT_CONTEXT" }, protection: { protectedFingerprintUnchanged: true, servicePidsUnchanged: true }, at: slot.at, market: { payload: { data: { marketStatus: "regular", openState: true } } }, instruments: [instrument], collectorProcess: { exitedSuccessfully: true, exitCode: 0 }, pairedQuotes: [{ symbol: "SPY", amount: "50", contractAddress: instrument.contractAddress, regularSessionEligible: true, buyRequest: { fromToken: usdt, toToken: instrument.contractAddress, fromTokenQty: "50", binanceChainId: "56" }, sellRequest: { fromToken: instrument.contractAddress, toToken: usdt, fromTokenQty: "0.10", binanceChainId: "56" }, buyResponse: { fromCoinSymbol: "USDT", toCoinSymbol: "SPYon", fromCoinAmount: "50", toCoinAmount: "0.1" }, sellResponse: { fromCoinSymbol: "SPYon", toCoinSymbol: "USDT", fromCoinAmount: "0.1", toCoinAmount: "50" }, returnedUsdt: "50", quotedRoundTripPct: 0, startedAt: slot.at, endedAt: new Date(Date.parse(slot.at) + 2000).toISOString() }] };
     await writeFile(join(location, "quote-report.json"), JSON.stringify(report, null, 2));
-    const result = await finalizeNativeReport({ ...f, nowMs: Date.parse("2026-11-18T20:55:00Z") });
+    const result = await finalizeNativeReport({ ...f, nowMs: Date.parse(rfqFinalAt()) });
     assert.equal(result.qualifyingPairs, 1);
     assert.equal(result.missingPairs, 215);
     const receipt = JSON.parse(await readFile(join(location, "receipt.json"), "utf8"));
@@ -98,8 +98,11 @@ test("finalizer seals a saved quote report that never received a receipt", async
 test("finalizer cannot run early or use a wallet, then reports missing coverage and preserves baseline", async () => {
   const { finalizeNativeReport } = await load(), f = await fixture();
   try {
-    await assert.rejects(finalizeNativeReport({ ...f, nowMs: Date.parse(RFQ_SCHEDULE.at(-1).at) }), /not ended/);
-    const options = { ...f, nowMs: Date.parse("2026-11-18T20:55:00Z") };
+    const last = Date.parse(RFQ_SCHEDULE.at(-1).at);
+    await assert.rejects(finalizeNativeReport({ ...f, nowMs: last }), /not ended/);
+    await assert.rejects(finalizeNativeReport({ ...f, nowMs: last + RFQ_QUOTE_WINDOW_MS }), /not ended/);
+    await assert.rejects(finalizeNativeReport({ ...f, nowMs: last + RFQ_SLOT_TIMEOUT_MS - 1 }), /not ended/);
+    const options = { ...f, nowMs: Date.parse(rfqFinalAt()) };
     const first = await finalizeNativeReport(options);
     assert.equal(first.qualifyingPairs, 0); assert.equal(first.missingPairs, 216);
     assert.equal(first.status, "WITHHOLD"); assert.equal(first.currentUserGasDebitVerified, false);
@@ -116,7 +119,7 @@ test("report publication cannot overwrite someone else's later research edits", 
   const { finalizeNativeReport } = await load(), f = await fixture();
   try {
     await writeFile(f.reportPath, "Another author's updated report");
-    const result = await finalizeNativeReport({ ...f, nowMs: Date.parse("2026-11-18T20:55:00Z") });
+    const result = await finalizeNativeReport({ ...f, nowMs: Date.parse(rfqFinalAt()) });
     assert.equal(result.publication.status, "CONFLICT_PRESERVED");
     assert.equal(await readFile(f.reportPath, "utf8"), "Another author's updated report");
     assert.ok((await readFile(join(f.stateDirectory, "report.md"), "utf8")).includes("0/216"));
@@ -141,7 +144,12 @@ test("server timers pin three absolute UTC dates, do not catch up quotes, and fi
     for (const slot of RFQ_SCHEDULE.filter(s => s.phase === phase)) assert.ok(timer.includes(slot.at.replace("T", " ").replace(".000Z", " UTC")));
     assert.ok(timer.includes("Persistent=false"));
   }
-  assert.ok(units["binance-turtle-rfq-20261116-final.timer"].includes("2026-11-18 20:55:00 UTC"));
+  const last = Date.parse(RFQ_SCHEDULE.at(-1).at);
+  const finalAt = Date.parse(rfqFinalAt());
+  assert.ok(finalAt >= last + RFQ_SERVICE_TIMEOUT_MS);
+  assert.ok(finalAt > last + RFQ_SLOT_TIMEOUT_MS);
+  assert.ok(units["binance-turtle-rfq-20261116-final.timer"].includes(rfqFinalAt().replace("T", " ").replace(".000Z", " UTC")));
+  assert.ok(!units["binance-turtle-rfq-20261116-final.timer"].includes("20:55:00 UTC"));
   assert.ok(units["binance-turtle-rfq-20261116-final.timer"].includes("Persistent=true"));
   for (const phase of ["open", "mid", "close", "final"]) assert.match(units[`binance-turtle-rfq-20261116-${phase}.service`], /TimeoutStartSec=27min/);
   assert.ok(!/TimeoutStartSec=1[23]min/.test(Object.values(units).join()));

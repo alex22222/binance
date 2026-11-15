@@ -28,6 +28,13 @@ export const RFQ_POST_QUOTE_MS = 240_000;
 export const RFQ_COLLECT_TIMEOUT_MS = RFQ_QUOTE_WINDOW_MS + RFQ_POST_QUOTE_MS;
 // The parent persists that report and receipt, then verifies historical gas.
 export const RFQ_SLOT_TIMEOUT_MS = RFQ_COLLECT_TIMEOUT_MS + 120_000;
+// systemd must outlive the flock. The final report starts only after that service has exited.
+export const RFQ_SERVICE_TIMEOUT_MS = RFQ_SLOT_TIMEOUT_MS + 60_000;
+export const RFQ_FINAL_GAP_MS = 300_000;
+
+export function rfqFinalAt(lastSlotAt = RFQ_SCHEDULE.at(-1).at) {
+  return new Date(Date.parse(lastSlotAt) + RFQ_SERVICE_TIMEOUT_MS + RFQ_FINAL_GAP_MS).toISOString();
+}
 
 export function dueRfqSlot(nowMs, phase) {
   if (!["open", "mid", "close"].includes(phase) || !Number.isFinite(nowMs)) throw new Error("Invalid schedule phase/time");
