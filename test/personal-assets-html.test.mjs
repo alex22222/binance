@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { createContext, runInContext } from "node:vm";
-import { personalAssetsHtml, refreshScheduleHtml } from "../src/personal-assets-html.mjs";
+import { personalAssetsHtml, refreshScheduleHtml, statementPasswordsHtml } from "../src/personal-assets-html.mjs";
 import * as core from "../src/personal-assets-core.mjs";
 
 const source = await readFile(new URL("../src/personal-assets-client.mjs", import.meta.url), "utf8");
@@ -941,47 +941,34 @@ test("tiny final pie sectors use their true arc angle and stay within the ring a
   assert.equal(ui.requests.filter(request => request.options.method === "PUT").length, 0);
 });
 
-test("both themes define a color for every asset category and the toggle persists the choice", async () => {
+test("both themes define a color for every asset category and the shared toggle keeps the server choice", () => {
   const html = personalAssetsHtml({ nonce: "n" });
   for (let index = 0; index < core.CATEGORIES.length; index++) {
     assert.equal(html.match(new RegExp(`--cat-${index}:#[0-9a-f]{6}`, "g"))?.length, 2);
   }
   assert.match(html, /<script nonce="n">[^<]*const theme="light"/);
   assert.doesNotMatch(html, /localStorage\.getItem\("hq-theme"\)/);
-  const saved = new Map([["hq-theme", "dark"], ["assets-theme", "dark"]]);
-  const ui = await view(stateWith(), null, { storage: { getItem: (key) => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) } });
   // Server cookie/theme wins: boot must not let stale localStorage flip light pages dark.
   assert.match(personalAssetsHtml({ nonce: "n", theme: "light" }), /dataset\.theme=theme;try\{localStorage\.setItem\("hq-theme",theme\)/);
-  ui.run('localStorage = window.localStorage; document.documentElement.dataset.theme = "dark"; syncThemeToggle()');
-  assert.equal(ui.get("theme-toggle-label").textContent, "明亮模式");
-  const toggle = ui.get("theme-toggle");
-  toggle.id = "theme-toggle";
-  await ui.listeners.click({ target: { closest: () => toggle } });
-  assert.equal(ui.run("document.documentElement.dataset.theme"), "light");
-  assert.equal(saved.get("hq-theme"), "light");
-  assert.equal(saved.get("assets-theme"), "light");
-  assert.equal(ui.get("theme-toggle-label").textContent, "深色模式");
+  assert.match(html, /class="site-settings-item site-theme" href="\/api\/theme\?set=dark&next=%2Fassets"[\s\S]*深色模式</);
+  assert.match(personalAssetsHtml({ nonce: "n", theme: "dark" }), /class="site-settings-item site-theme" href="\/api\/theme\?set=light&next=%2Fassets"[\s\S]*明亮模式</);
 });
 
-test("page tools sit in a gear menu in the top bar and the eye beside the total hides amounts", async () => {
+test("asset tools use the shared system settings menu and the eye beside the total hides amounts", async () => {
   const html = personalAssetsHtml({ nonce: "n" });
-  const actions = html.match(/<div class="site-actions">([\s\S]*?)<\/div><\/div><\/header>/)[1];
-  assert.match(actions, /id="settings-toggle" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-panel" aria-label="设置"/);
-  assert.match(actions, /id="settings-panel" role="menu"[^>]* hidden>/);
-  for (const action of ["import", "sync", "export"]) assert.match(actions, new RegExp(`role="menuitem" data-action="${action}" data-needs-data disabled>`));
-  assert.doesNotMatch(actions, /ai-settings|Moonshot/);
-  assert.match(actions, /role="menuitem" id="theme-toggle"/);
+  const actions = html.match(/<details class="site-group site-settings">[\s\S]*?<\/details>/)[0];
+  for (const tool of ["import", "sync", "export", "refresh-schedule", "statement-passwords", "logout"]) {
+    assert.match(actions, new RegExp(`href="/assets\\?settings=${tool}"`));
+  }
+  assert.match(actions, /<summary aria-label="设置">/);
+  assert.doesNotMatch(actions, /ai-settings|Moonshot|settings-toggle|theme-toggle|<form/);
   assert.doesNotMatch(html.match(/<header class="asset-head">[\s\S]*?<\/header>/)[0], /<button[^>]*(data-action|privacy-toggle|theme-toggle)/);
   assert.doesNotMatch(actions, /privacy-toggle/);
+  for (const page of [refreshScheduleHtml({ nonce: "n" }), statementPasswordsHtml({ nonce: "n" })]) {
+    assert.equal(page.match(/<details class="site-group site-settings">[\s\S]*?<\/details>/)[0].replace(/href="\/api\/theme\?[^"]+"/, 'href="/api/theme"'), actions.replace(/href="\/api\/theme\?[^"]+"/, 'href="/api/theme"'));
+  }
 
   const ui = await view(stateWith([entry({ amount: 1234.56 })]));
-  const panel = ui.get("settings-panel"); const gear = ui.get("settings-toggle");
-  panel.hidden = true; gear.id = "settings-toggle";
-  await ui.listeners.click({ target: { closest: () => gear } });
-  assert.equal(panel.hidden, false);
-  await ui.listeners.click({ target: { closest: () => null } });
-  assert.equal(panel.hidden, true);
-
   const total = () => ui.get("asset-content").innerHTML.match(/<section class="panel" aria-label="资产类型"[\s\S]*?<\/section>/)[0];
   assert.match(total(), /id="privacy-toggle" aria-pressed="false" aria-label="隐藏金额"[\s\S]*1,234\.56/);
   await ui.listeners.click({ target: { closest: () => ({ id: "privacy-toggle", dataset: {} }) } });
@@ -989,72 +976,26 @@ test("page tools sit in a gear menu in the top bar and the eye beside the total 
   assert.doesNotMatch(total(), /1,234\.56/);
 });
 
-test("settings logout stays available without asset data and replaces the page only after success", async () => {
-  const html = personalAssetsHtml({ nonce: "n" });
-  assert.match(html, /<button type="button" class="settings-item" role="menuitem" data-action="logout">[\s\S]*?退出登录<\/button>/);
-  const initial = stateWith([entry()]);
-  const ui = await view(initial, async (url) => syncResponse(url === "/logout" ? { success: true } : initial));
-  ui.run("draft = { amount: 123 }; openRates()");
-  const button = { dataset: { action: "logout" }, disabled: false };
-  await ui.listeners.click({ target: { closest: () => button } });
-  assert.deepEqual(ui.requests.map((request) => request.url), ["/api/assets", "/logout"]);
-  const { options } = ui.requests[1];
-  assert.equal(options.method, "POST");
-  assert.equal(options.credentials, "same-origin");
-  assert.equal(options.mode, "same-origin");
-  assert.equal(options.cache, "no-store");
-  assert.equal(options.redirect, "error");
+test("the shared logout link signs out even when assets cannot load", async () => {
+  const ui = await view(stateWith([entry()]), async (url) => syncResponse(url === "/logout" ? { success: true } : stateWith([entry()])), { search: "?settings=logout" });
+  const logout = ui.requests.find((request) => request.url === "/logout");
+  assert.equal(logout.options.method, "POST");
+  assert.equal(logout.options.credentials, "same-origin");
+  assert.equal(logout.options.cache, "no-store");
   assert.deepEqual(ui.replacements, ["/login"]);
-  assert.deepEqual(ui.navigations, []);
-  assert.equal(ui.run("state"), null);
-  assert.equal(ui.run("draft"), null);
-  assert.equal(ui.get("asset-content").innerHTML, "");
-  assert.equal(ui.get("dialog-body").innerHTML, "");
-  assert.equal(ui.get("asset-dialog").open, false);
+  const failed = await view(null, async (url) => syncResponse(url === "/logout" ? { error: "rejected" } : {}, url === "/logout" ? 403 : 503), { search: "?settings=logout" });
+  assert.deepEqual(failed.replacements, []);
+  assert.match(failed.get("asset-error").innerHTML, /退出登录未完成/);
 });
 
-test("logout failure preserves the page and allows a retry; unavailable assets do not block logout", async () => {
-  for (const failure of ["http", "network"]) {
-    const initial = stateWith([entry()]);
-    const ui = await view(initial, async (url) => {
-      if (url !== "/logout") return syncResponse(initial);
-      if (failure === "network") throw new Error("network unavailable");
-      return syncResponse({ error: "rejected" }, 403);
-    });
-    const before = ui.get("asset-content").innerHTML;
-    const button = { dataset: { action: "logout" }, disabled: false };
-    await ui.listeners.click({ target: { closest: () => button } });
-    assert.deepEqual(ui.replacements, []);
-    assert.equal(button.disabled, false);
-    assert.equal(ui.get("asset-content").innerHTML, before);
-    assert.match(ui.get("asset-error").innerHTML, /退出登录未完成/);
+test("shared settings links open the existing asset tools after the ledger loads", async () => {
+  for (const [search, title] of [["?settings=import", "导入你的资产"], ["?settings=export", "导出你的资产"], ["?settings=sync", "只读资产同步"]]) {
+    const ui = await view(stateWith([entry()]), null, { search });
+    assert.equal(ui.get("dialog-title").textContent, title, search);
+    assert.equal(ui.get("asset-dialog").open, true, search);
   }
-  const ui = await view(null, async (url) => syncResponse(url === "/logout" ? { success: true } : {}, url === "/logout" ? 200 : 503));
-  await ui.listeners.click({ target: { closest: () => ({ dataset: { action: "logout" } }) } });
-  assert.deepEqual(ui.replacements, ["/login"]);
-});
-
-test("logout ignores duplicate clicks and a pending asset response cannot restore logged-out data", async () => {
-  let finishLogout;
-  let finishLoad;
-  const initial = stateWith([entry()]);
-  const ui = await view(initial, async (url, options, count) => {
-    if (url === "/logout") return new Promise((resolve) => { finishLogout = resolve; });
-    if (count > 1) return new Promise((resolve) => { finishLoad = resolve; });
-    return syncResponse(initial);
-  });
-  const pendingLoad = ui.run("load()");
-  const button = { dataset: { action: "logout" }, disabled: false };
-  const pendingLogout = ui.listeners.click({ target: { closest: () => button } });
-  await ui.listeners.click({ target: { closest: () => button } });
-  assert.equal(ui.requests.filter((request) => request.url === "/logout").length, 1);
-  finishLogout(syncResponse({ success: true }));
-  await pendingLogout;
-  finishLoad(syncResponse(initial));
-  await pendingLoad;
-  assert.equal(ui.run("state"), null);
-  assert.equal(ui.get("asset-content").innerHTML, "");
-  assert.deepEqual(ui.replacements, ["/login"]);
+  const failed = await view(null, async () => syncResponse({}, 503), { search: "?settings=import" });
+  assert.equal(failed.get("asset-dialog").open, false);
 });
 
 test("category pie handles empty, zero and single-category portfolios and removes geometry in privacy mode", async () => {

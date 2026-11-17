@@ -129,7 +129,7 @@ test("personal assets share Dashboard authentication and persist isolated review
     assert.equal(passwordResponse.status, 200);
     assert.equal(passwordResponse.headers.get("cache-control"), "no-store");
     const passwordHtml = await passwordResponse.text();
-    assert.match(html, /role="menuitem" href="\/assets\?settings=statement-passwords"/);
+    assert.match(html, /<details class="site-group site-settings">[\s\S]*?<a class="site-settings-item" href="\/assets\?settings=statement-passwords"/);
     assert.match(passwordHtml, /盈立香港[\s\S]*盈立新加坡/);
     assert.match(passwordHtml, /type="password"/);
     assert.doesNotMatch(passwordHtml, /\/assets\/app\.mjs|\/api\/assets\/ai/);
