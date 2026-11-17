@@ -56,7 +56,7 @@ test("navigation leads with market overview and groups the wallet pages in one C
     assert.equal(html.match(/aria-current="page"/g)?.length, 1, active);
   }
   const top = (html) => [...html.split("</nav>")[0].replace(/<div class="site-submenu">[\s\S]*?<\/div>/g, "").matchAll(/<a href="([^"]+)"[^>]*>|<summary>([^<]+)<\/summary>/g)].map(([, href, group]) => href || group);
-  assert.deepEqual(top(siteHeader("/assets")), ["/market", "/assets", "/operations", "智能钱包", "数字货币", "https://poly.spaceflag.site/future-btc5m-bridge", "https://polym.trade/perps"]);
+  assert.deepEqual(top(siteHeader("/assets")), ["/market", "/assets", "/operations", "智能钱包", "数字货币", "https://poly.spaceflag.site/future-btc5m-bridge", "https://polym.trade/perps", "https://spaceflag.site/multiedge/"]);
   const menu = siteHeader("/assets").match(/<details class="site-group"><summary>智能钱包<\/summary><div class="site-submenu">([\s\S]*?)<\/div><\/details>/)[1];
   assert.deepEqual([...menu.matchAll(/<a href="([^"]+)">([^<]+)<\/a>/g)].map(([, href, label]) => [href, label]),
     [["/dashboard", "交易总览"], ["/agentic-wallet/okx", "OKX 钱包"], ["/strategies", "策略"], ["/reviews", "复盘"], ["/fund-manager", "基金经理"]]);
@@ -88,14 +88,16 @@ test("digital currency groups the combined BTC and favorites page with GMGN", ()
   }
 });
 
-test("Poly follow and Polymtrade open new tabs while internal navigation stays in this tab", () => {
+test("Poly follow, Polymtrade and MultiEdge open new tabs while internal navigation stays in this tab", () => {
   const html = siteHeader("/assets");
   assert.ok(html.includes('<a href="https://poly.spaceflag.site/future-btc5m-bridge" class="site-external" target="_blank" rel="noopener noreferrer">Poly 跟单 ↗</a>'));
   assert.doesNotMatch(html, /polyhermes\.107-191-42-75\.sslip\.io/);
   assert.equal(html.match(/>Poly 跟单 ↗<\/a>/g)?.length, 1);
   assert.ok(html.includes('<a href="https://polym.trade/perps" class="site-external" target="_blank" rel="noopener noreferrer">Polymtrade ↗</a>'));
   assert.equal(html.match(/>Polymtrade ↗<\/a>/g)?.length, 1);
-  assert.equal(html.match(/target="_blank"/g)?.length, 2);
+  assert.ok(html.includes('<a href="https://spaceflag.site/multiedge/" class="site-external" target="_blank" rel="noopener noreferrer">MultiEdge ↗</a>'));
+  assert.equal(html.match(/>MultiEdge ↗<\/a>/g)?.length, 1);
+  assert.equal(html.match(/target="_blank"/g)?.length, 3);
   assert.match(html, /<a href="\/assets" aria-current="page">个人资产<\/a>/);
   assert.doesNotMatch(html, /<iframe|<script|onclick=|data-token|Authorization/i);
   assert.deepEqual([...html.matchAll(/aria-current="page">([^<]+)</g)].map(([, label]) => label), ["个人资产"]);

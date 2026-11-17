@@ -21,7 +21,8 @@ export const SITE_NAV = Object.freeze([
   ["/crypto/desk", "数字货币投研组", CRYPTO_GROUP],
   ["/gmgn/", "GMGN", CRYPTO_GROUP],
   ["https://poly.spaceflag.site/future-btc5m-bridge", "Poly 跟单"],
-  ["https://polym.trade/perps", "Polymtrade"]
+  ["https://polym.trade/perps", "Polymtrade"],
+  ["https://spaceflag.site/multiedge/", "MultiEdge"]
 ]);
 
 export const THEME_COOKIE = "hq-theme";
