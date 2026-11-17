@@ -5,15 +5,17 @@ import { dashboardLoginHtml } from "../src/dashboard-login-html.mjs";
 import { fundManagerHtml } from "../src/fund-manager-html.mjs";
 import { liveDashboardHtml } from "../src/live-dashboard-html.mjs";
 import { SITE_CSS, SITE_NAV, safeReturnPath, siteHeader, themeFromCookie, themeToggleHref } from "../src/site-shell.mjs";
+import { personalAssetsHtml } from "../src/personal-assets-html.mjs";
 import { strategyLabHtml } from "../src/strategy-lab-html.mjs";
 import { tradeReviewHtml } from "../src/trade-review-html.mjs";
 import { weeklyResearchHtml } from "../src/weekly-research-html.mjs";
 
 test("the shared header marks only the active page and needs no image", () => {
   const html = siteHeader("/btc-radar", '<span id="slot">x</span>');
-  assert.deepEqual([...html.matchAll(/<a href="([^"]+)"/g)].map(([, href]) => href), SITE_NAV.map(([href]) => href));
+  const nav = html.match(/<nav class="site-nav"[^>]*>[\s\S]*?<\/nav>/)[0];
+  assert.deepEqual([...nav.matchAll(/<a href="([^"]+)"/g)].map(([, href]) => href), SITE_NAV.map(([href]) => href));
   assert.deepEqual([...html.matchAll(/aria-current="page">([^<]+)</g)].map(([, label]) => label), ["BTC 与收藏"]);
-  assert.match(html, /<div class="site-actions"><span id="slot">x<\/span><\/div>/);
+  assert.match(html, /<div class="site-actions"><span id="slot">x<\/span><details class="site-group site-settings">/);
   assert.match(siteHeader("/"), /site-settings/);
   assert.doesNotMatch(html + SITE_CSS, /<img|url\(/);
 });
@@ -42,32 +44,37 @@ test("theme helpers read the cookie and build a safe toggle link", () => {
   assert.equal(themeToggleHref("light", "//evil"), "/api/theme?set=light&next=%2F");
   assert.equal(safeReturnPath("/crypto/desk?shift=2026-11-12T09:00"), "/crypto/desk?shift=2026-11-12T09:00");
   assert.equal(safeReturnPath("https://evil.example/"), "/");
-  assert.doesNotMatch(siteHeader("/strategies", "", { themeControl: false }), /class="site-theme"/);
+  assert.match(siteHeader("/strategies"), /site-theme"[\s\S]*深色模式</);
   assert.match(siteHeader("/market", "", { returnTo: "/market?period=1d" }), /next=%2Fmarket%3Fperiod%3D1d/);
 });
 
 test("navigation leads with market overview and groups the wallet pages in one Chinese dropdown", () => {
   for (const active of ["/", "/dashboard"]) {
     const html = siteHeader(active);
-    const links = [...html.matchAll(/<a href="([^"]+)"(?: aria-current="page")?>([^<]+)<\/a>/g)]
+    const links = [...html.matchAll(/<a href="([^"]+)"(?: aria-current="page"| class="[^"]*")*>([^<]+)<\/a>/g)]
       .map(([, href, label]) => [href, label]);
-    assert.deepEqual(links.slice(0, 3), [["/market", "市场总览"], ["/assets", "个人资产"], ["/dashboard", "交易总览"]], active);
+    assert.deepEqual(links.slice(0, 4), [["/market", "市场总览"], ["/assets", "个人资产"], ["/operations", "运行总览"], ["/dashboard", "交易总览"]], active);
     assert.match(html, /<a href="\/dashboard" aria-current="page">交易总览<\/a>/, active);
     assert.equal(html.match(/aria-current="page"/g)?.length, 1, active);
   }
   const top = (html) => [...html.split("</nav>")[0].replace(/<div class="site-submenu">[\s\S]*?<\/div>/g, "").matchAll(/<a href="([^"]+)"[^>]*>|<summary>([^<]+)<\/summary>/g)].map(([, href, group]) => href || group);
-  assert.deepEqual(top(siteHeader("/assets")), ["/market", "/assets", "智能钱包", "数字货币", "https://poly.spaceflag.site/future-btc5m-bridge", "https://polym.trade/perps"]);
+  assert.deepEqual(top(siteHeader("/assets")), ["/market", "/assets", "/operations", "智能钱包", "数字货币", "https://poly.spaceflag.site/future-btc5m-bridge", "https://polym.trade/perps", "https://spaceflag.site/multiedge/"]);
   const menu = siteHeader("/assets").match(/<details class="site-group"><summary>智能钱包<\/summary><div class="site-submenu">([\s\S]*?)<\/div><\/details>/)[1];
   assert.deepEqual([...menu.matchAll(/<a href="([^"]+)">([^<]+)<\/a>/g)].map(([, href, label]) => [href, label]),
-    [["/dashboard", "交易总览"], ["/agentic-wallet/okx", "OKX 钱包"], ["/strategies", "策略"], ["/reviews", "复盘"], ["/fund-manager", "基金经理"], ["/operations", "运行总览"]]);
-  for (const active of ["/agentic-wallet/okx", "/strategies", "/reviews", "/fund-manager", "/operations"]) {
+    [["/dashboard", "交易总览"], ["/agentic-wallet/okx", "OKX 钱包"], ["/strategies", "策略"], ["/reviews", "复盘"], ["/fund-manager", "基金经理"]]);
+  assert.doesNotMatch(menu, /\/operations|运行总览/);
+  for (const active of ["/agentic-wallet/okx", "/strategies", "/reviews", "/fund-manager"]) {
     assert.match(siteHeader(active), new RegExp(`<details class="site-group is-current"><summary>智能钱包</summary>[^]*<a href="${active}" aria-current="page">`), active);
   }
+  const ops = siteHeader("/operations");
+  assert.match(ops, /<a href="\/operations" aria-current="page" class="site-ops">运行总览<\/a>/);
+  assert.doesNotMatch(ops, /site-group is-current/);
+  assert.match(SITE_CSS, /\.site-nav a\.site-ops\{font-weight:700\}/);
   assert.doesNotMatch(SITE_CSS, /\.site-nav\{[^}]*overflow/);
   const html = siteHeader("/assets");
   assert.match(html, /<a class="site-brand" href="\/"><span class="site-mark" aria-hidden="true">H<\/span><span class="site-name">HQ Capital<\/span><\/a>/);
   assert.doesNotMatch(html, /Agentic Wallet<\/span>/);
-  assert.match(html, /class="site-theme"[^>]*>深色模式</);
+  assert.match(html, /site-theme"[\s\S]*深色模式</);
 });
 
 test("digital currency groups the combined BTC and favorites page with GMGN", () => {
@@ -83,14 +90,16 @@ test("digital currency groups the combined BTC and favorites page with GMGN", ()
   }
 });
 
-test("Poly follow and Polymtrade open new tabs while internal navigation stays in this tab", () => {
+test("Poly follow, Polymtrade and MultiEdge open new tabs while internal navigation stays in this tab", () => {
   const html = siteHeader("/assets");
   assert.ok(html.includes('<a href="https://poly.spaceflag.site/future-btc5m-bridge" class="site-external" target="_blank" rel="noopener noreferrer">Poly 跟单 ↗</a>'));
   assert.doesNotMatch(html, /polyhermes\.107-191-42-75\.sslip\.io/);
   assert.equal(html.match(/>Poly 跟单 ↗<\/a>/g)?.length, 1);
   assert.ok(html.includes('<a href="https://polym.trade/perps" class="site-external" target="_blank" rel="noopener noreferrer">Polymtrade ↗</a>'));
   assert.equal(html.match(/>Polymtrade ↗<\/a>/g)?.length, 1);
-  assert.equal(html.match(/target="_blank"/g)?.length, 2);
+  assert.ok(html.includes('<a href="https://spaceflag.site/multiedge/" class="site-external" target="_blank" rel="noopener noreferrer">MultiEdge ↗</a>'));
+  assert.equal(html.match(/>MultiEdge ↗<\/a>/g)?.length, 1);
+  assert.equal(html.match(/target="_blank"/g)?.length, 3);
   assert.match(html, /<a href="\/assets" aria-current="page">个人资产<\/a>/);
   assert.doesNotMatch(html, /<iframe|<script|onclick=|data-token|Authorization/i);
   assert.deepEqual([...html.matchAll(/aria-current="page">([^<]+)</g)].map(([, label]) => label), ["个人资产"]);
@@ -120,17 +129,23 @@ test("every dashboard page uses the shared shell with the right section highligh
   assert.match(strategyLabHtml(), /<title>策略研究 · HQ Capital/);
 });
 
-test("shared pages expose settings without requiring the assets client, and retain page-owned actions", () => {
-  for (const active of ["/market", "/crypto", "/dashboard", "/agentic-wallet/okx", "/fund-manager"]) {
+test("every page keeps the same gear menu beside its own actions", () => {
+  const menu = (html) => html.match(/<details class="site-group site-settings">[\s\S]*?<\/details>/)[0].replace(/href="\/api\/theme\?[^"]+"/, 'href="/api/theme"');
+  const labels = (html) => [...menu(html).matchAll(/>([^<]+)</g)].map(([, label]) => label);
+  const expected = ["导入资产", "只读同步", "自动更新", "结单密码", "导出备份", "深色模式", "退出登录"];
+  const canonical = menu(siteHeader("/market"));
+  for (const active of ["/", "/market", "/assets", "/crypto", "/dashboard", "/agentic-wallet/okx", "/strategies", "/reviews", "/fund-manager", "/operations"]) {
     const html = siteHeader(active);
-    assert.match(html, /class="site-group site-settings"/);
-    assert.match(html, /<summary>设置<\/summary>/);
-    assert.match(html, /href="\/assets\?settings=refresh-schedule"/);
-    assert.match(html, /href="\/assets\?settings=statement-passwords"/);
-    assert.match(html, /href="\/api\/theme\?set=dark&next=/);
-    assert.doesNotMatch(html, /<script|onclick=|type="submit"/);
+    assert.equal(menu(html), canonical, active);
+    assert.deepEqual(labels(html), expected, active);
+    assert.match(html, /<summary aria-label="设置">/);
+    assert.match(html, /href="\/assets\?settings=logout"/);
+    assert.doesNotMatch(html, /<form|type="submit"|<script|onclick=/);
   }
   const owned = siteHeader("/assets", '<button id="asset-actions">资产操作</button>');
-  assert.match(owned, /id="asset-actions"/);
-  assert.doesNotMatch(owned, /site-settings/);
+  assert.match(owned, /<div class="site-actions"><button id="asset-actions">资产操作<\/button><details class="site-group site-settings">/);
+  assert.equal(menu(owned), canonical);
+  assert.equal(menu(liveDashboardHtml()), canonical);
+  assert.equal(menu(strategyLabHtml()), canonical);
+  assert.equal(menu(personalAssetsHtml({ nonce: "n" })), canonical);
 });

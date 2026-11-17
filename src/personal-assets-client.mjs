@@ -23,7 +23,6 @@ let platformFilter = "all";
 let hidden = false;
 let saving = false;
 let loading = false;
-let loggedOut = false;
 let conflict = false;
 let loadFailed = false;
 let modal = null;
@@ -487,6 +486,44 @@ async function readResponse(response) {
   if (!data || !Number.isSafeInteger(data.revision) || !Array.isArray(data.snapshots)) throw new Error("资产数据格式不正确，未替换当前记录。");
   return { ...data, portfolio: validatePortfolio(data.portfolio) };
 }
+function requestedAssetTool() {
+  const match = /(?:^|[?&])settings=(import|sync|export|logout)(?:&|$)/.exec(location.search || "");
+  return match ? match[1] : "";
+}
+let assetToolOpened = false;
+let loggingOut = false;
+let loggedOut = false;
+async function logOff() {
+  if (loggingOut) return;
+  loggingOut = true;
+  try {
+    const response = await fetch("/logout", { method: "POST", mode: "same-origin", credentials: "same-origin", cache: "no-store", redirect: "error" });
+    if (!response.ok) throw new Error("Logout failed");
+    loggedOut = true;
+    state = null;
+    location.replace("/login");
+  } catch {
+    loggingOut = false;
+    showError("退出登录未完成，请重试。");
+  }
+}
+async function openRequestedAssetTool() {
+  if (assetToolOpened) return;
+  const tool = requestedAssetTool();
+  if (!tool) return;
+  if (tool === "logout") {
+    assetToolOpened = true;
+    try { history.replaceState(null, "", `${location.pathname || "/assets"}${location.hash || ""}`); } catch {}
+    await logOff();
+    return;
+  }
+  if (modal || !state) return;
+  assetToolOpened = true;
+  try { history.replaceState(null, "", `${location.pathname || "/assets"}${location.hash || ""}`); } catch {}
+  if (tool === "import") openImport();
+  else if (tool === "export") openExport();
+  else await openSync();
+}
 async function load() {
   if (saving || loading || loggedOut) return;
   loading = true;
@@ -501,6 +538,7 @@ async function load() {
     $("asset-error").hidden = true;
     if (modal) showError("最新数据已载入，当前草稿已保留。请核对后再保存。");
     render();
+    await openRequestedAssetTool();
     if (!modal && !syncCallbackHandled && /[?&]sync=futu-(?:authorized|error)(?:&|$)/.test(location.search || "")) {
       syncCallbackHandled = true;
       await openSync();
@@ -510,6 +548,7 @@ async function load() {
   } catch (error) {
     if (loggedOut) return;
     loadFailed = true;
+    if (requestedAssetTool() === "logout") { await openRequestedAssetTool(); return; }
     if (!state) $("asset-content").innerHTML = '<section class="panel empty"><h3>资产暂时无法载入</h3><p>未能读取已保存的数据，请重试。此处不会用空资产替代读取失败。</p><button class="button" data-action="reload">重新载入</button><a class="button quiet" href="/login">重新登录</a></section>';
     showError(errorText(error));
   } finally { loading = false; syncBusy(); }
@@ -726,29 +765,6 @@ function privacyToggle() {
   return `<button type="button" class="eye-toggle" id="privacy-toggle" aria-pressed="${hidden}" aria-label="${label}" title="${label}">${hidden
     ? eyeIcon('<path d="M3 3l18 18"/><path d="M10.6 5.1A9.9 9.9 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6C3.9 8.4 2 12 2 12s3.6 7 10 7a9.6 9.6 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>')
     : eyeIcon('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>')}</button>`;
-}
-function setSettingsOpen(open) {
-  $("settings-panel").hidden = !open;
-  $("settings-toggle").setAttribute("aria-expanded", String(open));
-}
-async function logOff(button) {
-  button.disabled = true;
-  try {
-    const response = await fetch("/logout", { method: "POST", mode: "same-origin", credentials: "same-origin", cache: "no-store", redirect: "error" });
-    if (!response.ok) throw new Error("Logout failed");
-    loggedOut = true;
-    closeDialog();
-    state = null;
-    draft = null;
-    syncState = null;
-    $("asset-content").innerHTML = "";
-    $("dialog-body").innerHTML = "";
-    $("dialog-footer").innerHTML = "";
-    location.replace("/login");
-  } catch {
-    button.disabled = false;
-    showError("退出登录未完成，请重试。");
-  }
 }
 function render() {
   if (!state || loggedOut) return;
@@ -1234,21 +1250,7 @@ function rerenderDialog() {
 }
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
-  if (button?.id === "settings-toggle") { setSettingsOpen($("settings-panel").hidden); return; }
-  // Any other click, including choosing a menu item, closes the settings menu.
-  if (!$("settings-panel").hidden) setSettingsOpen(false);
   if (!button || button.disabled) return;
-  if (button.id === "theme-toggle") {
-    const theme = document.documentElement.dataset.theme === "light" ? "dark" : "light";
-    document.documentElement.dataset.theme = theme;
-    try {
-      localStorage.setItem("hq-theme", theme);
-      localStorage.setItem("assets-theme", theme);
-      document.cookie = `hq-theme=${theme}; Path=/; Max-Age=31536000; SameSite=Lax`;
-    } catch {}
-    syncThemeToggle();
-    return;
-  }
   if (button.id === "privacy-toggle") {
     hidden = !hidden;
     render();
@@ -1260,8 +1262,7 @@ document.addEventListener("click", async (event) => {
   const action = button.dataset.action;
   if (action === "display-currency") { await changeDisplayCurrency(button.dataset.currency); return; }
   if (!action || saving) return;
-  if (action === "logout") await logOff(button);
-  else if (action === "close-dialog") closeDialog();
+  if (action === "close-dialog") closeDialog();
   else if (action === "history-range" && ["7", "30", "all"].includes(button.dataset.range)) { historyRange = button.dataset.range; render(); $(`history-range-${historyRange}`)?.focus(); }
   else if (action === "history-comparison") await toggleHistoryComparison();
   else if (action === "reload") await load();
@@ -1388,11 +1389,6 @@ document.addEventListener("submit", async (event) => {
   else if (event.target.id === "sync-binanceagentic-form") await connectWallet("binanceagentic");
   else if (event.target.id === "sync-okxagentic-form") await connectWallet("okxagentic");
 });
-document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || $("settings-panel").hidden) return;
-  setSettingsOpen(false);
-  $("settings-toggle").focus();
-});
 $("asset-dialog").addEventListener("cancel", (event) => { event.preventDefault(); closeDialog(); });
 window.addEventListener("pageshow", (event) => { if (event.persisted) { void load(); } });
 window.addEventListener("pagehide", () => { clearOcr(); clearSyncSecrets(); });
@@ -1400,11 +1396,5 @@ setInterval(async () => {
   if (!state || saving || loading || modal || conflict || document.visibilityState === "hidden") return;
   await load();
 }, 24 * 60 * 60 * 1000);
-function syncThemeToggle() {
-  const light = document.documentElement.dataset.theme === "light";
-  $("theme-toggle-label").textContent = light ? "深色模式" : "明亮模式";
-  $("theme-toggle").setAttribute("aria-pressed", String(light));
-}
-syncThemeToggle();
 if (typeof matchMedia === "function") matchMedia("(max-width:600px)").addEventListener("change", startBubbleMotion);
 void load();

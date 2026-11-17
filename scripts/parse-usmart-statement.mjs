@@ -4,6 +4,7 @@ import { open, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
+import { parseUsmartSgStatement, usmartSgStatementDecision, validateUsmartSgBinding } from "../src/usmart-sg-statement.mjs";
 
 const execute = promisify(execFile);
 const currencies = ["HKD", "USD", "CNY"];
@@ -157,14 +158,15 @@ if (entryFile && import.meta.url === pathToFileURL(entryFile).href) {
     if (new Set([resolve(input), resolve(sourcePath), resolve(output)]).size !== 3) fail("PDF、来源绑定与预览必须使用不同文件");
     if ((await stat(sourcePath)).mode & 0o077) fail("结单来源绑定文件必须仅当前用户可读写");
     const source = JSON.parse(await readFile(sourcePath, "utf8"));
-    binding(source);
+    const singapore = source.provider === "usmart-sg";
+    if (singapore) validateUsmartSgBinding(source); else binding(source);
     if (!source.originalPdfPath || !validHash(source.originalDocumentSha256) || !validHash(source.parsedDocumentSha256)) fail("需要原始附件与安全解密副本的哈希绑定");
     const inputBytes = await pdfBytes(input), originalBytes = await pdfBytes(resolve(dirname(resolve(sourcePath)), source.originalPdfPath));
     if (sha256(originalBytes) !== source.originalDocumentSha256 || sha256(inputBytes) !== source.parsedDocumentSha256) fail("原始附件或解密副本哈希不匹配，预览已停止");
     const program = "import json,sys\nfrom pypdf import PdfReader\nr=PdfReader(sys.argv[1])\nif r.is_encrypted: raise ValueError('secure decryption required first')\nif not 3<=len(r.pages)<=200: raise ValueError('unsupported page count')\nprint(json.dumps([p.extract_text() or '' for p in r.pages]))";
     const extracted = await execute(process.env.USMART_STATEMENT_PYTHON || "python3", ["-c", program, resolve(input)], { timeout: 30_000, maxBuffer: 8_000_000 });
-    const statement = parseUsmartStatement({ pages: JSON.parse(extracted.stdout), expectedAccount: source });
-    const decision = usmartStatementDecision({ statement, documentSha256: source.originalDocumentSha256, source });
+    const statement = (singapore ? parseUsmartSgStatement : parseUsmartStatement)({ pages: JSON.parse(extracted.stdout), expectedAccount: source });
+    const decision = (singapore ? usmartSgStatementDecision : usmartStatementDecision)({ statement, documentSha256: source.originalDocumentSha256, source });
     const preview = { parsedAt: new Date().toISOString(), documentSha256: source.originalDocumentSha256, parsedDocumentSha256: source.parsedDocumentSha256, decision, ...statement };
     const handle = await open(resolve(output), "wx", 0o600);
     try { await handle.writeFile(JSON.stringify(preview, null, 2) + "\n"); } finally { await handle.close(); }

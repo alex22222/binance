@@ -10,17 +10,19 @@ const CRYPTO_GROUP = "数字货币";
 export const SITE_NAV = Object.freeze([
   ["/market", "市场总览"],
   ["/assets", "个人资产"],
+  // Top-level: system health must be one click away from every page.
+  ["/operations", "运行总览"],
   ["/dashboard", "交易总览", WALLET_GROUP],
   ["/agentic-wallet/okx", "OKX 钱包", WALLET_GROUP],
   ["/strategies", "策略", WALLET_GROUP],
   ["/reviews", "复盘", WALLET_GROUP],
   ["/fund-manager", "基金经理", WALLET_GROUP],
-  ["/operations", "运行总览", WALLET_GROUP],
   ["/crypto", "BTC 与收藏", CRYPTO_GROUP],
   ["/crypto/desk", "数字货币投研组", CRYPTO_GROUP],
   ["/gmgn/", "GMGN", CRYPTO_GROUP],
   ["https://poly.spaceflag.site/future-btc5m-bridge", "Poly 跟单"],
-  ["https://polym.trade/perps", "Polymtrade"]
+  ["https://polym.trade/perps", "Polymtrade"],
+  ["https://spaceflag.site/multiedge/", "MultiEdge"]
 ]);
 
 export const THEME_COOKIE = "hq-theme";
@@ -42,27 +44,25 @@ export function themeToggleHref(nextTheme, nextPath = "/") {
   return `/api/theme?set=${nextTheme === "dark" ? "dark" : "light"}&next=${encodeURIComponent(path)}`;
 }
 
-function themeToggleControl(theme, returnTo) {
+// One gear menu on every page. Page actions stay beside it and never replace it.
+const icon = (paths) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+const settingItem = (href, label, paths, extra = "") => `<a class="site-settings-item${extra}" href="${href}">${icon(paths)}${label}</a>`;
+const SITE_SETTINGS = (theme, returnTo) => {
   const dark = theme === "dark";
-  const href = themeToggleHref(dark ? "light" : "dark", returnTo || "/");
-  const label = dark ? "明亮模式" : "深色模式";
-  return `<a class="site-theme" href="${href}" aria-label="${label}">${label}</a>`;
-}
+  const themeLabel = dark ? "明亮模式" : "深色模式";
+  const themeItem = `<a class="site-settings-item site-theme" href="${themeToggleHref(dark ? "light" : "dark", returnTo)}" aria-label="${themeLabel}">${icon('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>')}${themeLabel}</a>`;
+  return `<details class="site-group site-settings"><summary aria-label="设置">${icon('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>')}</summary><div class="site-submenu" aria-label="系统设置">${settingItem("/assets?settings=import", "导入资产", '<path d="M12 15V3M7 8l5-5 5 5M5 21h14"/>', " primary")}${settingItem("/assets?settings=sync", "只读同步", '<path d="M21 12a9 9 0 0 1-15.5 6.3L3 16M3 12a9 9 0 0 1 15.5-6.3L21 8M21 3v5h-5M3 21v-5h5"/>')}${settingItem("/assets?settings=refresh-schedule", "自动更新", '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>')}${settingItem("/assets?settings=statement-passwords", "结单密码", '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>')}${settingItem("/assets?settings=export", "导出备份", '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>')}${themeItem}${settingItem("/assets?settings=logout", "退出登录", '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>')}</div></details>`;
+};
 
-// `actions` is page-owned trusted markup shown on the right of the bar.
-// Pass `theme` so the toggle can offer the opposite mode; default light.
-// `themeControl: false` hides the toggle on pages that cannot apply the cookie yet
-// (Live dashboard still renders strategy/fund-manager without reading hq-theme).
-const SITE_SETTINGS = (theme, returnTo, themeControl) => `<details class="site-group site-settings"><summary>设置</summary><div class="site-submenu">${themeControl ? themeToggleControl(theme, returnTo) : ""}<a href="/assets?settings=refresh-schedule">资产自动更新</a><a href="/assets?settings=statement-passwords">结单密码</a><a href="/assets">资产导入、同步与备份</a></div></details>`;
-
-export function siteHeader(active, actions = "", { theme = "light", returnTo, themeControl = true } = {}) {
+export function siteHeader(active, actions = "", { theme = "light", returnTo } = {}) {
   // "/" now lands on market overview and the trading dashboard lives at
   // /dashboard, but that page (part of the Live code identity) still says "/".
   const current = active === "/" ? "/dashboard" : active === "/btc-radar" ? "/crypto" : active;
   const link = ([href, label]) => {
     const external = href.startsWith("https://");
     const text = external ? `${label} ↗` : label;
-    return `<a href="${href}"${href === current ? ' aria-current="page"' : ""}${external ? ' class="site-external" target="_blank" rel="noopener noreferrer"' : ""}>${text}</a>`;
+    const classes = [external ? "site-external" : "", href === "/operations" ? "site-ops" : ""].filter(Boolean).join(" ");
+    return `<a href="${href}"${href === current ? ' aria-current="page"' : ""}${classes ? ` class="${classes}"` : ""}${external ? ' target="_blank" rel="noopener noreferrer"' : ""}>${text}</a>`;
   };
   let links = "";
   for (let index = 0; index < SITE_NAV.length;) {
@@ -75,7 +75,7 @@ export function siteHeader(active, actions = "", { theme = "light", returnTo, th
     links += `<details class="site-group${here ? " is-current" : ""}"><summary>${group}</summary><div class="site-submenu">${members.map(link).join("")}</div></details>`;
   }
   const themeReturn = safeReturnPath(returnTo || current);
-  const right = actions || SITE_SETTINGS(theme, themeReturn, themeControl);
+  const right = `${actions}${SITE_SETTINGS(theme, themeReturn)}`;
   return `<header class="site-header"><div class="site-bar">`
     + `<a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">H</span><span class="site-name">HQ Capital</span></a>`
     + `<nav class="site-nav" aria-label="主导航">${links}</nav>`
@@ -164,6 +164,8 @@ background-size:auto,auto,32px 32px,32px 32px,auto;background-attachment:fixed}
 [data-theme=dark] .site-nav a:hover{background:rgba(255,255,255,.05)}
 .site-nav a[aria-current]{color:var(--brand);background:var(--brand-soft)}
 .site-nav a.site-external{color:var(--faint);font-weight:600}
+.site-nav a.site-ops{font-weight:700}
+.site-nav a.site-ops:not([aria-current]){color:var(--text)}
 .site-brand:focus-visible,.site-nav a:focus-visible,.site-group>summary:focus-visible,.site-theme:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 .site-group{position:relative}
 .site-group>summary{display:flex;align-items:center;gap:6px;padding:8px 12px;border-radius:var(--radius-sm);color:var(--muted);font-size:13px;font-weight:650;white-space:nowrap;cursor:pointer;list-style:none;transition:color .15s,background-color .15s}
@@ -176,7 +178,7 @@ background-size:auto,auto,32px 32px,32px 32px,auto;background-attachment:fixed}
 .site-group[open] .site-submenu{display:flex}
 .site-submenu a{display:block}
 @media (hover:hover) and (pointer:fine){.site-group[open] .site-submenu{display:none}.site-group:hover .site-submenu,.site-group:focus-within .site-submenu{display:flex}.site-group::after{content:"";position:absolute;left:0;right:0;top:100%;height:8px}}
-.site-settings .site-submenu{left:auto;right:0}.site-settings .site-submenu a,.site-settings .site-submenu .site-theme{box-sizing:border-box;display:block;padding:10px 12px;min-height:40px;border-radius:8px;color:var(--text);font-size:13px;text-decoration:none;white-space:nowrap}.site-settings .site-submenu a:hover,.site-settings .site-submenu .site-theme:hover{background:var(--surface-2)}.site-settings .site-submenu a:focus-visible,.site-settings .site-submenu .site-theme:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.site-settings>summary{width:38px;height:38px;padding:0;display:grid;place-items:center;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--muted)}.site-settings>summary::after{display:none}.site-settings>summary:hover,.site-settings[open]>summary{color:var(--text);border-color:var(--faint);background:var(--surface)}.site-settings .site-submenu{left:auto;right:0;min-width:210px;padding:6px}.site-settings .site-submenu a{box-sizing:border-box;display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;min-height:40px;border-radius:8px;background:transparent;color:var(--text);font-size:13px;font-weight:500;text-align:left;text-decoration:none;white-space:nowrap}.site-settings .site-submenu a svg{flex-shrink:0;color:var(--muted)}.site-settings .site-submenu a.primary,.site-settings .site-submenu a.primary svg{color:var(--brand);font-weight:600}.site-settings .site-submenu a:hover{background:var(--surface-2)}.site-settings .site-submenu a:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
 .site-actions{margin-left:auto;display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
 .site-status,.site-tag{display:inline-flex;align-items:center;padding:2px 8px;border-radius:var(--radius-pill);font-size:var(--text-meta);font-weight:650;white-space:nowrap;border:1px solid transparent}
 .site-status{background:var(--surface-3);color:var(--muted)}.site-status.ok{color:var(--green);background:var(--green-soft)}.site-status.bad{color:var(--red);background:var(--red-soft)}.site-status.warn{color:var(--gold);background:var(--gold-soft)}.site-status.info{color:var(--blue);background:var(--blue-soft)}
@@ -185,7 +187,7 @@ background-size:auto,auto,32px 32px,32px 32px,auto;background-attachment:fixed}
 .site-header{position:static;padding:calc(8px + env(safe-area-inset-top)) 12px 0}
 .site-bar{gap:8px;padding:8px 10px}
 .site-nav{order:2;width:100%}
-.site-actions{order:3;width:100%;margin-left:0}.site-actions:has(.site-settings){order:1;width:auto;margin-left:auto}.site-settings .site-submenu a,.site-settings .site-submenu .site-theme{min-height:44px}
+.site-actions{order:3;width:100%;margin-left:0}.site-settings{margin-left:auto}.site-actions:not(:has(:not(.site-settings))){order:1;width:auto}.site-settings>summary,.site-settings .site-submenu a{min-height:44px;min-width:44px}
 }
 @media print{.site-header{display:none}}
 ${PAGE_LIGHT_CSS}`;
